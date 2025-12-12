@@ -173,12 +173,6 @@ impl ViewState {
         self.history.push(cmd);
     }
 
-    /// Get history as a display string
-    #[allow(dead_code)]
-    pub fn history_string(&self) -> String {
-        self.history.join(" | ")
-    }
-
     /// Get number of rows
     pub fn row_count(&self) -> usize {
         self.dataframe.height()
@@ -232,12 +226,6 @@ impl StateStack {
     /// Get stack size
     pub fn len(&self) -> usize {
         self.stack.len()
-    }
-
-    /// Check if stack is empty
-    #[allow(dead_code)]
-    pub fn is_empty(&self) -> bool {
-        self.stack.is_empty()
     }
 
     /// Check if we have a current view

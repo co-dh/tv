@@ -54,20 +54,6 @@ impl AppContext {
         id
     }
 
-    /// Create with an initial view
-    #[allow(dead_code)]
-    pub fn with_view(view: ViewState) -> Self {
-        Self {
-            stack: StateStack::with_initial(view),
-            history_file: PathBuf::from("commands.txt"),
-            message: String::new(),
-            next_view_id: 1,
-            search: SearchState::default(),
-            bookmarks: Vec::new(),
-            show_info: true,
-        }
-    }
-
     /// Check if we have a current view
     pub fn has_view(&self) -> bool {
         self.stack.has_view()
