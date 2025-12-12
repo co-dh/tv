@@ -23,16 +23,37 @@ impl Command for Frequency {
             return Err(anyhow!("Column '{}' not found", self.col_name));
         }
 
-        // Get the column and compute value counts
+        // Get the column and compute value counts (sorted descending)
         let col = current_view.dataframe.column(&self.col_name)?;
         let series = col.as_materialized_series();
-        let value_counts = series.value_counts(true, false, "count".into(), false)?;
+        let value_counts = series.value_counts(true, false, "Cnt".into(), false)?;
+
+        // Calculate total count for percentage
+        let cnt_col = value_counts.column("Cnt")?.as_materialized_series();
+        let total: i64 = cnt_col.sum().unwrap_or(0);
+
+        // Calculate percentage and bar
+        let counts: Vec<i64> = cnt_col
+            .i64()
+            .map(|ca| ca.into_iter().map(|v| v.unwrap_or(0)).collect())
+            .unwrap_or_default();
+
+        let pcts: Vec<f64> = counts.iter().map(|&c| 100.0 * c as f64 / total as f64).collect();
+        let bars: Vec<String> = pcts.iter().map(|&p| "#".repeat(p.floor() as usize)).collect();
+
+        // Add Pct and Bar columns
+        let pct_series = Series::new("Pct".into(), pcts);
+        let bar_series = Series::new("Bar".into(), bars);
+
+        let mut result = value_counts.clone();
+        result.with_column(pct_series)?;
+        result.with_column(bar_series)?;
 
         // Create new view with frequency table
         let view_name = format!("freq:{}", self.col_name);
         let new_view = ViewState::new(
             view_name,
-            value_counts,
+            result,
             None,
         );
 
