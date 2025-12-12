@@ -134,17 +134,6 @@ impl ViewState {
             state: TableState::new(),
             history: Vec::new(),
             filename,
-            show_row_numbers: true,
-        }
-    }
-
-    pub fn new_without_row_numbers(name: String, dataframe: DataFrame, filename: Option<String>) -> Self {
-        Self {
-            name,
-            dataframe,
-            state: TableState::new(),
-            history: Vec::new(),
-            filename,
             show_row_numbers: false,
         }
     }

@@ -49,9 +49,9 @@ impl Command for Frequency {
         result.with_column(pct_series)?;
         result.with_column(bar_series)?;
 
-        // Create new view with frequency table (no row numbers)
+        // Create new view with frequency table
         let view_name = format!("Freq:{}", self.col_name);
-        let new_view = ViewState::new_without_row_numbers(
+        let new_view = ViewState::new(
             view_name,
             result,
             None,
