@@ -102,13 +102,13 @@ impl Renderer {
             Self::render_row_xs(df, row_idx, state, &xs, screen_width, row_num_width, writer)?;
         }
 
-        // Clear any remaining lines (after header + data rows)
-        let first_clear_row = (end_row - state.r0 + 1) as u16; // +1 for header
-        for screen_row in first_clear_row..(rows - 1) { // -1 for status bar
+        // Clear empty rows between data and status bar
+        let first_empty_row = (end_row - state.r0 + 1) as u16;
+        for screen_row in first_empty_row..(rows - 1) {
             execute!(
                 writer,
                 cursor::MoveTo(0, screen_row),
-                terminal::Clear(terminal::ClearType::CurrentLine)
+                terminal::Clear(terminal::ClearType::UntilNewLine)
             )?;
         }
 
@@ -120,7 +120,6 @@ impl Renderer {
         execute!(
             writer,
             cursor::MoveTo(0, 0),
-            terminal::Clear(terminal::ClearType::CurrentLine),
             SetAttribute(Attribute::Bold),
             SetAttribute(Attribute::Underlined)
         )?;
@@ -162,17 +161,18 @@ impl Renderer {
             execute!(writer, Print(" "))?;
         }
 
-        // Reset attributes at end of header
-        execute!(writer, SetAttribute(Attribute::Reset))?;
+        // Reset attributes and clear to end of line
+        execute!(
+            writer,
+            SetAttribute(Attribute::Reset),
+            terminal::Clear(terminal::ClearType::UntilNewLine)
+        )?;
 
         Ok(())
     }
 
     /// Render a single data row using xs positions (qtv style)
     fn render_row_xs<W: Write>(df: &DataFrame, row_idx: usize, state: &TableState, xs: &[i32], screen_width: i32, row_num_width: u16, writer: &mut W) -> Result<()> {
-        // Clear the line first
-        execute!(writer, terminal::Clear(terminal::ClearType::CurrentLine))?;
-
         let is_current_row = row_idx == state.cr;
 
         // Render row number (if showing row numbers)
@@ -230,6 +230,9 @@ impl Renderer {
 
             execute!(writer, Print(" "))?;
         }
+
+        // Clear to end of line
+        execute!(writer, terminal::Clear(terminal::ClearType::UntilNewLine))?;
 
         Ok(())
     }
