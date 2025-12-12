@@ -44,40 +44,30 @@ tv --script commands.txt
 | `m` | Toggle bookmark on current row |
 | `'` | Jump to next bookmark (cycles) |
 
-### Search
+### Search & Filter
+
+Both search and filter use **SQL WHERE syntax**:
 
 | Key | Action |
 |-----|--------|
-| `/` | Search column values (fuzzy finder, supports glob patterns) |
+| `/` | Search (navigate to matching row) |
+| `\` | Filter (create new view with matching rows) |
 | `?` | Regex search in current column |
-| `n` | Find next occurrence |
-| `N` | Find previous occurrence |
+| `n` | Find next match |
+| `N` | Find previous match |
 | `*` | Search for current cell value |
 
-Search patterns (glob-style for string columns):
-- `abc` - Exact match
-- `*abc*` - Contains "abc"
-- `*abc` - Ends with "abc"
-- `abc*` - Starts with "abc"
-
-### Filter
-
-| Key | Action |
-|-----|--------|
-| `\` | Filter rows with SQL WHERE syntax (fuzzy finder shows hints) |
-| `\|` | Regex filter on current column |
-
-Filter uses SQL WHERE syntax:
-- `col > 100` - Greater than
-- `col <= 50` - Less or equal
-- `col = 'NYC'` - String equality (use quotes)
+SQL WHERE syntax:
 - `col = 100` - Numeric equality
-- `col LIKE 'abc%'` - Starts with "abc"
-- `col LIKE '%abc'` - Ends with "abc"
-- `col LIKE '%abc%'` - Contains "abc"
+- `col = 'NYC'` - String equality (use quotes)
+- `col > 100`, `col <= 50` - Comparisons
+- `col LIKE 'abc%'` - Starts with
+- `col LIKE '%abc'` - Ends with
+- `col LIKE '%abc%'` - Contains
+- `col BETWEEN 10 AND 100` - Range
 - `col > 10 AND col < 100` - Combined conditions
 
-Filtering pushes a new view onto the stack. Press `q` to return to the original data.
+Filtering pushes a new view onto the stack. Press `q` to return.
 
 ### Column Operations
 
