@@ -36,27 +36,46 @@ impl Renderer {
 
         // Calculate column widths if needed
         if view.state.needs_width_recalc() {
+            // Calculate row number width
+            let row_num_width = df.height().to_string().len().max(3) as u16;
+            let available_width = cols.saturating_sub(row_num_width + 2); // -2 for spacing
+
+            // Calculate base widths for all columns
             let mut widths: Vec<u16> = (0..df.width())
                 .map(|col_idx| Self::calculate_column_width(df, col_idx, &view.state))
                 .collect();
 
-            // Distribute extra space to fill screen width
-            let row_num_width = df.height().to_string().len().max(3) as u16;
-            let available_width = cols.saturating_sub(row_num_width + 2); // -2 for spacing
-            let total_width: u16 = widths.iter().sum::<u16>() + (widths.len() as u16 * 1); // +1 for spacing between cols
+            // Find visible columns starting from c0
+            let mut visible_widths = Vec::new();
+            let mut visible_indices = Vec::new();
+            let mut used_width = 0u16;
 
-            if total_width < available_width {
-                let extra_space = available_width - total_width;
-                let per_col = extra_space / widths.len() as u16;
-                let remainder = extra_space % widths.len() as u16;
+            for col_idx in view.state.c0..df.width() {
+                let width = widths[col_idx];
+                if used_width + width + 1 > available_width && !visible_widths.is_empty() {
+                    break;
+                }
+                visible_widths.push(width);
+                visible_indices.push(col_idx);
+                used_width += width + 1; // +1 for spacing
+            }
 
-                for (i, width) in widths.iter_mut().enumerate() {
-                    *width += per_col;
-                    if i < remainder as usize {
-                        *width += 1;
+            // Distribute extra space among visible columns
+            if !visible_widths.is_empty() {
+                let total_used = visible_widths.iter().sum::<u16>() + visible_widths.len() as u16;
+                if total_used < available_width {
+                    let extra_space = available_width - total_used;
+                    let per_col = extra_space / visible_widths.len() as u16;
+                    let remainder = extra_space % visible_widths.len() as u16;
+
+                    for (i, &col_idx) in visible_indices.iter().enumerate() {
+                        widths[col_idx] += per_col;
+                        if i < remainder as usize {
+                            widths[col_idx] += 1;
+                        }
+                        // Cap at max width
+                        widths[col_idx] = widths[col_idx].min(50);
                     }
-                    // Cap at max width
-                    *width = (*width).min(30);
                 }
             }
 
