@@ -289,7 +289,15 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                         let unique = c.unique().ok();
                         if let Some(u) = unique {
                             let items: Vec<String> = (0..u.len())
-                                .filter_map(|i| u.get(i).ok().map(|v| v.to_string()))
+                                .filter_map(|i| u.get(i).ok().map(|v| {
+                                    // Strip quotes from string values
+                                    let s = v.to_string();
+                                    if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
+                                        s[1..s.len()-1].to_string()
+                                    } else {
+                                        s
+                                    }
+                                }))
                                 .collect();
 
                             if let Ok(Some(selected)) = picker::pick(items, &format!("{}> ", col_name)) {
@@ -640,10 +648,19 @@ fn find_value(df: &polars::prelude::DataFrame, col_name: &str, value: &str, star
     let col = df.column(col_name).ok()?;
     let len = col.len();
 
+    // Helper to strip quotes from string values
+    let strip_quotes = |s: String| -> String {
+        if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
+            s[1..s.len()-1].to_string()
+        } else {
+            s
+        }
+    };
+
     if forward {
         for i in start..len {
             if let Ok(v) = col.get(i) {
-                if v.to_string() == value {
+                if strip_quotes(v.to_string()) == value {
                     return Some(i);
                 }
             }
@@ -651,7 +668,7 @@ fn find_value(df: &polars::prelude::DataFrame, col_name: &str, value: &str, star
     } else {
         for i in (0..=start).rev() {
             if let Ok(v) = col.get(i) {
-                if v.to_string() == value {
+                if strip_quotes(v.to_string()) == value {
                     return Some(i);
                 }
             }
