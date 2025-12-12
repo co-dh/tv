@@ -80,13 +80,16 @@ impl TableState {
         }
         self.cc = (self.cc + n).min(max_cols - 1);
 
-        // Only scroll if cursor goes beyond visible area AND there are more columns to show
         let visible = if self.visible_col_count > 0 { self.visible_col_count } else { 5 };
-        let last_visible_col = self.c0 + visible;
-        let all_cols_visible = last_visible_col >= max_cols;
 
-        if self.cc >= last_visible_col && !all_cols_visible {
-            self.c0 = self.cc.saturating_sub(visible - 1);
+        // Scroll if cursor goes beyond visible area
+        if self.cc >= self.c0 + visible {
+            self.c0 = self.cc - visible + 1;
+        }
+
+        // Don't over-scroll past the last column
+        if self.c0 + visible > max_cols {
+            self.c0 = max_cols.saturating_sub(visible);
         }
     }
 
