@@ -30,11 +30,11 @@ impl Command for Frequency {
 
         // Calculate total count for percentage
         let cnt_col = value_counts.column("Cnt")?.as_materialized_series();
-        let total: i64 = cnt_col.sum().unwrap_or(0);
+        let total: u32 = cnt_col.sum().unwrap_or(0);
 
         // Calculate percentage and bar
-        let counts: Vec<i64> = cnt_col
-            .i64()
+        let counts: Vec<u32> = cnt_col
+            .u32()
             .map(|ca| ca.into_iter().map(|v| v.unwrap_or(0)).collect())
             .unwrap_or_default();
 
