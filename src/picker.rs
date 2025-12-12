@@ -1,7 +1,7 @@
 use anyhow::Result;
 use crossterm::{cursor, execute, terminal::{self, Clear, ClearType}};
 use skim::prelude::*;
-use std::io::{self, Cursor};
+use std::io::{self, Cursor, Write};
 
 /// Run skim fuzzy finder with the given items and prompt
 /// Returns the selected item or None if cancelled
@@ -33,15 +33,13 @@ pub fn pick(items: Vec<String>, prompt: &str) -> Result<Option<String>> {
         })
         .unwrap_or(None);
 
-    // Return to alternate screen
+    // Return to alternate screen and clear
+    let mut stdout = io::stdout();
     terminal::enable_raw_mode()?;
-    execute!(
-        io::stdout(),
-        terminal::EnterAlternateScreen,
-        Clear(ClearType::All),
-        cursor::MoveTo(0, 0),
-        cursor::Hide
-    )?;
+    execute!(stdout, terminal::EnterAlternateScreen)?;
+    execute!(stdout, Clear(ClearType::All), Clear(ClearType::Purge))?;
+    execute!(stdout, cursor::MoveTo(0, 0), cursor::Hide)?;
+    stdout.flush()?;
 
     Ok(result)
 }
@@ -80,14 +78,13 @@ pub fn input_with_hints(items: Vec<String>, prompt: &str) -> Result<Option<Strin
         })
         .unwrap_or(None);
 
+    // Return to alternate screen and clear
+    let mut stdout = io::stdout();
     terminal::enable_raw_mode()?;
-    execute!(
-        io::stdout(),
-        terminal::EnterAlternateScreen,
-        Clear(ClearType::All),
-        cursor::MoveTo(0, 0),
-        cursor::Hide
-    )?;
+    execute!(stdout, terminal::EnterAlternateScreen)?;
+    execute!(stdout, Clear(ClearType::All), Clear(ClearType::Purge))?;
+    execute!(stdout, cursor::MoveTo(0, 0), cursor::Hide)?;
+    stdout.flush()?;
 
     Ok(result)
 }
