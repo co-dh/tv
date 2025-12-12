@@ -41,7 +41,7 @@ impl Renderer {
         if view.state.needs_width_recalc() {
             // Calculate row number width
             let row_num_width = df.height().to_string().len().max(3) as u16;
-            let available_width = cols.saturating_sub(row_num_width + 2); // -2 for spacing
+            let available_width = cols.saturating_sub(row_num_width + 1); // -1 for separator
 
             // Calculate base widths for all columns
             let mut widths: Vec<u16> = (0..df.width())
