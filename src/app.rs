@@ -12,6 +12,8 @@ pub struct AppContext {
     pub history_file: PathBuf,
     /// Message to display in status bar
     pub message: String,
+    /// Counter for generating view IDs
+    next_view_id: usize,
 }
 
 impl AppContext {
@@ -21,7 +23,15 @@ impl AppContext {
             stack: StateStack::new(),
             history_file: PathBuf::from("commands.txt"),
             message: String::from("Press L to load a file, q to quit"),
+            next_view_id: 0,
         }
+    }
+
+    /// Get next view ID
+    pub fn next_id(&mut self) -> usize {
+        let id = self.next_view_id;
+        self.next_view_id += 1;
+        id
     }
 
     /// Create with an initial view
@@ -31,6 +41,7 @@ impl AppContext {
             stack: StateStack::with_initial(view),
             history_file: PathBuf::from("commands.txt"),
             message: String::new(),
+            next_view_id: 1,
         }
     }
 

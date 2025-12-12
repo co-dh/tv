@@ -35,8 +35,10 @@ impl Command for Load {
         }
 
         // Create new view with the loaded data
+        let id = app.next_id();
         let view = ViewState::new(
-            String::from("main"),
+            id,
+            self.file_path.clone(),
             df,
             Some(self.file_path.clone()),
         );

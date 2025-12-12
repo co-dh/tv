@@ -112,6 +112,8 @@ impl TableState {
 /// Complete table view with history
 #[derive(Clone)]
 pub struct ViewState {
+    /// Unique numeric ID for this view
+    pub id: usize,
     /// View identifier (e.g., "main", "freq:col_name")
     pub name: String,
     /// Table data
@@ -124,17 +126,38 @@ pub struct ViewState {
     pub filename: Option<String>,
     /// Whether to show row numbers
     pub show_row_numbers: bool,
+    /// Parent view ID (for frequency tables)
+    pub parent_id: Option<usize>,
+    /// Column name used for frequency (for filtering parent)
+    pub freq_col: Option<String>,
 }
 
 impl ViewState {
-    pub fn new(name: String, dataframe: DataFrame, filename: Option<String>) -> Self {
+    pub fn new(id: usize, name: String, dataframe: DataFrame, filename: Option<String>) -> Self {
         Self {
+            id,
             name,
             dataframe,
             state: TableState::new(),
             history: Vec::new(),
             filename,
             show_row_numbers: false,
+            parent_id: None,
+            freq_col: None,
+        }
+    }
+
+    pub fn new_frequency(id: usize, name: String, dataframe: DataFrame, parent_id: usize, freq_col: String) -> Self {
+        Self {
+            id,
+            name,
+            dataframe,
+            state: TableState::new(),
+            history: Vec::new(),
+            filename: None,
+            show_row_numbers: false,
+            parent_id: Some(parent_id),
+            freq_col: Some(freq_col),
         }
     }
 
@@ -213,5 +236,15 @@ impl StateStack {
     /// Check if we have a current view
     pub fn has_view(&self) -> bool {
         !self.stack.is_empty()
+    }
+
+    /// Find a view by ID
+    pub fn find_by_id(&self, id: usize) -> Option<&ViewState> {
+        self.stack.iter().find(|v| v.id == id)
+    }
+
+    /// Find a view by ID (mutable)
+    pub fn find_by_id_mut(&mut self, id: usize) -> Option<&mut ViewState> {
+        self.stack.iter_mut().find(|v| v.id == id)
     }
 }

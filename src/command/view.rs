@@ -11,9 +11,12 @@ pub struct Frequency {
 
 impl Command for Frequency {
     fn execute(&mut self, app: &mut AppContext) -> Result<()> {
-        let current_view = app
+        let parent_id = app
             .current_view()
-            .ok_or_else(|| anyhow!("No table loaded"))?;
+            .ok_or_else(|| anyhow!("No table loaded"))?
+            .id;
+
+        let current_view = app.current_view().unwrap();
 
         // Check if column exists
         let found = current_view.dataframe.get_column_names()
@@ -51,10 +54,13 @@ impl Command for Frequency {
 
         // Create new view with frequency table
         let view_name = format!("Freq:{}", self.col_name);
-        let new_view = ViewState::new(
+        let id = app.next_id();
+        let new_view = ViewState::new_frequency(
+            id,
             view_name,
             result,
-            None,
+            parent_id,
+            self.col_name.clone(),
         );
 
         app.stack.push(new_view);
@@ -104,7 +110,9 @@ impl Command for Metadata {
             Series::new("nulls".into(), null_counts).into(),
         ])?;
 
+        let id = app.next_id();
         let new_view = ViewState::new(
+            id,
             String::from("metadata"),
             metadata_df,
             None,

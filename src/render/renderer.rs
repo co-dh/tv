@@ -304,7 +304,65 @@ impl Renderer {
         result.chars().rev().collect()
     }
 
-    /// Render status bar at the bottom (qtv style: msg | file | name row/total)
+    /// Calculate column statistics for status bar
+    fn column_stats(df: &DataFrame, col_idx: usize) -> String {
+        let col = df.get_columns()[col_idx].as_materialized_series();
+        let len = col.len();
+        if len == 0 {
+            return String::new();
+        }
+
+        // Count nulls (including empty strings for String type)
+        let null_count = if col.dtype() == &DataType::String {
+            let str_col = col.str().unwrap();
+            str_col.into_iter()
+                .filter(|v| v.is_none() || v.map(|s| s.is_empty()).unwrap_or(false))
+                .count()
+        } else {
+            col.null_count()
+        };
+        let null_pct = 100.0 * null_count as f64 / len as f64;
+
+        match col.dtype() {
+            DataType::Int8 | DataType::Int16 | DataType::Int32 | DataType::Int64
+            | DataType::UInt8 | DataType::UInt16 | DataType::UInt32 | DataType::UInt64
+            | DataType::Float32 | DataType::Float64 => {
+                // Numerical: min, mean, max, std
+                let col_f64 = col.cast(&DataType::Float64).ok();
+                if let Some(c) = col_f64 {
+                    let min = c.min::<f64>().ok().flatten().unwrap_or(f64::NAN);
+                    let max = c.max::<f64>().ok().flatten().unwrap_or(f64::NAN);
+                    let mean = c.mean().unwrap_or(f64::NAN);
+                    let std = c.std(1).unwrap_or(f64::NAN);
+                    if null_pct > 0.0 {
+                        format!("null:{:.0}% [{:.2},{:.2},{:.2}] σ{:.2}", null_pct, min, mean, max, std)
+                    } else {
+                        format!("[{:.2},{:.2},{:.2}] σ{:.2}", min, mean, max, std)
+                    }
+                } else {
+                    String::new()
+                }
+            }
+            _ => {
+                // Categorical: distinct count, mode (most frequent value)
+                let n_unique = col.n_unique().unwrap_or(0);
+                // Get mode by value_counts and taking first
+                let mode = col.value_counts(true, false, "cnt".into(), false)
+                    .ok()
+                    .and_then(|vc| vc.column(col.name().as_str()).ok().cloned())
+                    .and_then(|c| c.get(0).ok().map(|v| v.to_string()))
+                    .unwrap_or_default();
+                let mode_str = if mode.len() > 10 { &mode[..10] } else { &mode };
+                if null_pct > 0.0 {
+                    format!("null:{:.0}% #{}'{}'", null_pct, n_unique, mode_str)
+                } else {
+                    format!("#{}'{}'", n_unique, mode_str)
+                }
+            }
+        }
+    }
+
+    /// Render status bar at the bottom (left: msg/file, middle: col stats, right: row/total)
     fn render_status_bar<W: Write>(view: &ViewState, message: &str, rows: u16, cols: u16, writer: &mut W) -> Result<()> {
         let status_row = rows - 1;
         execute!(writer, cursor::MoveTo(0, status_row))?;
@@ -313,31 +371,41 @@ impl Renderer {
         let total = view.row_count();
         let total_str = Self::commify(total);
 
-        let status = if !message.is_empty() {
-            format!("{} | {} | {} {}/{}",
-                message,
-                view.filename.as_deref().unwrap_or(""),
-                &view.name,
-                view.state.cr,
-                total_str
-            )
+        // Left side: message or filename (for special views like Freq:*, show the name)
+        let left = if !message.is_empty() {
+            message.to_string()
+        } else if view.name.starts_with("Freq:") || view.name == "metadata" {
+            view.name.clone()
         } else {
-            format!("{} | {} {}/{}",
-                view.filename.as_deref().unwrap_or("(no file)"),
-                &view.name,
-                view.state.cr,
-                total_str
-            )
+            view.filename.as_deref().unwrap_or("(no file)").to_string()
         };
 
-        // Pad to fill screen width
-        let padded = format!("{:width$}", status, width = cols as usize);
+        // Middle: column statistics
+        let col_stats = if view.col_count() > 0 {
+            Self::column_stats(&view.dataframe, view.state.cc)
+        } else {
+            String::new()
+        };
+
+        // Right side: row/total
+        let right = format!("{}/{}", view.state.cr, total_str);
+
+        // Calculate padding
+        let left_and_stats = format!("{} {}", left, col_stats);
+        let total_len = left_and_stats.len() + right.len();
+        let padding = if (cols as usize) > total_len {
+            cols as usize - total_len
+        } else {
+            1
+        };
+
+        let status = format!("{}{:width$}{}", left_and_stats, "", right, width = padding);
 
         execute!(
             writer,
             SetBackgroundColor(Color::DarkGrey),
             SetForegroundColor(Color::White),
-            Print(&padded[..padded.len().min(cols as usize)]),
+            Print(&status[..status.len().min(cols as usize)]),
             ResetColor
         )?;
 

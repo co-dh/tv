@@ -163,8 +163,9 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
             if !app.has_view() || app.stack.len() == 1 {
                 return Ok(false);
             }
-            // Otherwise pop from stack
+            // Otherwise pop from stack and clear message
             app.stack.pop();
+            app.message.clear();
         }
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             // Ctrl+C to force quit
@@ -359,6 +360,46 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                         let cmd = Box::new(RenameCol { old_name, new_name });
                         if let Err(e) = CommandExecutor::execute(app, cmd) {
                             app.set_message(format!("Error: {}", e));
+                        }
+                    }
+                }
+            }
+        }
+        KeyCode::Enter => {
+            // Enter: Filter parent table from frequency view
+            if let Some(view) = app.current_view() {
+                if let (Some(parent_id), Some(freq_col)) = (view.parent_id, view.freq_col.clone()) {
+                    // Get the value from first column at current row
+                    let cr = view.state.cr;
+                    let value = view.dataframe.get_columns()[0]
+                        .get(cr)
+                        .ok()
+                        .map(|v| v.to_string())
+                        .unwrap_or_default();
+
+                    // Find parent view and filter
+                    if let Some(parent) = app.stack.find_by_id(parent_id) {
+                        let parent_df = parent.dataframe.clone();
+                        let parent_filename = parent.filename.clone();
+
+                        // Create filter expression
+                        let filter_expr = format!("{}=={}", freq_col, value);
+                        let cmd = Box::new(Filter { expression: filter_expr });
+
+                        // Push a temporary view with parent data, then filter
+                        let id = app.next_id();
+                        let filtered_view = state::ViewState::new(
+                            id,
+                            format!("{}={}", freq_col, value),
+                            parent_df,
+                            parent_filename,
+                        );
+                        app.stack.push(filtered_view);
+
+                        // Now apply the filter
+                        if let Err(e) = CommandExecutor::execute(app, cmd) {
+                            app.set_message(format!("Error: {}", e));
+                            app.stack.pop(); // Remove the failed view
                         }
                     }
                 }
