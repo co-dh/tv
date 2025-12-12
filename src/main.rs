@@ -165,7 +165,7 @@ fn parse_command(line: &str, _app: &AppContext) -> Option<Box<dyn command::Comma
         "freq" | "frequency" => Some(Box::new(Frequency { col_name: arg.to_string() })),
         "meta" | "metadata" => Some(Box::new(Metadata)),
         "corr" | "correlation" => Some(Box::new(Correlation { selected_cols: vec![] })),
-        "delcol" => Some(Box::new(DelCol { col_name: arg.to_string() })),
+        "delcol" => Some(Box::new(DelCol { col_names: arg.split(',').map(|s| s.trim().to_string()).collect() })),
         "filter" => Some(Box::new(Filter { expression: arg.to_string() })),
         "select" | "sel" => Some(Box::new(Select {
             col_names: arg.split(',').map(|s| s.trim().to_string()).collect()
@@ -292,7 +292,7 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                         }
                     }
                 } else if !col_names.is_empty() {
-                    for c in &col_names { let _ = CommandExecutor::exec(app, Box::new(DelCol { col_name: c.clone() })); }
+                    let _ = CommandExecutor::exec(app, Box::new(DelCol { col_names: col_names }));
                     if let Some(v) = app.view_mut() { v.selected_cols.clear(); }
                 }
             }

@@ -3,17 +3,17 @@ use crate::command::Command;
 use anyhow::{anyhow, Result};
 use polars::prelude::*;
 
-/// Delete column
-pub struct DelCol { pub col_name: String }
+/// Delete columns
+pub struct DelCol { pub col_names: Vec<String> }
 
 impl Command for DelCol {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         let v = app.req_mut()?;
-        v.dataframe = v.dataframe.drop(&self.col_name)?;
+        for c in &self.col_names { v.dataframe = v.dataframe.drop(c)?; }
         if v.state.cc >= v.cols() && v.cols() > 0 { v.state.cc = v.cols() - 1; }
         Ok(())
     }
-    fn to_str(&self) -> String { format!("delcol {}", self.col_name) }
+    fn to_str(&self) -> String { format!("delcol {}", self.col_names.join(",")) }
 }
 
 /// Filter rows

@@ -53,8 +53,12 @@ echo "$OUT" | head -20 | grep -q "Alice" && echo "  sort asc: PASS" || exit 1
 OUT=$($TV -c "load ./tmp/test.csv | sortdesc value" 2>/dev/null)
 echo "$OUT" | head -20 | grep -q "Dave" && echo "  sort desc: PASS" || exit 1
 
-# delcol
-! $TV -c "load ./tmp/test.csv | delcol score" 2>/dev/null | grep -q "score" && echo "  delcol: PASS" || exit 1
+# delcol single
+! $TV -c "load ./tmp/test.csv | delcol score" 2>/dev/null | grep -q "score" && echo "  delcol single: PASS" || exit 1
+
+# delcol multi
+OUT=$($TV -c "load ./tmp/test.csv | delcol city,score" 2>/dev/null)
+! echo "$OUT" | grep -q "city" && ! echo "$OUT" | grep -q "score" && echo "$OUT" | grep -q "name" && echo "  delcol multi: PASS" || exit 1
 
 # rename
 $TV -c "load ./tmp/test.csv | rename name username" 2>/dev/null | grep -q "username" && echo "  rename: PASS" || exit 1
