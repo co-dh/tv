@@ -39,71 +39,14 @@ impl Renderer {
 
         // Calculate column widths if needed
         if view.state.needs_width_recalc() {
-            // Calculate row number width
-            let row_num_width = df.height().to_string().len().max(3) as u16;
-            let available_width = cols.saturating_sub(row_num_width + 1); // -1 for separator
-
             // Calculate base widths for all columns
-            let mut widths: Vec<u16> = (0..df.width())
+            let widths: Vec<u16> = (0..df.width())
                 .map(|col_idx| Self::calculate_column_width(df, col_idx, &view.state))
                 .collect();
-
-            // Find visible columns starting from c0
-            let mut visible_widths = Vec::new();
-            let mut visible_indices = Vec::new();
-
-            for col_idx in view.state.c0..df.width() {
-                let width = widths[col_idx];
-                // Calculate space needed: sum of all widths + spaces between them
-                let spaces_needed = if visible_widths.is_empty() { 0 } else { visible_widths.len() as u16 };
-                let total_if_added = visible_widths.iter().sum::<u16>() + width + spaces_needed;
-
-                if total_if_added > available_width && !visible_widths.is_empty() {
-                    break;
-                }
-                visible_widths.push(width);
-                visible_indices.push(col_idx);
-            }
-
-            // Distribute extra space among visible columns
-            if !visible_widths.is_empty() {
-                // Calculate space used: sum of widths + spaces between columns (not after last)
-                let spaces = if visible_widths.len() > 1 { visible_widths.len() as u16 - 1 } else { 0 };
-                let total_used = visible_widths.iter().sum::<u16>() + spaces;
-
-                if total_used < available_width {
-                    let extra_space = available_width - total_used;
-                    let per_col = extra_space / visible_widths.len() as u16;
-                    let remainder = extra_space % visible_widths.len() as u16;
-
-                    for (i, &col_idx) in visible_indices.iter().enumerate() {
-                        widths[col_idx] += per_col;
-                        if i < remainder as usize {
-                            widths[col_idx] += 1;
-                        }
-                    }
-                }
-            }
 
             view.state.col_widths = widths;
             view.state.widths_calc_row = view.state.cr;
         }
-
-        // Always calculate visible column count based on current c0
-        let row_num_width = df.height().to_string().len().max(3) as u16;
-        let available_width = cols.saturating_sub(row_num_width + 1);
-        let mut visible_count = 0usize;
-        let mut used_width = 0u16;
-        for col_idx in view.state.c0..df.width() {
-            let col_width = view.state.col_widths.get(col_idx).copied().unwrap_or(10);
-            let space = if visible_count > 0 { 1 } else { 0 };
-            if used_width + space + col_width > available_width && visible_count > 0 {
-                break;
-            }
-            used_width += space + col_width;
-            visible_count += 1;
-        }
-        view.state.visible_col_count = visible_count;
 
         let state = &view.state;
 
@@ -118,21 +61,41 @@ impl Renderer {
 
         // Calculate row number width
         let row_num_width = df.height().to_string().len().max(3) as u16;
+        let screen_width = cols.saturating_sub(row_num_width + 1) as i32;
+
+        // Calculate xs - x position for each column (qtv style)
+        let mut xs: Vec<i32> = Vec::with_capacity(df.width() + 1);
+        xs.push(0);
+        for col_idx in 0..df.width() {
+            let col_width = state.col_widths.get(col_idx).copied().unwrap_or(10) as i32;
+            let last = *xs.last().unwrap();
+            xs.push(last + col_width + 1); // +1 for space between columns
+        }
+
+        // If cursor column right edge exceeds screen width, shift left
+        let cursor_right = xs.get(state.cc + 1).copied().unwrap_or(0);
+        if cursor_right > screen_width {
+            // Find shift: first column whose position > (cursor_right - screen_width)
+            let threshold = cursor_right - screen_width;
+            let shift = xs.iter().find(|&&x| x > threshold).copied().unwrap_or(0);
+            for x in xs.iter_mut() {
+                *x -= shift;
+            }
+        }
 
         // Calculate visible area
-        let visible_rows = (rows as usize).saturating_sub(2); // -2 for status bar and padding
+        let visible_rows = (rows as usize).saturating_sub(2);
         let end_row = (state.r0 + visible_rows).min(df.height());
-        let data_cols = cols.saturating_sub(row_num_width + 1); // -1 for separator
 
         // Render column headers
-        Self::render_headers(df, state, data_cols, row_num_width, writer)?;
+        Self::render_headers_xs(df, state, &xs, screen_width, row_num_width, writer)?;
 
         // Render data rows
         for row_idx in state.r0..end_row {
-            let screen_row = (row_idx - state.r0 + 1) as u16; // +1 for header
+            let screen_row = (row_idx - state.r0 + 1) as u16;
             execute!(writer, cursor::MoveTo(0, screen_row))?;
 
-            Self::render_row(df, row_idx, state, data_cols, row_num_width, writer)?;
+            Self::render_row_xs(df, row_idx, state, &xs, screen_width, row_num_width, writer)?;
         }
 
         // Clear any remaining lines
@@ -147,8 +110,8 @@ impl Renderer {
         Ok(())
     }
 
-    /// Render column headers
-    fn render_headers<W: Write>(df: &DataFrame, state: &TableState, term_cols: u16, row_num_width: u16, writer: &mut W) -> Result<()> {
+    /// Render column headers using xs positions (qtv style)
+    fn render_headers_xs<W: Write>(df: &DataFrame, state: &TableState, xs: &[i32], screen_width: i32, row_num_width: u16, writer: &mut W) -> Result<()> {
         execute!(
             writer,
             cursor::MoveTo(0, 0),
@@ -159,13 +122,21 @@ impl Renderer {
         let header = format!("{:>width$} ", "#", width = row_num_width as usize);
         execute!(writer, Print(&header))?;
 
-        let mut col_offset = 0u16;
-        for (col_idx, col_name) in df.get_column_names().iter().enumerate().skip(state.c0) {
-            if col_offset >= term_cols {
+        for (col_idx, col_name) in df.get_column_names().iter().enumerate() {
+            let x = xs[col_idx];
+            let next_x = xs.get(col_idx + 1).copied().unwrap_or(x);
+
+            // Skip if column is completely off-screen left
+            if next_x <= 0 {
+                continue;
+            }
+            // Stop if column starts beyond screen
+            if x >= screen_width {
                 break;
             }
 
             let is_current = col_idx == state.cc;
+            let col_width = state.col_widths.get(col_idx).copied().unwrap_or(10);
 
             if is_current {
                 execute!(
@@ -175,9 +146,7 @@ impl Renderer {
                 )?;
             }
 
-            let col_width = Self::column_width(state, col_idx);
             let display = format!("{:width$}", col_name, width = col_width as usize);
-
             execute!(writer, Print(&display[..display.len().min(col_width as usize)]))?;
 
             if is_current {
@@ -185,14 +154,13 @@ impl Renderer {
             }
 
             execute!(writer, Print(" "))?;
-            col_offset += col_width + 1;
         }
 
         Ok(())
     }
 
-    /// Render a single data row
-    fn render_row<W: Write>(df: &DataFrame, row_idx: usize, state: &TableState, term_cols: u16, row_num_width: u16, writer: &mut W) -> Result<()> {
+    /// Render a single data row using xs positions (qtv style)
+    fn render_row_xs<W: Write>(df: &DataFrame, row_idx: usize, state: &TableState, xs: &[i32], screen_width: i32, row_num_width: u16, writer: &mut W) -> Result<()> {
         // Clear the line first
         execute!(writer, terminal::Clear(terminal::ClearType::CurrentLine))?;
 
@@ -207,15 +175,20 @@ impl Renderer {
             execute!(writer, ResetColor)?;
         }
 
-        let mut col_offset = 0u16;
+        for col_idx in 0..df.width() {
+            let x = xs[col_idx];
+            let next_x = xs.get(col_idx + 1).copied().unwrap_or(x);
 
-        for (col_idx, _col) in df.get_columns().iter().enumerate().skip(state.c0) {
-            if col_offset >= term_cols {
+            // Skip if column is completely off-screen left
+            if next_x <= 0 {
+                continue;
+            }
+            // Stop if column starts beyond screen
+            if x >= screen_width {
                 break;
             }
 
             let is_current_cell = row_idx == state.cr && col_idx == state.cc;
-            let is_current_row = row_idx == state.cr;
 
             if is_current_cell {
                 execute!(
@@ -227,7 +200,7 @@ impl Renderer {
                 execute!(writer, SetForegroundColor(Color::White))?;
             }
 
-            let col_width = Self::column_width(state, col_idx);
+            let col_width = state.col_widths.get(col_idx).copied().unwrap_or(10);
             let value = Self::format_value(df, col_idx, row_idx);
             let display = format!("{:width$}", value, width = col_width as usize);
 
@@ -238,7 +211,6 @@ impl Renderer {
             }
 
             execute!(writer, Print(" "))?;
-            col_offset += col_width + 1;
         }
 
         Ok(())
@@ -267,11 +239,6 @@ impl Renderer {
             }
             _ => col.get(row_idx).map(|v| v.to_string()).unwrap_or_else(|_| "null".to_string()),
         }
-    }
-
-    /// Get cached column width or default
-    fn column_width(state: &TableState, col_idx: usize) -> u16 {
-        state.col_widths.get(col_idx).copied().unwrap_or(10)
     }
 
     /// Calculate column width by sampling data around current row

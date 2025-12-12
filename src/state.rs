@@ -7,8 +7,6 @@ pub struct TableState {
     pub r0: usize,
     /// Current row cursor
     pub cr: usize,
-    /// First visible column (viewport left)
-    pub c0: usize,
     /// Current column cursor
     pub cc: usize,
     /// Terminal dimensions (rows, cols)
@@ -17,8 +15,6 @@ pub struct TableState {
     pub col_widths: Vec<u16>,
     /// Row position where widths were calculated
     pub widths_calc_row: usize,
-    /// Number of columns currently visible on screen
-    pub visible_col_count: usize,
 }
 
 impl TableState {
@@ -26,12 +22,10 @@ impl TableState {
         Self {
             r0: 0,
             cr: 0,
-            c0: 0,
             cc: 0,
             viewport: (0, 0),
             col_widths: Vec::new(),
             widths_calc_row: 0,
-            visible_col_count: 0,
         }
     }
 
@@ -73,34 +67,17 @@ impl TableState {
         }
     }
 
-    /// Move cursor right by n columns
+    /// Move cursor right by n columns (just update cc, renderer handles visibility)
     pub fn move_right(&mut self, n: usize, max_cols: usize) {
         if max_cols == 0 {
             return;
         }
         self.cc = (self.cc + n).min(max_cols - 1);
-
-        let visible = if self.visible_col_count > 0 { self.visible_col_count } else { 5 };
-
-        // Scroll if cursor goes beyond visible area
-        if self.cc >= self.c0 + visible {
-            self.c0 = self.cc - visible + 1;
-        }
-
-        // Don't over-scroll past the last column
-        if self.c0 + visible > max_cols {
-            self.c0 = max_cols.saturating_sub(visible);
-        }
     }
 
-    /// Move cursor left by n columns
+    /// Move cursor left by n columns (just update cc, renderer handles visibility)
     pub fn move_left(&mut self, n: usize) {
         self.cc = self.cc.saturating_sub(n);
-
-        // Adjust horizontal viewport to show current column
-        if self.cc < self.c0 {
-            self.c0 = self.cc;
-        }
     }
 
     /// Jump to top of table
