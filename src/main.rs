@@ -143,16 +143,11 @@ fn run_script(script_path: &str) -> Result<()> {
     Ok(())
 }
 
-/// Print table to stdout (for script mode) - header in bold
+/// Print table to stdout (for script mode)
 fn print_table(app: &AppContext) {
     if let Some(view) = app.view() {
-        let df = &view.dataframe;
-        println!("=== {} ({} rows) ===", view.name, df.height());
-        let s = format!("{}", df);
-        for (i, line) in s.lines().enumerate() {
-            if i == 2 { println!("\x1b[1m{}\x1b[0m", line); }  // bold header row
-            else { println!("{}", line); }
-        }
+        println!("=== {} ({} rows) ===", view.name, view.dataframe.height());
+        println!("{}", view.dataframe);
     } else {
         println!("No table loaded");
     }
@@ -302,23 +297,24 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
             }
         }
         KeyCode::Char('/') => {
-            // /: Search column values with skim (supports glob patterns for strings)
+            // /: Search with SQL WHERE expression
             if let Some(view) = app.view() {
                 if let Some(col_name) = view.state.cur_col(&view.dataframe) {
-                    let items = get_column_hints(&view.dataframe, &col_name, view.state.cr);
+                    let items = get_sql_hints(&view.dataframe, &col_name, view.state.cr);
 
-                    if let Ok(Some(selected)) = picker::input(items, &format!("{}> ", col_name)) {
-                        app.search.col_name = Some(col_name.clone());
-                        app.search.value = Some(selected.clone());
+                    if let Ok(Some(expr)) = picker::input(items, "Search> ") {
+                        let matches = find_sql(&view.dataframe, &expr);
+                        app.search.col_name = None;
+                        app.search.value = Some(expr.clone());
                         app.search.regex = None;
 
                         if let Some(view) = app.view_mut() {
-                            if let Some(pos) = find_value(&view.dataframe, &col_name, &selected, 0, true) {
+                            if let Some(&pos) = matches.first() {
                                 view.state.cr = pos;
                                 view.state.visible();
-                                app.msg(format!("Found: {}={}", col_name, selected));
+                                app.msg(format!("Found {} match(es)", matches.len()));
                             } else {
-                                app.msg(format!("Not found: {}={}", col_name, selected));
+                                app.msg(format!("Not found: {}", expr));
                             }
                         }
                     }
@@ -342,88 +338,80 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
             }
         }
         KeyCode::Char('n') => {
-            // n: Find next occurrence (value or regex)
-            if let Some(col_name) = app.search.col_name.clone() {
-                if let Some(pattern) = app.search.regex.clone() {
-                    // Regex search
-                    if let Ok(re) = regex::Regex::new(&pattern) {
-                        if let Some(view) = app.view_mut() {
-                            let start = view.state.cr + 1;
-                            if let Some(pos) = find_regex(&view.dataframe, &col_name, &re, start, true) {
-                                view.state.cr = pos;
-                                view.state.visible();
-                                app.msg(format!("Regex match: /{}/", pattern));
-                            } else {
-                                app.msg("No more matches".to_string());
-                            }
-                        }
-                    }
-                } else if let Some(value) = app.search.value.clone() {
-                    // Value search
+            // n: Find next occurrence (SQL or regex)
+            if let (Some(col_name), Some(pattern)) = (app.search.col_name.clone(), app.search.regex.clone()) {
+                // Regex search
+                if let Ok(re) = regex::Regex::new(&pattern) {
                     if let Some(view) = app.view_mut() {
                         let start = view.state.cr + 1;
-                        if let Some(pos) = find_value(&view.dataframe, &col_name, &value, start, true) {
+                        if let Some(pos) = find_regex(&view.dataframe, &col_name, &re, start, true) {
                             view.state.cr = pos;
                             view.state.visible();
-                            app.msg(format!("Found: {}={}", col_name, value));
                         } else {
                             app.msg("No more matches".to_string());
                         }
                     }
-                } else {
-                    app.msg("No search active".to_string());
+                }
+            } else if let Some(expr) = app.search.value.clone() {
+                // SQL search
+                if let Some(view) = app.view_mut() {
+                    let matches = find_sql(&view.dataframe, &expr);
+                    let cur = view.state.cr;
+                    if let Some(&pos) = matches.iter().find(|&&i| i > cur) {
+                        view.state.cr = pos;
+                        view.state.visible();
+                    } else {
+                        app.msg("No more matches".to_string());
+                    }
                 }
             } else {
                 app.msg("No search active".to_string());
             }
         }
         KeyCode::Char('N') => {
-            // N: Find previous occurrence (value or regex)
-            if let Some(col_name) = app.search.col_name.clone() {
-                if let Some(pattern) = app.search.regex.clone() {
-                    // Regex search
-                    if let Ok(re) = regex::Regex::new(&pattern) {
-                        if let Some(view) = app.view_mut() {
-                            let start = view.state.cr.saturating_sub(1);
-                            if let Some(pos) = find_regex(&view.dataframe, &col_name, &re, start, false) {
-                                view.state.cr = pos;
-                                view.state.visible();
-                                app.msg(format!("Regex match: /{}/", pattern));
-                            } else {
-                                app.msg("No more matches".to_string());
-                            }
-                        }
-                    }
-                } else if let Some(value) = app.search.value.clone() {
-                    // Value search
+            // N: Find previous occurrence (SQL or regex)
+            if let (Some(col_name), Some(pattern)) = (app.search.col_name.clone(), app.search.regex.clone()) {
+                // Regex search
+                if let Ok(re) = regex::Regex::new(&pattern) {
                     if let Some(view) = app.view_mut() {
                         let start = view.state.cr.saturating_sub(1);
-                        if let Some(pos) = find_value(&view.dataframe, &col_name, &value, start, false) {
+                        if let Some(pos) = find_regex(&view.dataframe, &col_name, &re, start, false) {
                             view.state.cr = pos;
                             view.state.visible();
-                            app.msg(format!("Found: {}={}", col_name, value));
                         } else {
                             app.msg("No more matches".to_string());
                         }
                     }
-                } else {
-                    app.msg("No search active".to_string());
+                }
+            } else if let Some(expr) = app.search.value.clone() {
+                // SQL search
+                if let Some(view) = app.view_mut() {
+                    let matches = find_sql(&view.dataframe, &expr);
+                    let cur = view.state.cr;
+                    if let Some(&pos) = matches.iter().rev().find(|&&i| i < cur) {
+                        view.state.cr = pos;
+                        view.state.visible();
+                    } else {
+                        app.msg("No more matches".to_string());
+                    }
                 }
             } else {
                 app.msg("No search active".to_string());
             }
         }
         KeyCode::Char('*') => {
-            // *: Search for current cell value
+            // *: Search for current cell value (creates SQL expression)
             if let Some(view) = app.view() {
                 if let Some(col_name) = view.state.cur_col(&view.dataframe) {
-                    let cr = view.state.cr;
-                    if let Ok(value) = view.dataframe.get_columns()[view.state.cc].get(cr) {
-                        let value_str = value.to_string();
-                        app.search.col_name = Some(col_name.clone());
-                        app.search.value = Some(value_str.clone());
-                        app.search.regex = None; // Clear regex search
-                        app.msg(format!("Search: {}={}", col_name, value_str));
+                    let col = &view.dataframe.get_columns()[view.state.cc];
+                    if let Ok(value) = col.get(view.state.cr) {
+                        let is_str = matches!(col.dtype(), polars::prelude::DataType::String);
+                        let val = strip_quotes(&value.to_string());
+                        let expr = if is_str { format!("{} = '{}'", col_name, val) } else { format!("{} = {}", col_name, val) };
+                        app.search.col_name = None;
+                        app.search.value = Some(expr.clone());
+                        app.search.regex = None;
+                        app.msg(format!("Search: {}", expr));
                     }
                 }
             }
@@ -965,29 +953,7 @@ fn strip_quotes(s: &str) -> String {
     }
 }
 
-/// Get column hints for search: glob patterns (*) from current cell + unique values
-fn get_column_hints(df: &polars::prelude::DataFrame, col_name: &str, row: usize) -> Vec<String> {
-    let mut items = Vec::new();
-    if let Ok(col) = df.column(col_name) {
-        if matches!(col.dtype(), polars::prelude::DataType::String) {
-            if let Ok(val) = col.get(row) {
-                let v = strip_quotes(&val.to_string());
-                if v.len() >= 2 {
-                    items.push(format!("{}*", &v[..2]));
-                    items.push(format!("*{}", &v[v.len()-2..]));
-                }
-            }
-        }
-        if let Ok(uniq) = col.unique() {
-            for i in 0..uniq.len() {
-                if let Ok(v) = uniq.get(i) { items.push(strip_quotes(&v.to_string())); }
-            }
-        }
-    }
-    items
-}
-
-/// Get SQL hints for filter: LIKE patterns (%) + unique values with quotes
+/// Get SQL hints for search/filter: LIKE patterns (%) + unique values with quotes
 fn get_sql_hints(df: &polars::prelude::DataFrame, col_name: &str, row: usize) -> Vec<String> {
     let mut items = Vec::new();
     if let Ok(col) = df.column(col_name) {
@@ -1017,46 +983,21 @@ fn get_sql_hints(df: &polars::prelude::DataFrame, col_name: &str, row: usize) ->
     items
 }
 
-/// Find a value in a column, returns row index (supports glob patterns: *abc, abc*, *abc*)
-fn find_value(df: &polars::prelude::DataFrame, col_name: &str, value: &str, start: usize, forward: bool) -> Option<usize> {
-    let col = df.column(col_name).ok()?;
-    let len = col.len();
-
-    // Determine match type based on glob pattern
-    let matches_value = |cell: &str| -> bool {
-        if value.starts_with('*') && value.ends_with('*') && value.len() > 2 {
-            // *pattern* -> contains
-            cell.contains(&value[1..value.len()-1])
-        } else if value.starts_with('*') && value.len() > 1 {
-            // *pattern -> ends with
-            cell.ends_with(&value[1..])
-        } else if value.ends_with('*') && value.len() > 1 {
-            // pattern* -> starts with
-            cell.starts_with(&value[..value.len()-1])
-        } else {
-            // exact match
-            cell == value
-        }
-    };
-
-    if forward {
-        for i in start..len {
-            if let Ok(v) = col.get(i) {
-                if matches_value(&strip_quotes(&v.to_string())) {
-                    return Some(i);
-                }
-            }
-        }
-    } else {
-        for i in (0..=start).rev() {
-            if let Ok(v) = col.get(i) {
-                if matches_value(&strip_quotes(&v.to_string())) {
-                    return Some(i);
-                }
-            }
-        }
-    }
-    None
+/// Find rows matching SQL WHERE expression, returns row indices
+fn find_sql(df: &polars::prelude::DataFrame, expr: &str) -> Vec<usize> {
+    use polars::prelude::*;
+    let mut ctx = polars::sql::SQLContext::new();
+    let with_idx = df.clone().lazy().with_row_index("__idx__", None);
+    ctx.register("df", with_idx);
+    ctx.execute(&format!("SELECT __idx__ FROM df WHERE {}", expr))
+        .and_then(|lf| lf.collect())
+        .map(|result| {
+            result.column("__idx__").ok()
+                .and_then(|c| c.idx().ok())
+                .map(|idx| idx.into_iter().filter_map(|v| v.map(|i| i as usize)).collect())
+                .unwrap_or_default()
+        })
+        .unwrap_or_default()
 }
 
 /// Find a regex match in a column, returns row index
@@ -1225,41 +1166,17 @@ mod tests {
     }
 
     #[test]
-    fn test_find_value_exact() {
+    fn test_find_sql_exact() {
         let df = make_test_df();
-        assert_eq!(find_value(&df, "name", "banana", 0, true), Some(1));
-        assert_eq!(find_value(&df, "name", "notfound", 0, true), None);
+        assert_eq!(find_sql(&df, "name = 'banana'"), vec![1]);
+        assert_eq!(find_sql(&df, "name = 'notfound'"), vec![]);
     }
 
     #[test]
-    fn test_find_value_starts_with() {
+    fn test_find_sql_like() {
         let df = make_test_df();
-        // "b*" matches banana (1) and blueberry (5)
-        assert_eq!(find_value(&df, "name", "b*", 0, true), Some(1));
-        assert_eq!(find_value(&df, "name", "b*", 2, true), Some(5));
-    }
-
-    #[test]
-    fn test_find_value_ends_with() {
-        let df = make_test_df();
-        // "*rry" matches cherry (2) and blueberry (5)
-        assert_eq!(find_value(&df, "name", "*rry", 0, true), Some(2));
-        assert_eq!(find_value(&df, "name", "*rry", 3, true), Some(5));
-    }
-
-    #[test]
-    fn test_find_value_contains() {
-        let df = make_test_df();
-        // "*apple*" matches apple (0) and pineapple (3)
-        assert_eq!(find_value(&df, "name", "*apple*", 0, true), Some(0));
-        assert_eq!(find_value(&df, "name", "*apple*", 1, true), Some(3));
-    }
-
-    #[test]
-    fn test_find_value_backward() {
-        let df = make_test_df();
-        // Search backward for "b*" from position 5
-        assert_eq!(find_value(&df, "name", "b*", 5, false), Some(5)); // blueberry
-        assert_eq!(find_value(&df, "name", "b*", 4, false), Some(1)); // banana
+        assert_eq!(find_sql(&df, "name LIKE 'b%'"), vec![1, 5]);  // banana, blueberry
+        assert_eq!(find_sql(&df, "name LIKE '%rry'"), vec![2, 5]);  // cherry, blueberry
+        assert_eq!(find_sql(&df, "name LIKE '%apple%'"), vec![0, 3]);  // apple, pineapple
     }
 }

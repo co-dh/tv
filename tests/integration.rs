@@ -60,14 +60,14 @@ fn test_filter_integer_comparison() {
     let id = unique_id();
     let csv = setup_test_csv(id);
 
-    let output = run_script(&format!("load {}\nfilter a>=3\n", csv), id);
+    let output = run_script(&format!("load {}\nfilter a >= 3\n", csv), id);
     assert!(output.contains("(3 rows)"), "a>=3 should match rows 3,4,5");
 
-    let output = run_script(&format!("load {}\nfilter a<3\n", csv), id);
+    let output = run_script(&format!("load {}\nfilter a < 3\n", csv), id);
     assert!(output.contains("(2 rows)"), "a<3 should match rows 1,2");
 
-    let output = run_script(&format!("load {}\nfilter a==3\n", csv), id);
-    assert!(output.contains("(1 rows)"), "a==3 should match 1 row");
+    let output = run_script(&format!("load {}\nfilter a = 3\n", csv), id);
+    assert!(output.contains("(1 rows)"), "a=3 should match 1 row");
 }
 
 #[test]
@@ -75,8 +75,8 @@ fn test_filter_string_equality() {
     let id = unique_id();
     let csv = setup_test_csv(id);
 
-    let output = run_script(&format!("load {}\nfilter b==x\n", csv), id);
-    assert!(output.contains("(3 rows)"), "b==x should match 3 rows");
+    let output = run_script(&format!("load {}\nfilter b = 'x'\n", csv), id);
+    assert!(output.contains("(3 rows)"), "b='x' should match 3 rows");
 }
 
 fn setup_test_csv_with_nulls(id: usize) -> String {
@@ -256,44 +256,6 @@ fn test_pipe_multiple_operations() {
     assert!(output.contains("=== metadata"), "Should end with metadata view");
     // Metadata should have 2 columns (a and b from filtered data)
     assert!(output.contains("column"), "Should have column header");
-}
-
-#[test]
-fn test_delnull_removes_null_columns() {
-    let id = unique_id();
-    let csv = setup_test_csv_with_nulls(id);
-
-    // Column 'c' is all null, should be deleted
-    let output = run_script(&format!("load {} | delnull\n", csv), id);
-
-    // Should still have data
-    assert!(output.contains("(5 rows)"), "Should keep all rows");
-    // Column 'c' should be removed - check that we don't see it in output
-    // The output shows column names, 'c' was the null column
-}
-
-#[test]
-fn test_del1_removes_single_value_columns() {
-    let id = unique_id();
-    let csv = setup_test_csv_with_nulls(id);
-
-    // Column 'd' has only one value "constant", should be deleted
-    let output = run_script(&format!("load {} | del1\n", csv), id);
-
-    // Should still have data
-    assert!(output.contains("(5 rows)"), "Should keep all rows");
-}
-
-#[test]
-fn test_delnull_and_del1_chained() {
-    let id = unique_id();
-    let csv = setup_test_csv_with_nulls(id);
-
-    // Delete both null and single-value columns
-    let output = run_script(&format!("load {} | delnull | del1\n", csv), id);
-
-    // Should still have data with remaining columns
-    assert!(output.contains("(5 rows)"), "Should keep all rows");
 }
 
 #[test]
