@@ -322,14 +322,38 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
             }
         }
         KeyCode::Char('\\') => {
-            // \: Filter rows with expression (using skim for input)
-            if !app.has_view() {
-                app.set_message("No table loaded".to_string());
-            } else if let Ok(Some(expression)) = picker::input("Filter> ") {
-                let cmd = Box::new(Filter { expression });
-                if let Err(e) = CommandExecutor::execute(app, cmd) {
-                    app.set_message(format!("Error: {}", e));
+            // \: Filter rows with expression (using skim with column values as hints)
+            if let Some(view) = app.current_view() {
+                if let Some(col_name) = view.state.current_column(&view.dataframe) {
+                    // Get unique values as hints
+                    let items: Vec<String> = view.dataframe.column(&col_name)
+                        .ok()
+                        .and_then(|c| c.unique().ok())
+                        .map(|u| {
+                            (0..u.len())
+                                .filter_map(|i| u.get(i).ok().map(|v| {
+                                    let s = v.to_string();
+                                    // Strip quotes and format as filter expression
+                                    let val = if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
+                                        &s[1..s.len()-1]
+                                    } else {
+                                        &s
+                                    };
+                                    format!("{}=={}", col_name, val)
+                                }))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+
+                    if let Ok(Some(expression)) = picker::input_with_hints(items, "Filter> ") {
+                        let cmd = Box::new(Filter { expression });
+                        if let Err(e) = CommandExecutor::execute(app, cmd) {
+                            app.set_message(format!("Error: {}", e));
+                        }
+                    }
                 }
+            } else {
+                app.set_message("No table loaded".to_string());
             }
         }
         KeyCode::Char('n') => {

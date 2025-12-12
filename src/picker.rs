@@ -40,8 +40,8 @@ pub fn pick(items: Vec<String>, prompt: &str) -> Result<Option<String>> {
     Ok(result)
 }
 
-/// Run skim for free text input - returns the query text
-pub fn input(prompt: &str) -> Result<Option<String>> {
+/// Run skim with items but return query text (for filter expressions)
+pub fn input_with_hints(items: Vec<String>, prompt: &str) -> Result<Option<String>> {
     execute!(io::stdout(), terminal::LeaveAlternateScreen, cursor::Show)?;
     terminal::disable_raw_mode()?;
 
@@ -51,16 +51,22 @@ pub fn input(prompt: &str) -> Result<Option<String>> {
         .build()
         .unwrap();
 
-    // Empty input - user just types query
-    let result = Skim::run_with(&options, None)
+    let input = items.join("\n");
+    let item_reader = SkimItemReader::default();
+    let items = item_reader.of_bufread(Cursor::new(input));
+
+    let result = Skim::run_with(&options, Some(items))
         .map(|out| {
             if out.is_abort {
                 None
             } else {
-                // Return the query text
+                // Return the query text (what user typed)
                 let query = out.query.trim().to_string();
                 if query.is_empty() {
-                    None
+                    // If no query, return selected item
+                    out.selected_items
+                        .first()
+                        .map(|item| item.output().to_string())
                 } else {
                     Some(query)
                 }
