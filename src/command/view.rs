@@ -57,7 +57,6 @@ impl Command for Frequency {
             parent_id,
             self.col_name.clone(),
         ));
-        app.msg(format!("Frequency table for '{}'", self.col_name));
         Ok(())
     }
 
@@ -150,7 +149,6 @@ impl Command for Metadata {
         new_view.parent_id = Some(parent_id);
 
         app.stack.push(new_view);
-        app.msg("Data profile".to_string());
         Ok(())
     }
 
@@ -293,7 +291,6 @@ impl Command for Correlation {
         );
 
         app.stack.push(new_view);
-        app.msg(format!("Correlation matrix ({} columns)", n));
         Ok(())
     }
 

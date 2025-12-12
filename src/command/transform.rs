@@ -29,7 +29,6 @@ impl Command for DelCol {
             view.state.cc = max_cols - 1;
         }
 
-        app.msg(format!("Deleted column '{}'", self.col_name));
         Ok(())
     }
 
@@ -104,7 +103,6 @@ impl Command for Filter {
 
         // Push new view onto stack
         let id = app.next_id();
-        app.msg(format!("Filtered: {} ({} rows)", self.expression, filtered_df.height()));
         app.stack.push(crate::state::ViewState::new(id, self.expression.clone(), filtered_df, filename));
         Ok(())
     }
@@ -205,7 +203,6 @@ impl Command for Select {
         // Reset cursor
         view.state.cc = 0;
 
-        app.msg(format!("Selected {} columns", self.col_names.len()));
         Ok(())
     }
 
@@ -236,7 +233,6 @@ impl Command for Sort {
             SortMultipleOptions::default().with_order_descending(self.descending)
         )?;
 
-        app.msg(format!("Sorted by {} ({})", self.col_name, if self.descending { "desc" } else { "asc" }));
         Ok(())
     }
 
@@ -266,7 +262,6 @@ impl Command for RenameCol {
         // Rename the column
         view.dataframe.rename(&self.old_name, self.new_name.as_str().into())?;
 
-        app.msg(format!("Renamed '{}' to '{}'", self.old_name, self.new_name));
         Ok(())
     }
 
@@ -285,22 +280,15 @@ impl Command for DelNull {
             .map(|col| col.name().to_string())
             .collect();
 
-        if null_cols.is_empty() {
-            app.msg("No all-null columns found".to_string());
-            return Ok(());
-        }
+        if null_cols.is_empty() { return Ok(()); }
 
-        let count = null_cols.len();
         for col_name in null_cols {
             let _ = view.dataframe.drop_in_place(&col_name);
         }
 
         // Adjust cursor if needed
-        let max_cols = view.cols();
-        if max_cols > 0 && view.state.cc >= max_cols {
-            view.state.cc = max_cols - 1;
-        }
-        app.msg(format!("Deleted {} all-null column(s)", count));
+        let n = view.cols();
+        if n > 0 && view.state.cc >= n { view.state.cc = n - 1; }
         Ok(())
     }
 
@@ -320,34 +308,22 @@ impl Command for DelSingle {
                 let series = col.as_materialized_series();
                 if let Ok(n_unique) = series.n_unique() {
                     let null_count = series.null_count();
-                    if null_count > 0 && null_count < series.len() {
-                        n_unique <= 2
-                    } else {
-                        n_unique == 1
-                    }
-                } else {
-                    false
-                }
+                    if null_count > 0 && null_count < series.len() { n_unique <= 2 }
+                    else { n_unique == 1 }
+                } else { false }
             })
             .map(|col| col.name().to_string())
             .collect();
 
-        if single_cols.is_empty() {
-            app.msg("No single-value columns found".to_string());
-            return Ok(());
-        }
+        if single_cols.is_empty() { return Ok(()); }
 
-        let count = single_cols.len();
         for col_name in single_cols {
             let _ = view.dataframe.drop_in_place(&col_name);
         }
 
         // Adjust cursor if needed
-        let max_cols = view.cols();
-        if max_cols > 0 && view.state.cc >= max_cols {
-            view.state.cc = max_cols - 1;
-        }
-        app.msg(format!("Deleted {} single-value column(s)", count));
+        let n = view.cols();
+        if n > 0 && view.state.cc >= n { view.state.cc = n - 1; }
         Ok(())
     }
 

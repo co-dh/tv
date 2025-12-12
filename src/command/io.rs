@@ -42,13 +42,6 @@ impl Command for Load {
             Some(self.file_path.clone()),
         ));
 
-        app.msg(format!(
-            "Loaded {} ({} rows, {} cols)",
-            self.file_path,
-            app.view().unwrap().rows(),
-            app.view().unwrap().cols()
-        ));
-
         Ok(())
     }
 
@@ -93,8 +86,7 @@ impl Command for Save {
             }
         }
 
-        app.msg(format!("Saved to {}", self.file_path));
-        Ok(())
+        Ok(())  // save confirmed by no error
     }
 
     fn to_str(&self) -> String { format!("save {}", self.file_path) }

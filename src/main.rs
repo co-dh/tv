@@ -289,30 +289,13 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                 if is_meta {
                     if let Some(pid) = parent_id {
                         if let Some(parent) = app.stack.find_mut(pid) {
-                            let mut deleted = 0;
-                            for col_name in &col_names {
-                                if parent.dataframe.drop_in_place(col_name).is_ok() {
-                                    deleted += 1;
-                                }
-                            }
+                            for c in &col_names { let _ = parent.dataframe.drop_in_place(c); }
                             app.stack.pop();
-                            app.msg(format!("Deleted {} column(s)", deleted));
                         }
                     }
-                } else if col_names.is_empty() {
-                    app.msg("No columns to delete".to_string());
-                } else {
-                    let mut deleted = 0;
-                    for col_name in &col_names {
-                        let cmd = Box::new(DelCol { col_name: col_name.clone() });
-                        if CommandExecutor::exec(app, cmd).is_ok() {
-                            deleted += 1;
-                        }
-                    }
-                    if let Some(view) = app.view_mut() {
-                        view.selected_cols.clear();
-                    }
-                    app.msg(format!("Deleted {} column(s)", deleted));
+                } else if !col_names.is_empty() {
+                    for c in &col_names { let _ = CommandExecutor::exec(app, Box::new(DelCol { col_name: c.clone() })); }
+                    if let Some(v) = app.view_mut() { v.selected_cols.clear(); }
                 }
             }
         }
@@ -544,7 +527,7 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                     match filter_by_values(&parent_df, &freq_col, &values) {
                         Ok(filtered_df) => {
                             let id = app.next_id();
-                            app.msg(format!("Filtered: {} rows", filtered_df.height()));
+                            
                             app.stack.push(state::ViewState::new(
                                 id,
                                 if values.len() == 1 {
@@ -573,7 +556,7 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                             if let Err(e) = view.dataframe.with_column(new_col) {
                                 app.err(e);
                             } else {
-                                app.msg(format!("Copied column '{}' to '{}'", col_name, new_name));
+                                
                             }
                         }
                     }
@@ -608,7 +591,7 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                                     if let Err(e) = view.dataframe.with_column(new_col) {
                                         app.err(e);
                                     } else {
-                                        app.msg(format!("Converted '{}' to {}", col_name, selected));
+                                        
                                     }
                                 }
                                 Err(e) => app.err(e),
@@ -630,7 +613,7 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                         match aggregate_by(&view.dataframe, &col_name, &agg_fn) {
                             Ok(agg_df) => {
                                 let id = app.next_id();
-                                app.msg(format!("{} by '{}'", agg_fn, col_name));
+                                
                                 app.stack.push(state::ViewState::new(id, format!("{}:{}", agg_fn, col_name), agg_df, filename));
                             }
                             Err(e) => app.err(e),
@@ -646,14 +629,14 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                 new_view.name = format!("{} (copy)", view.name);
                 new_view.id = app.next_id();
                 app.stack.push(new_view);
-                app.msg("Duplicated view".to_string());
+                
             }
         }
         KeyCode::Char('W') => {
             // W: Swap with previous view on stack
             if app.stack.len() >= 2 {
                 app.stack.swap();
-                app.msg("Swapped views".to_string());
+                
             } else {
                 app.msg("Need at least 2 views to swap".to_string());
             }
@@ -671,7 +654,7 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                         None,
                     );
                     app.stack.push(new_view);
-                    app.msg(format!("Directory: {}", dir.display()));
+                    
                 }
                 Err(e) => app.err(e),
             }
@@ -733,7 +716,7 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                             match filter_by_regex(&df, &col_name, &re) {
                                 Ok(filtered_df) => {
                                     let id = app.next_id();
-                                    app.msg(format!("Regex filter: {} rows", filtered_df.height()));
+                                    
                                     app.stack.push(state::ViewState::new(
                                         id,
                                         format!("{}~/{}/", col_name, pattern),
@@ -854,7 +837,7 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                 if !view.selected_cols.is_empty() || !view.selected_rows.is_empty() {
                     view.selected_cols.clear();
                     view.selected_rows.clear();
-                    app.msg("Selection cleared".to_string());
+                    
                 }
             }
         }
