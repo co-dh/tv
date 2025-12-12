@@ -261,7 +261,7 @@ impl Renderer {
 
         // Sample 2-3 pages around current row for performance
         let page_size = state.viewport.0.saturating_sub(2) as usize;
-        let sample_size = page_size * 3; // 3 pages
+        let sample_size = (page_size * 3).max(100); // At least 100 rows
 
         let start_row = state.cr.saturating_sub(sample_size / 2);
         let end_row = (start_row + sample_size).min(df.height());
