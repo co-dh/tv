@@ -443,26 +443,29 @@ impl Renderer {
             view.filename.as_deref().unwrap_or("(no file)").to_string()
         };
 
-        // Middle: column statistics
+        // Column statistics (for right side)
         let col_stats = if view.col_count() > 0 {
             Self::column_stats(&view.dataframe, view.state.cc)
         } else {
             String::new()
         };
 
-        // Right side: row/total
-        let right = format!("{}/{}", view.state.cr, total_str);
+        // Right side: stats + row/total
+        let right = if col_stats.is_empty() {
+            format!("{}/{}", view.state.cr, total_str)
+        } else {
+            format!("{} {}/{}", col_stats, view.state.cr, total_str)
+        };
 
-        // Calculate padding
-        let left_and_stats = format!("{} {}", left, col_stats);
-        let total_len = left_and_stats.len() + right.len();
+        // Calculate padding between left and right
+        let total_len = left.len() + right.len();
         let padding = if (cols as usize) > total_len {
             cols as usize - total_len
         } else {
             1
         };
 
-        let status = format!("{}{:width$}{}", left_and_stats, "", right, width = padding);
+        let status = format!("{}{:width$}{}", left, "", right, width = padding);
 
         execute!(
             writer,
