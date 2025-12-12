@@ -14,7 +14,7 @@ pub struct Renderer;
 
 impl Renderer {
     /// Render the entire screen
-    pub fn render(app: &AppContext) -> Result<()> {
+    pub fn render(app: &mut AppContext) -> Result<()> {
         let (rows, cols) = terminal::size()?;
 
         // Clear screen
@@ -24,11 +24,13 @@ impl Renderer {
             cursor::MoveTo(0, 0)
         )?;
 
-        if let Some(view) = app.current_view() {
+        let message = app.message.clone();
+
+        if let Some(view) = app.current_view_mut() {
             Self::render_table(view, rows, cols)?;
-            Self::render_status_bar(view, &app.message, rows, cols)?;
+            Self::render_status_bar(view, &message, rows, cols)?;
         } else {
-            Self::render_empty_message(&app.message, rows, cols)?;
+            Self::render_empty_message(&message, rows, cols)?;
         }
 
         io::stdout().flush()?;
@@ -36,8 +38,17 @@ impl Renderer {
     }
 
     /// Render the table data
-    fn render_table(view: &ViewState, rows: u16, cols: u16) -> Result<()> {
+    fn render_table(view: &mut ViewState, rows: u16, cols: u16) -> Result<()> {
         let df = &view.dataframe;
+
+        // Calculate column widths if needed
+        if view.state.needs_width_recalc() {
+            view.state.col_widths = (0..df.width())
+                .map(|col_idx| Self::calculate_column_width(df, col_idx, &view.state))
+                .collect();
+            view.state.widths_calc_row = view.state.cr;
+        }
+
         let state = &view.state;
 
         if df.height() == 0 || df.width() == 0 {
@@ -95,7 +106,7 @@ impl Renderer {
                 )?;
             }
 
-            let col_width = Self::column_width(df, col_idx, state);
+            let col_width = Self::column_width(state, col_idx);
             let display = format!("{:width$}", col_name, width = col_width as usize);
 
             execute!(io::stdout(), Print(&display[..display.len().min(col_width as usize)]))?;
@@ -144,7 +155,7 @@ impl Renderer {
                 execute!(io::stdout(), SetForegroundColor(Color::White))?;
             }
 
-            let col_width = Self::column_width(df, col_idx, state);
+            let col_width = Self::column_width(state, col_idx);
             let value = Self::format_value(df, col_idx, row_idx);
             let display = format!("{:width$}", value, width = col_width as usize);
 
@@ -186,8 +197,13 @@ impl Renderer {
         }
     }
 
+    /// Get cached column width or default
+    fn column_width(state: &TableState, col_idx: usize) -> u16 {
+        state.col_widths.get(col_idx).copied().unwrap_or(10)
+    }
+
     /// Calculate column width by sampling data around current row
-    fn column_width(df: &DataFrame, col_idx: usize, state: &TableState) -> u16 {
+    fn calculate_column_width(df: &DataFrame, col_idx: usize, state: &TableState) -> u16 {
         const MAX_WIDTH: usize = 30;
         const MIN_WIDTH: usize = 3;
 

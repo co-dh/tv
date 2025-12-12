@@ -13,6 +13,10 @@ pub struct TableState {
     pub cc: usize,
     /// Terminal dimensions (rows, cols)
     pub viewport: (u16, u16),
+    /// Cached column widths
+    pub col_widths: Vec<u16>,
+    /// Row position where widths were calculated
+    pub widths_calc_row: usize,
 }
 
 impl TableState {
@@ -23,7 +27,16 @@ impl TableState {
             c0: 0,
             cc: 0,
             viewport: (0, 0),
+            col_widths: Vec::new(),
+            widths_calc_row: 0,
         }
+    }
+
+    /// Check if column widths need recalculation
+    pub fn needs_width_recalc(&self) -> bool {
+        let page_size = self.viewport.0.saturating_sub(2) as usize;
+        // Recalculate if we've moved more than 1 page from where we last calculated
+        self.col_widths.is_empty() || self.cr.abs_diff(self.widths_calc_row) > page_size
     }
 
     /// Get the current column name from the DataFrame

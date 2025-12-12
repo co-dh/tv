@@ -47,7 +47,7 @@ fn main() -> Result<()> {
     // Main event loop
     loop {
         // Render
-        Renderer::render(&app)?;
+        Renderer::render(&mut app)?;
 
         // Handle events
         if let Event::Key(key) = event::read()? {
@@ -279,7 +279,7 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
 
 /// Prompt user for input
 /// Returns None if user cancels (Esc)
-fn prompt_input(app: &AppContext, prompt: &str) -> Result<Option<String>> {
+fn prompt_input(app: &mut AppContext, prompt: &str) -> Result<Option<String>> {
     // Render current screen first
     Renderer::render(app)?;
 
