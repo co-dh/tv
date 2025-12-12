@@ -17,13 +17,6 @@ impl Renderer {
     pub fn render(app: &mut AppContext) -> Result<()> {
         let (rows, cols) = terminal::size()?;
 
-        // Clear screen
-        execute!(
-            io::stdout(),
-            terminal::Clear(terminal::ClearType::All),
-            cursor::MoveTo(0, 0)
-        )?;
-
         let message = app.message.clone();
 
         if let Some(view) = app.current_view_mut() {
@@ -43,9 +36,31 @@ impl Renderer {
 
         // Calculate column widths if needed
         if view.state.needs_width_recalc() {
-            view.state.col_widths = (0..df.width())
+            let mut widths: Vec<u16> = (0..df.width())
                 .map(|col_idx| Self::calculate_column_width(df, col_idx, &view.state))
                 .collect();
+
+            // Distribute extra space to fill screen width
+            let row_num_width = df.height().to_string().len().max(3) as u16;
+            let available_width = cols.saturating_sub(row_num_width + 2); // -2 for spacing
+            let total_width: u16 = widths.iter().sum::<u16>() + (widths.len() as u16 * 1); // +1 for spacing between cols
+
+            if total_width < available_width {
+                let extra_space = available_width - total_width;
+                let per_col = extra_space / widths.len() as u16;
+                let remainder = extra_space % widths.len() as u16;
+
+                for (i, width) in widths.iter_mut().enumerate() {
+                    *width += per_col;
+                    if i < remainder as usize {
+                        *width += 1;
+                    }
+                    // Cap at max width
+                    *width = (*width).min(30);
+                }
+            }
+
+            view.state.col_widths = widths;
             view.state.widths_calc_row = view.state.cr;
         }
 
@@ -79,12 +94,25 @@ impl Renderer {
             Self::render_row(df, row_idx, state, data_cols, row_num_width)?;
         }
 
+        // Clear any remaining lines
+        for screen_row in (end_row - state.r0 + 1)..visible_rows {
+            execute!(
+                io::stdout(),
+                cursor::MoveTo(0, screen_row as u16 + 1),
+                terminal::Clear(terminal::ClearType::CurrentLine)
+            )?;
+        }
+
         Ok(())
     }
 
     /// Render column headers
     fn render_headers(df: &DataFrame, state: &TableState, term_cols: u16, row_num_width: u16) -> Result<()> {
-        execute!(io::stdout(), cursor::MoveTo(0, 0))?;
+        execute!(
+            io::stdout(),
+            cursor::MoveTo(0, 0),
+            terminal::Clear(terminal::ClearType::CurrentLine)
+        )?;
 
         // Render row number header
         let header = format!("{:>width$} ", "#", width = row_num_width as usize);
@@ -124,6 +152,9 @@ impl Renderer {
 
     /// Render a single data row
     fn render_row(df: &DataFrame, row_idx: usize, state: &TableState, term_cols: u16, row_num_width: u16) -> Result<()> {
+        // Clear the line first
+        execute!(io::stdout(), terminal::Clear(terminal::ClearType::CurrentLine))?;
+
         // Render row number
         let is_current_row = row_idx == state.cr;
         if is_current_row {
