@@ -51,16 +51,18 @@ impl Renderer {
             // Find visible columns starting from c0
             let mut visible_widths = Vec::new();
             let mut visible_indices = Vec::new();
-            let mut used_width = 0u16;
 
             for col_idx in view.state.c0..df.width() {
                 let width = widths[col_idx];
-                if used_width + width + 1 > available_width && !visible_widths.is_empty() {
+                // Calculate space needed: sum of all widths + spaces between them
+                let spaces_needed = if visible_widths.is_empty() { 0 } else { visible_widths.len() as u16 };
+                let total_if_added = visible_widths.iter().sum::<u16>() + width + spaces_needed;
+
+                if total_if_added > available_width && !visible_widths.is_empty() {
                     break;
                 }
                 visible_widths.push(width);
                 visible_indices.push(col_idx);
-                used_width += width + 1; // +1 for spacing
             }
 
             // Distribute extra space among visible columns
@@ -68,6 +70,7 @@ impl Renderer {
                 // Calculate space used: sum of widths + spaces between columns (not after last)
                 let spaces = if visible_widths.len() > 1 { visible_widths.len() as u16 - 1 } else { 0 };
                 let total_used = visible_widths.iter().sum::<u16>() + spaces;
+
                 if total_used < available_width {
                     let extra_space = available_width - total_used;
                     let per_col = extra_space / visible_widths.len() as u16;
