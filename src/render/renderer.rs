@@ -59,9 +59,13 @@ impl Renderer {
             return Ok(());
         }
 
-        // Calculate row number width
-        let row_num_width = df.height().to_string().len().max(3) as u16;
-        let screen_width = cols.saturating_sub(row_num_width + 1) as i32;
+        // Calculate row number width (0 if not showing row numbers)
+        let row_num_width = if view.show_row_numbers {
+            df.height().to_string().len().max(3) as u16
+        } else {
+            0
+        };
+        let screen_width = cols.saturating_sub(if row_num_width > 0 { row_num_width + 1 } else { 0 }) as i32;
 
         // Calculate xs - x position for each column (qtv style)
         let mut xs: Vec<i32> = Vec::with_capacity(df.width() + 1);
@@ -118,9 +122,11 @@ impl Renderer {
             terminal::Clear(terminal::ClearType::CurrentLine)
         )?;
 
-        // Render row number header
-        let header = format!("{:>width$} ", "#", width = row_num_width as usize);
-        execute!(writer, Print(&header))?;
+        // Render row number header (if showing row numbers)
+        if row_num_width > 0 {
+            let header = format!("{:>width$} ", "#", width = row_num_width as usize);
+            execute!(writer, Print(&header))?;
+        }
 
         for (col_idx, col_name) in df.get_column_names().iter().enumerate() {
             let x = xs[col_idx];
@@ -164,15 +170,18 @@ impl Renderer {
         // Clear the line first
         execute!(writer, terminal::Clear(terminal::ClearType::CurrentLine))?;
 
-        // Render row number
         let is_current_row = row_idx == state.cr;
-        if is_current_row {
-            execute!(writer, SetForegroundColor(Color::Yellow))?;
-        }
-        let row_num = format!("{:>width$} ", row_idx, width = row_num_width as usize);
-        execute!(writer, Print(&row_num))?;
-        if is_current_row {
-            execute!(writer, ResetColor)?;
+
+        // Render row number (if showing row numbers)
+        if row_num_width > 0 {
+            if is_current_row {
+                execute!(writer, SetForegroundColor(Color::Yellow))?;
+            }
+            let row_num = format!("{:>width$} ", row_idx, width = row_num_width as usize);
+            execute!(writer, Print(&row_num))?;
+            if is_current_row {
+                execute!(writer, ResetColor)?;
+            }
         }
 
         for col_idx in 0..df.width() {
@@ -270,30 +279,53 @@ impl Renderer {
         max_width.max(MIN_WIDTH).min(MAX_WIDTH) as u16
     }
 
-    /// Render status bar at the bottom
+    /// Format number with commas (e.g., 1000000 -> "1,000,000")
+    fn commify(n: usize) -> String {
+        let s = n.to_string();
+        let mut result = String::new();
+        for (i, c) in s.chars().rev().enumerate() {
+            if i > 0 && i % 3 == 0 {
+                result.push(',');
+            }
+            result.push(c);
+        }
+        result.chars().rev().collect()
+    }
+
+    /// Render status bar at the bottom (qtv style: msg | file | name row/total)
     fn render_status_bar<W: Write>(view: &ViewState, message: &str, rows: u16, cols: u16, writer: &mut W) -> Result<()> {
         let status_row = rows - 1;
         execute!(writer, cursor::MoveTo(0, status_row))?;
 
+        // Format total with commas
+        let total = view.row_count();
+        let total_str = Self::commify(total);
+
         let status = if !message.is_empty() {
-            message.to_string()
+            format!("{} | {} | {} {}/{}",
+                message,
+                view.filename.as_deref().unwrap_or(""),
+                &view.name,
+                view.state.cr,
+                total_str
+            )
         } else {
-            format!(
-                "{}  Row {}/{} Col {}/{}  {}",
+            format!("{} | {} {}/{}",
                 view.filename.as_deref().unwrap_or("(no file)"),
-                view.state.cr + 1,
-                view.row_count(),
-                view.state.cc + 1,
-                view.col_count(),
-                view.history_string()
+                &view.name,
+                view.state.cr,
+                total_str
             )
         };
+
+        // Pad to fill screen width
+        let padded = format!("{:width$}", status, width = cols as usize);
 
         execute!(
             writer,
             SetBackgroundColor(Color::DarkGrey),
             SetForegroundColor(Color::White),
-            Print(&status[..status.len().min(cols as usize)]),
+            Print(&padded[..padded.len().min(cols as usize)]),
             ResetColor
         )?;
 

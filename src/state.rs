@@ -112,8 +112,7 @@ impl TableState {
 /// Complete table view with history
 #[derive(Clone)]
 pub struct ViewState {
-    /// View identifier (e.g., "main", "frequency:col_name")
-    #[allow(dead_code)]
+    /// View identifier (e.g., "main", "freq:col_name")
     pub name: String,
     /// Table data
     pub dataframe: DataFrame,
@@ -123,6 +122,8 @@ pub struct ViewState {
     pub history: Vec<String>,
     /// Source filename if applicable
     pub filename: Option<String>,
+    /// Whether to show row numbers
+    pub show_row_numbers: bool,
 }
 
 impl ViewState {
@@ -133,6 +134,18 @@ impl ViewState {
             state: TableState::new(),
             history: Vec::new(),
             filename,
+            show_row_numbers: true,
+        }
+    }
+
+    pub fn new_without_row_numbers(name: String, dataframe: DataFrame, filename: Option<String>) -> Self {
+        Self {
+            name,
+            dataframe,
+            state: TableState::new(),
+            history: Vec::new(),
+            filename,
+            show_row_numbers: false,
         }
     }
 
@@ -142,6 +155,7 @@ impl ViewState {
     }
 
     /// Get history as a display string
+    #[allow(dead_code)]
     pub fn history_string(&self) -> String {
         self.history.join(" | ")
     }
