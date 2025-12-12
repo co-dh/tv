@@ -1,7 +1,6 @@
 use anyhow::Result;
 use crossterm::{
     cursor,
-    event::{DisableMouseCapture, EnableMouseCapture},
     execute,
     terminal::{self, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -20,7 +19,6 @@ impl Terminal {
         execute!(
             stdout,
             EnterAlternateScreen,
-            EnableMouseCapture,
             cursor::Hide
         )?;
         Ok(Self { _private: () })
@@ -32,8 +30,7 @@ impl Terminal {
         execute!(
             stdout,
             cursor::Show,
-            LeaveAlternateScreen,
-            DisableMouseCapture
+            LeaveAlternateScreen
         )?;
         terminal::disable_raw_mode()?;
         Ok(())

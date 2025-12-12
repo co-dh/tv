@@ -95,7 +95,7 @@ impl Renderer {
                 )?;
             }
 
-            let col_width = Self::column_width(df, col_idx, term_cols);
+            let col_width = Self::column_width(df, col_idx, state);
             let display = format!("{:width$}", col_name, width = col_width as usize);
 
             execute!(io::stdout(), Print(&display[..display.len().min(col_width as usize)]))?;
@@ -144,7 +144,7 @@ impl Renderer {
                 execute!(io::stdout(), SetForegroundColor(Color::White))?;
             }
 
-            let col_width = Self::column_width(df, col_idx, term_cols);
+            let col_width = Self::column_width(df, col_idx, state);
             let value = Self::format_value(df, col_idx, row_idx);
             let display = format!("{:width$}", value, width = col_width as usize);
 
@@ -186,11 +186,33 @@ impl Renderer {
         }
     }
 
-    /// Calculate column width
-    fn column_width(df: &DataFrame, col_idx: usize, term_cols: u16) -> u16 {
+    /// Calculate column width by sampling data around current row
+    fn column_width(df: &DataFrame, col_idx: usize, state: &TableState) -> u16 {
+        const MAX_WIDTH: usize = 30;
+        const MIN_WIDTH: usize = 3;
+
         let col_name = &df.get_column_names()[col_idx];
-        let base_width = col_name.len().max(10).min(30);
-        base_width.min(term_cols as usize / df.width().max(1)) as u16
+        let mut max_width = col_name.len();
+
+        // Sample 2-3 pages around current row for performance
+        let page_size = state.viewport.0.saturating_sub(2) as usize;
+        let sample_size = page_size * 3; // 3 pages
+
+        let start_row = state.cr.saturating_sub(sample_size / 2);
+        let end_row = (start_row + sample_size).min(df.height());
+
+        // Check widths in the sample
+        for row_idx in start_row..end_row {
+            let value = Self::format_value(df, col_idx, row_idx);
+            max_width = max_width.max(value.len());
+
+            // Early exit if we hit max width
+            if max_width >= MAX_WIDTH {
+                break;
+            }
+        }
+
+        max_width.max(MIN_WIDTH).min(MAX_WIDTH) as u16
     }
 
     /// Render status bar at the bottom
