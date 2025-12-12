@@ -1,5 +1,5 @@
 use anyhow::Result;
-use crossterm::{cursor, execute, terminal::{self, Clear, ClearType}};
+use crossterm::{cursor, execute, terminal};
 use skim::prelude::*;
 use std::io::{self, Cursor, Write};
 
@@ -33,13 +33,13 @@ pub fn pick(items: Vec<String>, prompt: &str) -> Result<Option<String>> {
         })
         .unwrap_or(None);
 
-    // Return to alternate screen and clear
-    let mut stdout = io::stdout();
+    // Clear main screen before returning to alternate
+    print!("\x1b[2J\x1b[H");
+    io::stdout().flush()?;
+
+    // Return to alternate screen
     terminal::enable_raw_mode()?;
-    execute!(stdout, terminal::EnterAlternateScreen)?;
-    execute!(stdout, Clear(ClearType::All), Clear(ClearType::Purge))?;
-    execute!(stdout, cursor::MoveTo(0, 0), cursor::Hide)?;
-    stdout.flush()?;
+    execute!(io::stdout(), terminal::EnterAlternateScreen, cursor::Hide)?;
 
     Ok(result)
 }
@@ -78,13 +78,13 @@ pub fn input_with_hints(items: Vec<String>, prompt: &str) -> Result<Option<Strin
         })
         .unwrap_or(None);
 
-    // Return to alternate screen and clear
-    let mut stdout = io::stdout();
+    // Clear main screen before returning to alternate
+    print!("\x1b[2J\x1b[H");
+    io::stdout().flush()?;
+
+    // Return to alternate screen
     terminal::enable_raw_mode()?;
-    execute!(stdout, terminal::EnterAlternateScreen)?;
-    execute!(stdout, Clear(ClearType::All), Clear(ClearType::Purge))?;
-    execute!(stdout, cursor::MoveTo(0, 0), cursor::Hide)?;
-    stdout.flush()?;
+    execute!(io::stdout(), terminal::EnterAlternateScreen, cursor::Hide)?;
 
     Ok(result)
 }
