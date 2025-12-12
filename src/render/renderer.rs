@@ -65,7 +65,9 @@ impl Renderer {
 
             // Distribute extra space among visible columns
             if !visible_widths.is_empty() {
-                let total_used = visible_widths.iter().sum::<u16>() + visible_widths.len() as u16;
+                // Calculate space used: sum of widths + spaces between columns (not after last)
+                let spaces = if visible_widths.len() > 1 { visible_widths.len() as u16 - 1 } else { 0 };
+                let total_used = visible_widths.iter().sum::<u16>() + spaces;
                 if total_used < available_width {
                     let extra_space = available_width - total_used;
                     let per_col = extra_space / visible_widths.len() as u16;
