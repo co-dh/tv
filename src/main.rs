@@ -7,7 +7,8 @@ use anyhow::Result;
 use app::AppContext;
 use command::executor::CommandExecutor;
 use command::io::{Load, Save};
-use command::transform::{DelCol, Filter, Select};
+use command::transform::{DelCol, Filter, RenameCol, Select, Sort};
+use command::view::{Frequency, Metadata};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use crossterm::{cursor, execute, style::Print, terminal};
 use render::{Renderer, Terminal};
@@ -206,6 +207,67 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                 let cmd = Box::new(Select { col_names });
                 if let Err(e) = CommandExecutor::execute(app, cmd) {
                     app.set_message(format!("Error: {}", e));
+                }
+            }
+        }
+        KeyCode::Char('F') => {
+            // F: Frequency table for current column
+            if let Some(view) = app.current_view() {
+                if let Some(col_name) = view.state.current_column(&view.dataframe) {
+                    let cmd = Box::new(Frequency { col_name });
+                    if let Err(e) = CommandExecutor::execute(app, cmd) {
+                        app.set_message(format!("Error: {}", e));
+                    }
+                }
+            }
+        }
+        KeyCode::Char('M') => {
+            // M: Metadata view
+            if app.has_view() {
+                let cmd = Box::new(Metadata);
+                if let Err(e) = CommandExecutor::execute(app, cmd) {
+                    app.set_message(format!("Error: {}", e));
+                }
+            }
+        }
+        KeyCode::Char('[') => {
+            // [: Sort ascending by current column
+            if let Some(view) = app.current_view() {
+                if let Some(col_name) = view.state.current_column(&view.dataframe) {
+                    let cmd = Box::new(Sort {
+                        col_name,
+                        descending: false,
+                    });
+                    if let Err(e) = CommandExecutor::execute(app, cmd) {
+                        app.set_message(format!("Error: {}", e));
+                    }
+                }
+            }
+        }
+        KeyCode::Char(']') => {
+            // ]: Sort descending by current column
+            if let Some(view) = app.current_view() {
+                if let Some(col_name) = view.state.current_column(&view.dataframe) {
+                    let cmd = Box::new(Sort {
+                        col_name,
+                        descending: true,
+                    });
+                    if let Err(e) = CommandExecutor::execute(app, cmd) {
+                        app.set_message(format!("Error: {}", e));
+                    }
+                }
+            }
+        }
+        KeyCode::Char('^') => {
+            // ^: Rename current column
+            if let Some(view) = app.current_view() {
+                if let Some(old_name) = view.state.current_column(&view.dataframe) {
+                    if let Some(new_name) = prompt_input(app, &format!("Rename '{}' to: ", old_name))? {
+                        let cmd = Box::new(RenameCol { old_name, new_name });
+                        if let Err(e) = CommandExecutor::execute(app, cmd) {
+                            app.set_message(format!("Error: {}", e));
+                        }
+                    }
                 }
             }
         }

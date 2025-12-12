@@ -209,3 +209,75 @@ impl Command for Select {
         format!("sel {}", self.col_names.join(","))
     }
 }
+
+/// Sort by column command
+pub struct Sort {
+    pub col_name: String,
+    pub descending: bool,
+}
+
+impl Command for Sort {
+    fn execute(&mut self, app: &mut AppContext) -> Result<()> {
+        let view = app
+            .current_view_mut()
+            .ok_or_else(|| anyhow!("No table loaded"))?;
+
+        // Check if column exists
+        let found = view.dataframe.get_column_names()
+            .iter()
+            .any(|c| c.as_str() == self.col_name.as_str());
+        if !found {
+            return Err(anyhow!("Column '{}' not found", self.col_name));
+        }
+
+        // Sort the dataframe
+        view.dataframe = view.dataframe.sort(
+            [&self.col_name],
+            SortMultipleOptions::default().with_order_descending(self.descending)
+        )?;
+
+        let direction = if self.descending { "desc" } else { "asc" };
+        app.set_message(format!("Sorted by {} ({})", self.col_name, direction));
+        Ok(())
+    }
+
+    fn to_command_string(&self) -> String {
+        if self.descending {
+            format!("sort_desc {}", self.col_name)
+        } else {
+            format!("sort_asc {}", self.col_name)
+        }
+    }
+}
+
+/// Rename column command
+pub struct RenameCol {
+    pub old_name: String,
+    pub new_name: String,
+}
+
+impl Command for RenameCol {
+    fn execute(&mut self, app: &mut AppContext) -> Result<()> {
+        let view = app
+            .current_view_mut()
+            .ok_or_else(|| anyhow!("No table loaded"))?;
+
+        // Check if old column exists
+        let found = view.dataframe.get_column_names()
+            .iter()
+            .any(|c| c.as_str() == self.old_name.as_str());
+        if !found {
+            return Err(anyhow!("Column '{}' not found", self.old_name));
+        }
+
+        // Rename the column
+        view.dataframe.rename(&self.old_name, self.new_name.as_str().into())?;
+
+        app.set_message(format!("Renamed '{}' to '{}'", self.old_name, self.new_name));
+        Ok(())
+    }
+
+    fn to_command_string(&self) -> String {
+        format!("rename {} {}", self.old_name, self.new_name)
+    }
+}

@@ -49,27 +49,35 @@ impl Renderer {
             return Ok(());
         }
 
+        // Calculate row number width
+        let row_num_width = df.height().to_string().len().max(3) as u16;
+
         // Calculate visible area
         let visible_rows = (rows as usize).saturating_sub(2); // -2 for status bar and padding
         let end_row = (state.r0 + visible_rows).min(df.height());
+        let data_cols = cols.saturating_sub(row_num_width + 1); // -1 for separator
 
         // Render column headers
-        Self::render_headers(df, state, cols)?;
+        Self::render_headers(df, state, data_cols, row_num_width)?;
 
         // Render data rows
         for row_idx in state.r0..end_row {
             let screen_row = (row_idx - state.r0 + 1) as u16; // +1 for header
             execute!(io::stdout(), cursor::MoveTo(0, screen_row))?;
 
-            Self::render_row(df, row_idx, state, cols)?;
+            Self::render_row(df, row_idx, state, data_cols, row_num_width)?;
         }
 
         Ok(())
     }
 
     /// Render column headers
-    fn render_headers(df: &DataFrame, state: &TableState, term_cols: u16) -> Result<()> {
+    fn render_headers(df: &DataFrame, state: &TableState, term_cols: u16, row_num_width: u16) -> Result<()> {
         execute!(io::stdout(), cursor::MoveTo(0, 0))?;
+
+        // Render row number header
+        let header = format!("{:>width$} ", "#", width = row_num_width as usize);
+        execute!(io::stdout(), Print(&header))?;
 
         let mut col_offset = 0u16;
         for (col_idx, col_name) in df.get_column_names().iter().enumerate().skip(state.c0) {
@@ -104,7 +112,18 @@ impl Renderer {
     }
 
     /// Render a single data row
-    fn render_row(df: &DataFrame, row_idx: usize, state: &TableState, term_cols: u16) -> Result<()> {
+    fn render_row(df: &DataFrame, row_idx: usize, state: &TableState, term_cols: u16, row_num_width: u16) -> Result<()> {
+        // Render row number
+        let is_current_row = row_idx == state.cr;
+        if is_current_row {
+            execute!(io::stdout(), SetForegroundColor(Color::Yellow))?;
+        }
+        let row_num = format!("{:>width$} ", row_idx, width = row_num_width as usize);
+        execute!(io::stdout(), Print(&row_num))?;
+        if is_current_row {
+            execute!(io::stdout(), ResetColor)?;
+        }
+
         let mut col_offset = 0u16;
 
         for (col_idx, _col) in df.get_columns().iter().enumerate().skip(state.c0) {

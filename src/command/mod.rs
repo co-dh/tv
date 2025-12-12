@@ -1,6 +1,7 @@
 pub mod executor;
 pub mod io;
 pub mod transform;
+pub mod view;
 
 use crate::app::AppContext;
 use anyhow::Result;
