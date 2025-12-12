@@ -301,7 +301,7 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
             // /: Search column values with skim (supports glob patterns for strings)
             if let Some(view) = app.view() {
                 if let Some(col_name) = view.state.cur_col(&view.dataframe) {
-                    let items = get_column_hints(&view.dataframe, &col_name, view.state.cr, "");
+                    let items = get_column_hints(&view.dataframe, &col_name, view.state.cr);
 
                     if let Ok(Some(selected)) = picker::input(items, &format!("{}> ", col_name)) {
                         app.search.col_name = Some(col_name.clone());
@@ -322,12 +322,12 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
             }
         }
         KeyCode::Char('\\') => {
-            // \: Filter rows with expression (using skim with column values as hints)
+            // \: Filter rows with SQL WHERE expression
             if let Some(view) = app.view() {
                 if let Some(col_name) = view.state.cur_col(&view.dataframe) {
-                    let items = get_column_hints(&view.dataframe, &col_name, view.state.cr, &format!("{}==", col_name));
+                    let items = get_sql_hints(&view.dataframe, &col_name, view.state.cr);
 
-                    if let Ok(Some(expr)) = picker::input(items, "Filter> ") {
+                    if let Ok(Some(expr)) = picker::input(items, "WHERE> ") {
                         if let Err(e) = CommandExecutor::exec(app, Box::new(Filter { expr })) {
                             app.err(e);
                         }
@@ -961,27 +961,51 @@ fn strip_quotes(s: &str) -> String {
     }
 }
 
-/// Get column hints: glob patterns from current cell + unique values
-fn get_column_hints(df: &polars::prelude::DataFrame, col_name: &str, row: usize, prefix_fmt: &str) -> Vec<String> {
+/// Get column hints for search: glob patterns (*) from current cell + unique values
+fn get_column_hints(df: &polars::prelude::DataFrame, col_name: &str, row: usize) -> Vec<String> {
     let mut items = Vec::new();
-
     if let Ok(col) = df.column(col_name) {
-        // Add glob pattern examples for string columns
         if matches!(col.dtype(), polars::prelude::DataType::String) {
             if let Ok(val) = col.get(row) {
-                let cell_val = strip_quotes(&val.to_string());
-                if cell_val.len() >= 2 {
-                    items.push(format!("{}{}*", prefix_fmt, &cell_val[..2]));
-                    items.push(format!("{}*{}", prefix_fmt, &cell_val[cell_val.len()-2..]));
+                let v = strip_quotes(&val.to_string());
+                if v.len() >= 2 {
+                    items.push(format!("{}*", &v[..2]));
+                    items.push(format!("*{}", &v[v.len()-2..]));
                 }
             }
         }
+        if let Ok(uniq) = col.unique() {
+            for i in 0..uniq.len() {
+                if let Ok(v) = uniq.get(i) { items.push(strip_quotes(&v.to_string())); }
+            }
+        }
+    }
+    items
+}
 
-        // Add unique values
+/// Get SQL hints for filter: LIKE patterns (%) + unique values with quotes
+fn get_sql_hints(df: &polars::prelude::DataFrame, col_name: &str, row: usize) -> Vec<String> {
+    let mut items = Vec::new();
+    if let Ok(col) = df.column(col_name) {
+        let is_str = matches!(col.dtype(), polars::prelude::DataType::String);
+        if is_str {
+            if let Ok(val) = col.get(row) {
+                let v = strip_quotes(&val.to_string());
+                if v.len() >= 2 {
+                    items.push(format!("{} LIKE '{}%'", col_name, &v[..2]));
+                    items.push(format!("{} LIKE '%{}'", col_name, &v[v.len()-2..]));
+                }
+            }
+        }
         if let Ok(uniq) = col.unique() {
             for i in 0..uniq.len() {
                 if let Ok(v) = uniq.get(i) {
-                    items.push(format!("{}{}", prefix_fmt, strip_quotes(&v.to_string())));
+                    let val = strip_quotes(&v.to_string());
+                    if is_str {
+                        items.push(format!("{} = '{}'", col_name, val));
+                    } else {
+                        items.push(format!("{} = {}", col_name, val));
+                    }
                 }
             }
         }

@@ -3,6 +3,9 @@
 ## 2025-12-12: Arthur Whitney Style Refactor
 
 ### Commits
+- `892e1a3` - Use SQL WHERE syntax for filter command
+- `87077e8` - Add multi-column support to delcol command
+- `daac2cb` - Remove DelNull/DelSingle commands (use 0/1 keys + D instead)
 - `92e2110` - Refactor transform.rs: leverage polars, reduce duplication
 - `6162c7e` - Remove unnecessary success messages (silence is golden)
 - `e26a802` - Refactor: Arthur Whitney style with short names
@@ -48,10 +51,10 @@
 | `widths_calc_row` | `widths_row` |
 
 ### Halstead Metrics
-| Metric | Start | After Style | After Silent | After Polars | Total Change |
-|--------|-------|-------------|--------------|--------------|--------------|
-| Length | 12,664 | 12,427 | 12,122 | 11,698 | -966 (-7.6%) |
-| Bugs | 20.808 | 20.525 | 19.950 | 19.054 | -1.754 (-8.4%) |
+| Metric | Start | After Style | After Silent | After Polars | After SQL | Total Change |
+|--------|-------|-------------|--------------|--------------|-----------|--------------|
+| Length | 12,664 | 12,427 | 12,122 | 11,698 | 11,003 | -1,661 (-13.1%) |
+| Bugs | 20.808 | 20.525 | 19.950 | 19.054 | 17.897 | -2.911 (-14.0%) |
 
 ### Line Count
 - 11 files changed

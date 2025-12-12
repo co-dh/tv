@@ -17,8 +17,9 @@ The binary will be at `./target/release/tv`.
 tv data.csv
 tv data.parquet
 
-# Run inline commands
-tv -c 'load data.csv | filter age>30 | save filtered.csv'
+# Run inline commands (SQL WHERE syntax)
+tv -c "load data.csv | filter age > 30 | save filtered.csv"
+tv -c "load data.csv | filter name LIKE 'A%' | sel name,age"
 
 # Run script file
 tv --script commands.txt
@@ -53,35 +54,28 @@ tv --script commands.txt
 | `N` | Find previous occurrence |
 | `*` | Search for current cell value |
 
-Search patterns (for string columns):
+Search patterns (glob-style for string columns):
 - `abc` - Exact match
 - `*abc*` - Contains "abc"
 - `*abc` - Ends with "abc"
 - `abc*` - Starts with "abc"
 
-Hints shown in fuzzy finder include glob examples based on current cell (e.g., `Fi*`, `*ce` for "Finance").
-
 ### Filter
 
 | Key | Action |
 |-----|--------|
-| `\` | Filter rows (type expression, column values shown as hints) |
+| `\` | Filter rows with SQL WHERE syntax (fuzzy finder shows hints) |
 | `\|` | Regex filter on current column |
 
-Filter expressions support:
-- `col>value` - Greater than
-- `col<value` - Less than
-- `col>=value` - Greater or equal
-- `col<=value` - Less or equal
-- `col==value` - Equal (exact match for strings)
-
-String filter patterns (glob-style):
-- `col==abc` - Exact match
-- `col==*abc*` - Contains "abc"
-- `col==*abc` - Ends with "abc"
-- `col==abc*` - Starts with "abc"
-
-Hints shown in fuzzy finder include glob examples based on current cell (e.g., `col==Fi*`, `col==*ce` for "Finance").
+Filter uses SQL WHERE syntax:
+- `col > 100` - Greater than
+- `col <= 50` - Less or equal
+- `col = 'NYC'` - String equality (use quotes)
+- `col = 100` - Numeric equality
+- `col LIKE 'abc%'` - Starts with "abc"
+- `col LIKE '%abc'` - Ends with "abc"
+- `col LIKE '%abc%'` - Contains "abc"
+- `col > 10 AND col < 100` - Combined conditions
 
 Filtering pushes a new view onto the stack. Press `q` to return to the original data.
 
@@ -153,7 +147,7 @@ Create a script file with commands:
 ```
 # Comments start with #
 load data.csv
-filter age>30
+filter age > 30
 sort name
 save filtered.csv
 quit
@@ -161,7 +155,7 @@ quit
 
 Commands can be separated by `|` on a single line:
 ```
-load data.csv | filter age>30 | sort name | save filtered.csv
+load data.csv | filter age > 30 AND city = 'NYC' | sort name | save filtered.csv
 ```
 
 Run with:
@@ -175,13 +169,11 @@ tv --script myscript.txt
 |---------|-------------|
 | `load <path>` | Load CSV or Parquet file |
 | `save <path>` | Save to CSV or Parquet file |
-| `filter <expr>` | Filter rows |
+| `filter <sql>` | Filter rows (SQL WHERE syntax) |
 | `freq <col>` | Frequency table |
 | `meta` | Metadata view |
 | `corr` | Correlation matrix (all numeric columns) |
-| `delcol <col>` | Delete column |
-| `delnull` | Delete all-null columns |
-| `del1` | Delete single-value columns |
+| `delcol <col1,col2>` | Delete column(s) |
 | `sel <col1,col2>` | Select columns |
 | `sort <col>` | Sort ascending |
 | `sortdesc <col>` | Sort descending |
@@ -210,7 +202,7 @@ tv --script myscript.txt
 ### Data Transformation
 
 1. Load file: `tv input.csv`
-2. Delete unwanted columns: navigate + `d`
+2. Delete unwanted columns: navigate + `D`
 3. Rename columns: `^`
-4. Filter rows: `\` then type `status==active`
+4. Filter rows: `\` then type `status = 'active'`
 5. Save result: `S` then enter filename
