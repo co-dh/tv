@@ -17,8 +17,27 @@ fn main() -> Result<()> {
     // Initialize terminal
     let _terminal = Terminal::init()?;
 
+    // Get file path from command line args
+    let args: Vec<String> = std::env::args().collect();
+
     // Create app context
-    let mut app = AppContext::new();
+    let mut app = if args.len() > 1 {
+        // Load file from CLI argument
+        let file_path = &args[1];
+        let cmd = Box::new(Load { file_path: file_path.clone() });
+        let mut temp_app = AppContext::new();
+
+        match CommandExecutor::execute(&mut temp_app, cmd) {
+            Ok(_) => temp_app,
+            Err(e) => {
+                Terminal::restore()?;
+                eprintln!("Error loading file: {}", e);
+                std::process::exit(1);
+            }
+        }
+    } else {
+        AppContext::new()
+    };
 
     // Update viewport
     let (rows, cols) = Terminal::size()?;
@@ -100,6 +119,32 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
         }
         KeyCode::Char('G') => {
             // G: Go to bottom
+            if let Some(view) = app.current_view_mut() {
+                let max_rows = view.row_count();
+                view.state.goto_bottom(max_rows);
+            }
+        }
+        KeyCode::PageUp => {
+            // Page Up
+            if let Some(view) = app.current_view_mut() {
+                view.state.page_up();
+            }
+        }
+        KeyCode::PageDown => {
+            // Page Down
+            if let Some(view) = app.current_view_mut() {
+                let max_rows = view.row_count();
+                view.state.page_down(max_rows);
+            }
+        }
+        KeyCode::Home => {
+            // Home: Go to top
+            if let Some(view) = app.current_view_mut() {
+                view.state.goto_top();
+            }
+        }
+        KeyCode::End => {
+            // End: Go to bottom
             if let Some(view) = app.current_view_mut() {
                 let max_rows = view.row_count();
                 view.state.goto_bottom(max_rows);
