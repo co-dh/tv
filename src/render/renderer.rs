@@ -15,7 +15,7 @@ pub struct Renderer;
 impl Renderer {
     /// Render the entire screen
     pub fn render(app: &mut AppContext) -> Result<()> {
-        let (rows, cols) = terminal::size()?;
+        let (cols, rows) = terminal::size()?;
 
         let message = app.message.clone();
 

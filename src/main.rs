@@ -40,8 +40,8 @@ fn main() -> Result<()> {
         AppContext::new()
     };
 
-    // Update viewport
-    let (rows, cols) = Terminal::size()?;
+    // Update viewport - Terminal::size() returns (cols, rows)
+    let (cols, rows) = Terminal::size()?;
     app.update_viewport(rows, cols);
 
     // Main event loop
@@ -284,7 +284,7 @@ fn prompt_input(app: &mut AppContext, prompt: &str) -> Result<Option<String>> {
     Renderer::render(app)?;
 
     // Show prompt at bottom
-    let (rows, _cols) = terminal::size()?;
+    let (_cols, rows) = terminal::size()?;
     execute!(
         io::stdout(),
         cursor::MoveTo(0, rows - 1),
