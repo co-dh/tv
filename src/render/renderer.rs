@@ -76,8 +76,6 @@ impl Renderer {
                         if i < remainder as usize {
                             widths[col_idx] += 1;
                         }
-                        // Cap at max width
-                        widths[col_idx] = widths[col_idx].min(50);
                     }
                 }
             }
