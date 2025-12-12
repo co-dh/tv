@@ -17,7 +17,10 @@ The binary will be at `./target/release/tv`.
 tv data.csv
 tv data.parquet
 
-# Run in script mode
+# Run inline commands
+tv -c 'load data.csv | filter age>30 | save filtered.csv'
+
+# Run script file
 tv --script commands.txt
 ```
 
@@ -62,7 +65,13 @@ Filter expressions support:
 - `col<value` - Less than
 - `col>=value` - Greater or equal
 - `col<=value` - Less or equal
-- `col==value` - Equal (works with strings too)
+- `col==value` - Equal (exact match for strings)
+
+String filter patterns (glob-style):
+- `col==abc` - Exact match
+- `col==*abc*` - Contains "abc"
+- `col==*abc` - Ends with "abc"
+- `col==abc*` - Starts with "abc"
 
 Filtering pushes a new view onto the stack. Press `q` to return to the original data.
 

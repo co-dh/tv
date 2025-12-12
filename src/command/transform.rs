@@ -171,8 +171,33 @@ impl Filter {
     fn create_string_mask(&self, col: &Series, value: &str) -> Result<ChunkedArray<BooleanType>> {
         let col_str = col.str()?;
 
+        // Support glob patterns: *pattern (ends with), pattern* (begins with), *pattern* (contains)
         let mask = if self.expression.contains("==") {
-            col_str.equal(value)
+            if value.starts_with('*') && value.ends_with('*') && value.len() > 2 {
+                // *pattern* -> contains
+                let pattern = &value[1..value.len()-1];
+                let bools: Vec<bool> = col_str.into_iter()
+                    .map(|opt| opt.map(|s| s.contains(pattern)).unwrap_or(false))
+                    .collect();
+                ChunkedArray::from_slice("mask".into(), &bools)
+            } else if value.starts_with('*') && value.len() > 1 {
+                // *pattern -> ends with
+                let pattern = &value[1..];
+                let bools: Vec<bool> = col_str.into_iter()
+                    .map(|opt| opt.map(|s| s.ends_with(pattern)).unwrap_or(false))
+                    .collect();
+                ChunkedArray::from_slice("mask".into(), &bools)
+            } else if value.ends_with('*') && value.len() > 1 {
+                // pattern* -> begins with
+                let pattern = &value[..value.len()-1];
+                let bools: Vec<bool> = col_str.into_iter()
+                    .map(|opt| opt.map(|s| s.starts_with(pattern)).unwrap_or(false))
+                    .collect();
+                ChunkedArray::from_slice("mask".into(), &bools)
+            } else {
+                // exact match
+                col_str.equal(value)
+            }
         } else {
             return Err(anyhow!(
                 "Only == operator supported for string columns"
@@ -381,5 +406,59 @@ impl Command for DelSingle {
 
     fn to_command_string(&self) -> String {
         String::from("del1")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_string_df() -> DataFrame {
+        df! {
+            "name" => &["apple", "banana", "cherry", "pineapple", "grape", "blueberry"]
+        }.unwrap()
+    }
+
+    #[test]
+    fn test_string_filter_exact_match() {
+        let df = make_string_df();
+        let filter = Filter { expression: "name==apple".to_string() };
+        let col = df.column("name").unwrap();
+        let mask = filter.create_string_mask(col.as_materialized_series(), "apple").unwrap();
+        let result = df.filter(&mask).unwrap();
+        assert_eq!(result.height(), 1);
+    }
+
+    #[test]
+    fn test_string_filter_contains() {
+        let df = make_string_df();
+        let filter = Filter { expression: "name==*apple*".to_string() };
+        let col = df.column("name").unwrap();
+        let mask = filter.create_string_mask(col.as_materialized_series(), "*apple*").unwrap();
+        let result = df.filter(&mask).unwrap();
+        // "apple" and "pineapple" both contain "apple"
+        assert_eq!(result.height(), 2);
+    }
+
+    #[test]
+    fn test_string_filter_ends_with() {
+        let df = make_string_df();
+        let filter = Filter { expression: "name==*rry".to_string() };
+        let col = df.column("name").unwrap();
+        let mask = filter.create_string_mask(col.as_materialized_series(), "*rry").unwrap();
+        let result = df.filter(&mask).unwrap();
+        // "cherry", "blueberry" end with "rry"
+        assert_eq!(result.height(), 2);
+    }
+
+    #[test]
+    fn test_string_filter_starts_with() {
+        let df = make_string_df();
+        let filter = Filter { expression: "name==b*".to_string() };
+        let col = df.column("name").unwrap();
+        let mask = filter.create_string_mask(col.as_materialized_series(), "b*").unwrap();
+        let result = df.filter(&mask).unwrap();
+        // "banana", "blueberry" start with "b"
+        assert_eq!(result.height(), 2);
     }
 }

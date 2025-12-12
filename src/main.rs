@@ -20,6 +20,17 @@ fn main() -> Result<()> {
     // Get command line args
     let args: Vec<String> = std::env::args().collect();
 
+    // Check for -c argument (inline script)
+    let cmd_mode = args.iter().position(|a| a == "-c");
+    if let Some(idx) = cmd_mode {
+        if args.len() <= idx + 1 {
+            eprintln!("Usage: tv -c '<commands>'");
+            std::process::exit(1);
+        }
+        let commands = &args[idx + 1];
+        return run_commands(commands);
+    }
+
     // Check for --script argument
     let script_mode = args.iter().position(|a| a == "--script");
 
@@ -73,6 +84,30 @@ fn main() -> Result<()> {
     }
 
     Terminal::restore()?;
+    Ok(())
+}
+
+/// Run commands from inline string (-c option)
+fn run_commands(commands: &str) -> Result<()> {
+    let mut app = AppContext::new();
+    app.update_viewport(50, 120);
+
+    for cmd_str in commands.split('|') {
+        let cmd_str = cmd_str.trim();
+        if cmd_str.is_empty() || cmd_str == "quit" {
+            continue;
+        }
+
+        if let Some(cmd) = parse_command(cmd_str, &app) {
+            if let Err(e) = CommandExecutor::execute(&mut app, cmd) {
+                eprintln!("Error executing '{}': {}", cmd_str, e);
+            }
+        } else {
+            eprintln!("Unknown command: {}", cmd_str);
+        }
+    }
+
+    print_table(&app);
     Ok(())
 }
 
