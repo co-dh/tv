@@ -1,5 +1,5 @@
 use anyhow::Result;
-use crossterm::{cursor, execute, terminal};
+use crossterm::{cursor, execute, terminal::{self, Clear, ClearType}};
 use skim::prelude::*;
 use std::io::{self, Cursor};
 
@@ -35,7 +35,13 @@ pub fn pick(items: Vec<String>, prompt: &str) -> Result<Option<String>> {
 
     // Return to alternate screen
     terminal::enable_raw_mode()?;
-    execute!(io::stdout(), terminal::EnterAlternateScreen, cursor::Hide)?;
+    execute!(
+        io::stdout(),
+        terminal::EnterAlternateScreen,
+        Clear(ClearType::All),
+        cursor::MoveTo(0, 0),
+        cursor::Hide
+    )?;
 
     Ok(result)
 }
@@ -75,7 +81,13 @@ pub fn input_with_hints(items: Vec<String>, prompt: &str) -> Result<Option<Strin
         .unwrap_or(None);
 
     terminal::enable_raw_mode()?;
-    execute!(io::stdout(), terminal::EnterAlternateScreen, cursor::Hide)?;
+    execute!(
+        io::stdout(),
+        terminal::EnterAlternateScreen,
+        Clear(ClearType::All),
+        cursor::MoveTo(0, 0),
+        cursor::Hide
+    )?;
 
     Ok(result)
 }
