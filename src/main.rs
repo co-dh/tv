@@ -8,7 +8,7 @@ use anyhow::Result;
 use app::AppContext;
 use command::executor::CommandExecutor;
 use command::io::{Load, Save};
-use command::transform::{DelCol, DelNull, DelSingle, Filter, RenameCol, Select, Sort};
+use command::transform::{DelCol, Filter, RenameCol, Select, Sort};
 use command::view::{Correlation, Frequency, Metadata};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use crossterm::{cursor, execute, style::Print, terminal};
@@ -166,8 +166,6 @@ fn parse_command(line: &str, _app: &AppContext) -> Option<Box<dyn command::Comma
         "meta" | "metadata" => Some(Box::new(Metadata)),
         "corr" | "correlation" => Some(Box::new(Correlation { selected_cols: vec![] })),
         "delcol" => Some(Box::new(DelCol { col_name: arg.to_string() })),
-        "delnull" => Some(Box::new(DelNull)),
-        "del1" => Some(Box::new(DelSingle)),
         "filter" => Some(Box::new(Filter { expression: arg.to_string() })),
         "select" | "sel" => Some(Box::new(Select {
             col_names: arg.split(',').map(|s| s.trim().to_string()).collect()

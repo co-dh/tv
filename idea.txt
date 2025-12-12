@@ -1,0 +1,22 @@
+busybox
+database , duckdb, 1 billion rows taxi.
+plot, kit graphic,
+cli plot use plotnine.
+
+short local name. 
+short name in general.
+each table is a type, with it's own render, it can reuse common function, but not inheritence. 
+# table type
+Norm
+Meta
+Freq
+Corr
+
+# different input source
+big parquet file, 1 billion row.
+database 
+csv
+
+# embedded json in table
+
+# theme , config theme, in csv format.

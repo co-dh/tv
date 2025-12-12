@@ -116,51 +116,6 @@ impl Command for RenameCol {
     fn to_str(&self) -> String { format!("rename {} {}", self.old_name, self.new_name) }
 }
 
-/// Delete all-null columns
-pub struct DelNull;
-
-impl Command for DelNull {
-    fn exec(&mut self, app: &mut AppContext) -> Result<()> {
-        let v = app.req_mut()?;
-        let h = v.dataframe.height();
-        // Keep cols where null_count < height (i.e., not all null)
-        let keep: Vec<String> = v.dataframe.get_columns().iter()
-            .filter(|c| c.as_materialized_series().null_count() < h)
-            .map(|c| c.name().to_string()).collect();
-        if keep.len() < v.cols() {
-            v.dataframe = v.dataframe.select(&keep)?;
-            if v.state.cc >= v.cols() && v.cols() > 0 { v.state.cc = v.cols() - 1; }
-        }
-        Ok(())
-    }
-    fn to_str(&self) -> String { "delnull".into() }
-}
-
-/// Delete single-value columns
-pub struct DelSingle;
-
-impl Command for DelSingle {
-    fn exec(&mut self, app: &mut AppContext) -> Result<()> {
-        let v = app.req_mut()?;
-        // Keep cols with >1 unique value (accounting for nulls)
-        let keep: Vec<String> = v.dataframe.get_columns().iter()
-            .filter(|c| {
-                let s = c.as_materialized_series();
-                s.n_unique().map(|u| {
-                    let nc = s.null_count();
-                    if nc > 0 && nc < s.len() { u > 2 } else { u > 1 }
-                }).unwrap_or(true)
-            })
-            .map(|c| c.name().to_string()).collect();
-        if keep.len() < v.cols() {
-            v.dataframe = v.dataframe.select(&keep)?;
-            if v.state.cc >= v.cols() && v.cols() > 0 { v.state.cc = v.cols() - 1; }
-        }
-        Ok(())
-    }
-    fn to_str(&self) -> String { "del1".into() }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

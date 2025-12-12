@@ -59,24 +59,6 @@ echo "$OUT" | head -20 | grep -q "Dave" && echo "  sort desc: PASS" || exit 1
 # rename
 $TV -c "load ./tmp/test.csv | rename name username" 2>/dev/null | grep -q "username" && echo "  rename: PASS" || exit 1
 
-# delnull - need column with all nulls
-cat > ./tmp/nulls.csv << 'EOF'
-a,b,c
-1,,x
-2,,y
-3,,z
-EOF
-! $TV -c "load ./tmp/nulls.csv | delnull" 2>/dev/null | grep -q "│ b " && echo "  delnull: PASS" || exit 1
-
-# del1 - need column with single value
-cat > ./tmp/single.csv << 'EOF'
-a,b,c
-1,X,x
-2,X,y
-3,X,z
-EOF
-! $TV -c "load ./tmp/single.csv | del1" 2>/dev/null | grep -q "│ b " && echo "  del1: PASS" || exit 1
-
 # pipe chaining
 $TV -c "load ./tmp/test.csv | filter city==NYC | sort value | sel name,value" 2>/dev/null | grep -q "(3 rows)" && echo "  pipe chain: PASS" || exit 1
 
