@@ -87,6 +87,7 @@ impl Renderer {
 
             view.state.col_widths = widths;
             view.state.widths_calc_row = view.state.cr;
+            view.state.visible_col_count = visible_indices.len();
         }
 
         let state = &view.state;

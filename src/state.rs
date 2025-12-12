@@ -17,6 +17,8 @@ pub struct TableState {
     pub col_widths: Vec<u16>,
     /// Row position where widths were calculated
     pub widths_calc_row: usize,
+    /// Number of columns currently visible on screen
+    pub visible_col_count: usize,
 }
 
 impl TableState {
@@ -29,6 +31,7 @@ impl TableState {
             viewport: (0, 0),
             col_widths: Vec::new(),
             widths_calc_row: 0,
+            visible_col_count: 0,
         }
     }
 
@@ -77,10 +80,13 @@ impl TableState {
         }
         self.cc = (self.cc + n).min(max_cols - 1);
 
-        // Adjust horizontal viewport - simple approach: show columns starting from current if needed
-        // The renderer will need to calculate actual visible columns
-        if self.cc >= self.c0 + 5 {
-            self.c0 = self.cc.saturating_sub(4);
+        // Only scroll if cursor goes beyond visible area AND there are more columns to show
+        let visible = if self.visible_col_count > 0 { self.visible_col_count } else { 5 };
+        let last_visible_col = self.c0 + visible;
+        let all_cols_visible = last_visible_col >= max_cols;
+
+        if self.cc >= last_visible_col && !all_cols_visible {
+            self.c0 = self.cc.saturating_sub(visible - 1);
         }
     }
 
