@@ -4,7 +4,7 @@ use anyhow::Result;
 use crossterm::{
     cursor,
     execute,
-    style::{Color, Print, ResetColor, SetBackgroundColor, SetForegroundColor},
+    style::{Attribute, Color, Print, ResetColor, SetAttribute, SetBackgroundColor, SetForegroundColor},
     terminal,
 };
 use polars::prelude::*;
@@ -120,7 +120,9 @@ impl Renderer {
         execute!(
             writer,
             cursor::MoveTo(0, 0),
-            terminal::Clear(terminal::ClearType::CurrentLine)
+            terminal::Clear(terminal::ClearType::CurrentLine),
+            SetAttribute(Attribute::Bold),
+            SetAttribute(Attribute::Underlined)
         )?;
 
         // Render row number header (if showing row numbers)
@@ -145,23 +147,23 @@ impl Renderer {
             let is_current = col_idx == state.cc;
             let col_width = state.col_widths.get(col_idx).copied().unwrap_or(10);
 
+            // Selected column: light background
             if is_current {
-                execute!(
-                    writer,
-                    SetBackgroundColor(Color::Blue),
-                    SetForegroundColor(Color::White)
-                )?;
+                execute!(writer, SetBackgroundColor(Color::DarkGrey))?;
             }
 
             let display = format!("{:width$}", col_name, width = col_width as usize);
             execute!(writer, Print(&display[..display.len().min(col_width as usize)]))?;
 
             if is_current {
-                execute!(writer, ResetColor)?;
+                execute!(writer, SetBackgroundColor(Color::Reset))?;
             }
 
             execute!(writer, Print(" "))?;
         }
+
+        // Reset attributes at end of header
+        execute!(writer, SetAttribute(Attribute::Reset))?;
 
         Ok(())
     }
@@ -198,15 +200,21 @@ impl Renderer {
                 break;
             }
 
-            let is_current_cell = row_idx == state.cr && col_idx == state.cc;
+            let is_current_col = col_idx == state.cc;
+            let is_current_cell = is_current_row && is_current_col;
 
             if is_current_cell {
+                // Current cell: yellow background, black text
                 execute!(
                     writer,
                     SetBackgroundColor(Color::Yellow),
                     SetForegroundColor(Color::Black)
                 )?;
+            } else if is_current_col {
+                // Selected column: light background
+                execute!(writer, SetBackgroundColor(Color::DarkGrey))?;
             } else if is_current_row {
+                // Current row: white text
                 execute!(writer, SetForegroundColor(Color::White))?;
             }
 
@@ -216,7 +224,7 @@ impl Renderer {
 
             execute!(writer, Print(&display[..display.len().min(col_width as usize)]))?;
 
-            if is_current_cell || is_current_row {
+            if is_current_cell || is_current_col || is_current_row {
                 execute!(writer, ResetColor)?;
             }
 
