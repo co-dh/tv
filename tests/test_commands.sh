@@ -36,10 +36,10 @@ $TV -c "load ./tmp/test.csv | meta" 2>/dev/null | grep -q "name" && echo "  meta
 $TV -c "load ./tmp/test.csv | corr" 2>/dev/null | grep -q "value" && echo "  corr: PASS" || exit 1
 
 # filter (numeric)
-$TV -c "load ./tmp/test.csv | filter value>200" 2>/dev/null | grep -q "(2 rows)" && echo "  filter numeric: PASS" || exit 1
+$TV -c "load ./tmp/test.csv | filter value > 200" 2>/dev/null | grep -q "(2 rows)" && echo "  filter numeric: PASS" || exit 1
 
 # filter (string)
-$TV -c "load ./tmp/test.csv | filter city==NYC" 2>/dev/null | grep -q "(3 rows)" && echo "  filter string: PASS" || exit 1
+$TV -c "load ./tmp/test.csv | filter city = 'NYC'" 2>/dev/null | grep -q "(3 rows)" && echo "  filter string: PASS" || exit 1
 
 # select
 $TV -c "load ./tmp/test.csv | sel name,city" 2>/dev/null | grep -q "name" && echo "  select: PASS" || exit 1
@@ -64,7 +64,7 @@ OUT=$($TV -c "load ./tmp/test.csv | delcol city,score" 2>/dev/null)
 $TV -c "load ./tmp/test.csv | rename name username" 2>/dev/null | grep -q "username" && echo "  rename: PASS" || exit 1
 
 # pipe chaining
-$TV -c "load ./tmp/test.csv | filter city==NYC | sort value | sel name,value" 2>/dev/null | grep -q "(3 rows)" && echo "  pipe chain: PASS" || exit 1
+$TV -c "load ./tmp/test.csv | filter city = 'NYC' | sort value | sel name,value" 2>/dev/null | grep -q "(3 rows)" && echo "  pipe chain: PASS" || exit 1
 
 rm -rf ./tmp
 

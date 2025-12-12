@@ -1,5 +1,5 @@
 #!/bin/bash
-# Test string filter and search glob patterns
+# Test string filter with SQL WHERE syntax
 
 set -e
 cd "$(dirname "$0")/.."
@@ -17,22 +17,21 @@ grape,50
 blueberry,60
 EOF
 
-echo "Testing string filter patterns..."
+echo "Testing SQL filter patterns..."
 
 # exact match: 1 row (apple)
-$TV -c 'load ./tmp/strings.csv | filter name==apple' 2>/dev/null | grep -q '(1 rows)' && echo "  filter name==apple: PASS" || exit 1
+$TV -c "load ./tmp/strings.csv | filter name = 'apple'" 2>/dev/null | grep -q '(1 rows)' && echo "  name = 'apple': PASS" || exit 1
 
 # contains: 2 rows (apple, pineapple)
-$TV -c 'load ./tmp/strings.csv | filter name==*apple*' 2>/dev/null | grep -q '(2 rows)' && echo "  filter name==*apple*: PASS" || exit 1
+$TV -c "load ./tmp/strings.csv | filter name LIKE '%apple%'" 2>/dev/null | grep -q '(2 rows)' && echo "  name LIKE '%apple%': PASS" || exit 1
 
 # ends with: 2 rows (cherry, blueberry)
-$TV -c 'load ./tmp/strings.csv | filter name==*rry' 2>/dev/null | grep -q '(2 rows)' && echo "  filter name==*rry: PASS" || exit 1
+$TV -c "load ./tmp/strings.csv | filter name LIKE '%rry'" 2>/dev/null | grep -q '(2 rows)' && echo "  name LIKE '%rry': PASS" || exit 1
 
 # starts with: 2 rows (banana, blueberry)
-$TV -c 'load ./tmp/strings.csv | filter name==b*' 2>/dev/null | grep -q '(2 rows)' && echo "  filter name==b*: PASS" || exit 1
+$TV -c "load ./tmp/strings.csv | filter name LIKE 'b%'" 2>/dev/null | grep -q '(2 rows)' && echo "  name LIKE 'b%': PASS" || exit 1
 
-echo "All string filter tests PASSED"
+# numeric comparison
+$TV -c "load ./tmp/strings.csv | filter value > 30" 2>/dev/null | grep -q '(3 rows)' && echo "  value > 30: PASS" || exit 1
 
-echo ""
-echo "Note: Interactive skim hints for / and \\ show glob examples based on current cell:"
-echo "  For cell 'Finance': Fi* (starts with), *ce (ends with)"
+echo "All SQL filter tests PASSED"

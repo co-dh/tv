@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-polars = { version = "0.45", features = ["lazy", "csv", "parquet"] }
+polars = { version = "0.45", features = ["lazy", "csv", "parquet", "strings", "sql"] }
 crossterm = "0.28"
 anyhow = "1.0"
 skim = "0.10"

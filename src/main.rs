@@ -166,7 +166,7 @@ fn parse_command(line: &str, _app: &AppContext) -> Option<Box<dyn command::Comma
         "meta" | "metadata" => Some(Box::new(Metadata)),
         "corr" | "correlation" => Some(Box::new(Correlation { selected_cols: vec![] })),
         "delcol" => Some(Box::new(DelCol { col_names: arg.split(',').map(|s| s.trim().to_string()).collect() })),
-        "filter" => Some(Box::new(Filter { expression: arg.to_string() })),
+        "filter" => Some(Box::new(Filter { expr: arg.to_string() })),
         "select" | "sel" => Some(Box::new(Select {
             col_names: arg.split(',').map(|s| s.trim().to_string()).collect()
         })),
@@ -327,8 +327,8 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                 if let Some(col_name) = view.state.cur_col(&view.dataframe) {
                     let items = get_column_hints(&view.dataframe, &col_name, view.state.cr, &format!("{}==", col_name));
 
-                    if let Ok(Some(expression)) = picker::input(items, "Filter> ") {
-                        if let Err(e) = CommandExecutor::exec(app, Box::new(Filter { expression })) {
+                    if let Ok(Some(expr)) = picker::input(items, "Filter> ") {
+                        if let Err(e) = CommandExecutor::exec(app, Box::new(Filter { expr })) {
                             app.err(e);
                         }
                     }
