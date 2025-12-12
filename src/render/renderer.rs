@@ -8,6 +8,7 @@ use crossterm::{
     terminal,
 };
 use polars::prelude::*;
+use std::collections::HashSet;
 use std::io::{self, BufWriter, Write};
 
 pub struct Renderer;
@@ -18,12 +19,14 @@ impl Renderer {
         let (cols, rows) = terminal::size()?;
 
         let message = app.message.clone();
+        let selected_cols = app.selected_cols.clone();
+        let selected_rows = app.selected_rows.clone();
 
         // Use buffered writer to reduce flickering
         let mut stdout = BufWriter::new(io::stdout());
 
         if let Some(view) = app.current_view_mut() {
-            Self::render_table(view, rows, cols, &mut stdout)?;
+            Self::render_table(view, rows, cols, &selected_cols, &selected_rows, &mut stdout)?;
             Self::render_status_bar(view, &message, rows, cols, &mut stdout)?;
         } else {
             Self::render_empty_message(&message, rows, cols, &mut stdout)?;
@@ -34,8 +37,9 @@ impl Renderer {
     }
 
     /// Render the table data
-    fn render_table<W: Write>(view: &mut ViewState, rows: u16, cols: u16, writer: &mut W) -> Result<()> {
+    fn render_table<W: Write>(view: &mut ViewState, rows: u16, cols: u16, selected_cols: &HashSet<usize>, selected_rows: &HashSet<usize>, writer: &mut W) -> Result<()> {
         let df = &view.dataframe;
+        let is_correlation = view.name == "correlation";
 
         // Calculate column widths if needed
         if view.state.needs_width_recalc() {
@@ -92,14 +96,14 @@ impl Renderer {
         let end_row = (state.r0 + visible_rows).min(df.height());
 
         // Render column headers
-        Self::render_headers_xs(df, state, &xs, screen_width, row_num_width, writer)?;
+        Self::render_headers_xs(df, state, &xs, screen_width, row_num_width, selected_cols, writer)?;
 
         // Render data rows
         for row_idx in state.r0..end_row {
             let screen_row = (row_idx - state.r0 + 1) as u16;
             execute!(writer, cursor::MoveTo(0, screen_row))?;
 
-            Self::render_row_xs(df, row_idx, state, &xs, screen_width, row_num_width, writer)?;
+            Self::render_row_xs(df, row_idx, state, &xs, screen_width, row_num_width, is_correlation, selected_cols, selected_rows, writer)?;
         }
 
         // Clear empty rows between data and status bar
@@ -116,7 +120,7 @@ impl Renderer {
     }
 
     /// Render column headers using xs positions (qtv style)
-    fn render_headers_xs<W: Write>(df: &DataFrame, state: &TableState, xs: &[i32], screen_width: i32, row_num_width: u16, writer: &mut W) -> Result<()> {
+    fn render_headers_xs<W: Write>(df: &DataFrame, state: &TableState, xs: &[i32], screen_width: i32, row_num_width: u16, selected_cols: &HashSet<usize>, writer: &mut W) -> Result<()> {
         execute!(
             writer,
             cursor::MoveTo(0, 0),
@@ -144,18 +148,25 @@ impl Renderer {
             }
 
             let is_current = col_idx == state.cc;
+            let is_selected = selected_cols.contains(&col_idx);
             let col_width = state.col_widths.get(col_idx).copied().unwrap_or(10);
 
-            // Selected column: light background
+            // Current column: dark grey background
+            // Selected column: cyan foreground
             if is_current {
                 execute!(writer, SetBackgroundColor(Color::DarkGrey))?;
+            }
+            if is_selected {
+                execute!(writer, SetForegroundColor(Color::Cyan))?;
             }
 
             let display = format!("{:width$}", col_name, width = col_width as usize);
             execute!(writer, Print(&display[..display.len().min(col_width as usize)]))?;
 
-            if is_current {
-                execute!(writer, SetBackgroundColor(Color::Reset))?;
+            if is_current || is_selected {
+                execute!(writer, ResetColor)?;
+                // Re-apply bold/underline after reset
+                execute!(writer, SetAttribute(Attribute::Bold), SetAttribute(Attribute::Underlined))?;
             }
 
             execute!(writer, Print(" "))?;
@@ -172,17 +183,20 @@ impl Renderer {
     }
 
     /// Render a single data row using xs positions (qtv style)
-    fn render_row_xs<W: Write>(df: &DataFrame, row_idx: usize, state: &TableState, xs: &[i32], screen_width: i32, row_num_width: u16, writer: &mut W) -> Result<()> {
+    fn render_row_xs<W: Write>(df: &DataFrame, row_idx: usize, state: &TableState, xs: &[i32], screen_width: i32, row_num_width: u16, is_correlation: bool, selected_cols: &HashSet<usize>, selected_rows: &HashSet<usize>, writer: &mut W) -> Result<()> {
         let is_current_row = row_idx == state.cr;
+        let is_selected_row = selected_rows.contains(&row_idx);
 
         // Render row number (if showing row numbers)
         if row_num_width > 0 {
             if is_current_row {
                 execute!(writer, SetForegroundColor(Color::Yellow))?;
+            } else if is_selected_row {
+                execute!(writer, SetForegroundColor(Color::Magenta))?;
             }
             let row_num = format!("{:>width$} ", row_idx, width = row_num_width as usize);
             execute!(writer, Print(&row_num))?;
-            if is_current_row {
+            if is_current_row || is_selected_row {
                 execute!(writer, ResetColor)?;
             }
         }
@@ -202,6 +216,17 @@ impl Renderer {
 
             let is_current_col = col_idx == state.cc;
             let is_current_cell = is_current_row && is_current_col;
+            let is_selected = selected_cols.contains(&col_idx);
+
+            let col_width = state.col_widths.get(col_idx).copied().unwrap_or(10);
+            let value = Self::format_value(df, col_idx, row_idx);
+
+            // Get correlation color if applicable (skip first column which is row names)
+            let corr_color = if is_correlation && col_idx > 0 {
+                Self::correlation_color(&value)
+            } else {
+                None
+            };
 
             if is_current_cell {
                 // Current cell: yellow background, black text
@@ -211,20 +236,34 @@ impl Renderer {
                     SetForegroundColor(Color::Black)
                 )?;
             } else if is_current_col {
-                // Selected column: light background
+                // Current column: light background
                 execute!(writer, SetBackgroundColor(Color::DarkGrey))?;
+                if let Some(fg) = corr_color {
+                    execute!(writer, SetForegroundColor(fg))?;
+                } else if is_selected {
+                    execute!(writer, SetForegroundColor(Color::Cyan))?;
+                } else if is_selected_row {
+                    execute!(writer, SetForegroundColor(Color::Magenta))?;
+                }
+            } else if is_selected_row {
+                // Selected row: magenta text
+                execute!(writer, SetForegroundColor(Color::Magenta))?;
+            } else if is_selected {
+                // Selected column: cyan text
+                execute!(writer, SetForegroundColor(Color::Cyan))?;
+            } else if let Some(fg) = corr_color {
+                // Correlation coloring
+                execute!(writer, SetForegroundColor(fg))?;
             } else if is_current_row {
                 // Current row: white text
                 execute!(writer, SetForegroundColor(Color::White))?;
             }
 
-            let col_width = state.col_widths.get(col_idx).copied().unwrap_or(10);
-            let value = Self::format_value(df, col_idx, row_idx);
             let display = format!("{:width$}", value, width = col_width as usize);
 
             execute!(writer, Print(&display[..display.len().min(col_width as usize)]))?;
 
-            if is_current_cell || is_current_col || is_current_row {
+            if is_current_cell || is_current_col || is_current_row || corr_color.is_some() || is_selected || is_selected_row {
                 execute!(writer, ResetColor)?;
             }
 
@@ -235,6 +274,29 @@ impl Renderer {
         execute!(writer, terminal::Clear(terminal::ClearType::UntilNewLine))?;
 
         Ok(())
+    }
+
+    /// Get color for correlation value
+    fn correlation_color(value: &str) -> Option<Color> {
+        let v: f64 = value.parse().ok()?;
+
+        // Color based on correlation strength
+        // Strong positive: bright green
+        // Weak positive: dark green
+        // Near zero: gray
+        // Weak negative: dark red
+        // Strong negative: bright red
+        Some(if v >= 0.7 {
+            Color::Green
+        } else if v >= 0.3 {
+            Color::DarkGreen
+        } else if v > -0.3 {
+            Color::DarkGrey
+        } else if v > -0.7 {
+            Color::DarkRed
+        } else {
+            Color::Red
+        })
     }
 
     /// Format a single cell value

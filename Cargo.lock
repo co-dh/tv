@@ -2412,6 +2412,7 @@ dependencies = [
  "chrono",
  "crossterm 0.28.1",
  "polars",
+ "regex",
  "skim",
 ]
 

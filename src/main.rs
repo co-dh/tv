@@ -8,8 +8,8 @@ use anyhow::Result;
 use app::AppContext;
 use command::executor::CommandExecutor;
 use command::io::{Load, Save};
-use command::transform::{DelCol, Filter, RenameCol, Select, Sort};
-use command::view::{Frequency, Metadata};
+use command::transform::{DelCol, DelNull, DelSingle, Filter, RenameCol, Select, Sort};
+use command::view::{Correlation, Frequency, Metadata};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use crossterm::{cursor, execute, style::Print, terminal};
 use render::{Renderer, Terminal};
@@ -84,23 +84,31 @@ fn run_script(script_path: &str) -> Result<()> {
     // Set a reasonable viewport for printing
     app.update_viewport(50, 120);
 
-    for line in script.lines() {
+    'outer: for line in script.lines() {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
 
-        if line == "quit" {
-            break;
-        }
-
-        // Parse and execute command
-        if let Some(cmd) = parse_command(line, &app) {
-            if let Err(e) = CommandExecutor::execute(&mut app, cmd) {
-                eprintln!("Error executing '{}': {}", line, e);
+        // Support pipe-separated commands on a single line
+        for cmd_str in line.split('|') {
+            let cmd_str = cmd_str.trim();
+            if cmd_str.is_empty() {
+                continue;
             }
-        } else {
-            eprintln!("Unknown command: {}", line);
+
+            if cmd_str == "quit" {
+                break 'outer;
+            }
+
+            // Parse and execute command
+            if let Some(cmd) = parse_command(cmd_str, &app) {
+                if let Err(e) = CommandExecutor::execute(&mut app, cmd) {
+                    eprintln!("Error executing '{}': {}", cmd_str, e);
+                }
+            } else {
+                eprintln!("Unknown command: {}", cmd_str);
+            }
         }
     }
 
@@ -132,7 +140,10 @@ fn parse_command(line: &str, _app: &AppContext) -> Option<Box<dyn command::Comma
         "save" => Some(Box::new(Save { file_path: arg.to_string() })),
         "freq" | "frequency" => Some(Box::new(Frequency { col_name: arg.to_string() })),
         "meta" | "metadata" => Some(Box::new(Metadata)),
+        "corr" | "correlation" => Some(Box::new(Correlation { selected_cols: vec![] })),
         "delcol" => Some(Box::new(DelCol { col_name: arg.to_string() })),
+        "delnull" => Some(Box::new(DelNull)),
+        "del1" => Some(Box::new(DelSingle)),
         "filter" => Some(Box::new(Filter { expression: arg.to_string() })),
         "select" | "sel" => {
             let col_names: Vec<String> = arg.split(',').map(|s| s.trim().to_string()).collect();
@@ -267,14 +278,85 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
             }
         }
         KeyCode::Char('D') => {
-            // D: Delete current column
+            // D: Delete column(s) - in metadata view, delete from parent; otherwise delete current
             if let Some(view) = app.current_view() {
-                if let Some(col_name) = view.state.current_column(&view.dataframe) {
-                    let cmd = Box::new(DelCol {
-                        col_name: col_name.to_string(),
-                    });
-                    if let Err(e) = CommandExecutor::execute(app, cmd) {
-                        app.set_message(format!("Error: {}", e));
+                let is_meta = view.name == "metadata";
+
+                if is_meta {
+                    // In metadata view: delete selected columns from parent
+                    let parent_id = view.parent_id;
+                    let rows_to_delete: Vec<usize> = if app.selected_rows.is_empty() {
+                        vec![view.state.cr]
+                    } else {
+                        let mut rows: Vec<usize> = app.selected_rows.iter().copied().collect();
+                        rows.sort_by(|a, b| b.cmp(a)); // Sort descending to delete from end first
+                        rows
+                    };
+
+                    // Get column names from metadata view's first column
+                    let col_names: Vec<String> = rows_to_delete.iter()
+                        .filter_map(|&row| {
+                            view.dataframe.get_columns()[0]
+                                .get(row)
+                                .ok()
+                                .map(|v| {
+                                    let s = v.to_string();
+                                    if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
+                                        s[1..s.len()-1].to_string()
+                                    } else {
+                                        s
+                                    }
+                                })
+                        })
+                        .collect();
+
+                    if let Some(pid) = parent_id {
+                        // Delete columns from parent
+                        if let Some(parent) = app.stack.find_by_id_mut(pid) {
+                            let mut deleted = 0;
+                            for col_name in &col_names {
+                                if parent.dataframe.drop_in_place(col_name).is_ok() {
+                                    deleted += 1;
+                                }
+                            }
+                            app.selected_rows.clear();
+                            // Pop metadata view to show updated parent
+                            app.stack.pop();
+                            app.set_message(format!("Deleted {} column(s)", deleted));
+                        }
+                    }
+                } else {
+                    // Normal view: delete selected columns or current column
+                    let cols_to_delete: Vec<String> = if app.selected_cols.is_empty() {
+                        // No selection: delete current column
+                        view.state.current_column(&view.dataframe)
+                            .map(|c| vec![c.to_string()])
+                            .unwrap_or_default()
+                    } else {
+                        // Delete all selected columns
+                        let col_names: Vec<String> = view.dataframe.get_column_names()
+                            .iter()
+                            .map(|s| s.to_string())
+                            .collect();
+                        let mut selected: Vec<usize> = app.selected_cols.iter().copied().collect();
+                        selected.sort_by(|a, b| b.cmp(a)); // Sort descending
+                        selected.iter()
+                            .filter_map(|&idx| col_names.get(idx).cloned())
+                            .collect()
+                    };
+
+                    if cols_to_delete.is_empty() {
+                        app.set_message("No columns to delete".to_string());
+                    } else {
+                        let mut deleted = 0;
+                        for col_name in &cols_to_delete {
+                            let cmd = Box::new(DelCol { col_name: col_name.clone() });
+                            if CommandExecutor::execute(app, cmd).is_ok() {
+                                deleted += 1;
+                            }
+                        }
+                        app.selected_cols.clear();
+                        app.set_message(format!("Deleted {} column(s)", deleted));
                     }
                 }
             }
@@ -304,6 +386,7 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                                 // Store search state for n/N
                                 app.search.col_name = Some(col_name.clone());
                                 app.search.value = Some(selected.clone());
+                                app.search.regex = None; // Clear regex search
 
                                 // Find first occurrence
                                 if let Some(view) = app.current_view_mut() {
@@ -357,34 +440,72 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
             }
         }
         KeyCode::Char('n') => {
-            // n: Find next occurrence
-            if let (Some(col_name), Some(value)) = (app.search.col_name.clone(), app.search.value.clone()) {
-                if let Some(view) = app.current_view_mut() {
-                    let start = view.state.cr + 1;
-                    if let Some(pos) = find_value(&view.dataframe, &col_name, &value, start, true) {
-                        view.state.cr = pos;
-                        view.state.ensure_visible();
-                        app.set_message(format!("Found: {}={}", col_name, value));
-                    } else {
-                        app.set_message("No more matches".to_string());
+            // n: Find next occurrence (value or regex)
+            if let Some(col_name) = app.search.col_name.clone() {
+                if let Some(pattern) = app.search.regex.clone() {
+                    // Regex search
+                    if let Ok(re) = regex::Regex::new(&pattern) {
+                        if let Some(view) = app.current_view_mut() {
+                            let start = view.state.cr + 1;
+                            if let Some(pos) = find_regex(&view.dataframe, &col_name, &re, start, true) {
+                                view.state.cr = pos;
+                                view.state.ensure_visible();
+                                app.set_message(format!("Regex match: /{}/", pattern));
+                            } else {
+                                app.set_message("No more matches".to_string());
+                            }
+                        }
                     }
+                } else if let Some(value) = app.search.value.clone() {
+                    // Value search
+                    if let Some(view) = app.current_view_mut() {
+                        let start = view.state.cr + 1;
+                        if let Some(pos) = find_value(&view.dataframe, &col_name, &value, start, true) {
+                            view.state.cr = pos;
+                            view.state.ensure_visible();
+                            app.set_message(format!("Found: {}={}", col_name, value));
+                        } else {
+                            app.set_message("No more matches".to_string());
+                        }
+                    }
+                } else {
+                    app.set_message("No search active".to_string());
                 }
             } else {
                 app.set_message("No search active".to_string());
             }
         }
         KeyCode::Char('N') => {
-            // N: Find previous occurrence
-            if let (Some(col_name), Some(value)) = (app.search.col_name.clone(), app.search.value.clone()) {
-                if let Some(view) = app.current_view_mut() {
-                    let start = view.state.cr.saturating_sub(1);
-                    if let Some(pos) = find_value(&view.dataframe, &col_name, &value, start, false) {
-                        view.state.cr = pos;
-                        view.state.ensure_visible();
-                        app.set_message(format!("Found: {}={}", col_name, value));
-                    } else {
-                        app.set_message("No more matches".to_string());
+            // N: Find previous occurrence (value or regex)
+            if let Some(col_name) = app.search.col_name.clone() {
+                if let Some(pattern) = app.search.regex.clone() {
+                    // Regex search
+                    if let Ok(re) = regex::Regex::new(&pattern) {
+                        if let Some(view) = app.current_view_mut() {
+                            let start = view.state.cr.saturating_sub(1);
+                            if let Some(pos) = find_regex(&view.dataframe, &col_name, &re, start, false) {
+                                view.state.cr = pos;
+                                view.state.ensure_visible();
+                                app.set_message(format!("Regex match: /{}/", pattern));
+                            } else {
+                                app.set_message("No more matches".to_string());
+                            }
+                        }
                     }
+                } else if let Some(value) = app.search.value.clone() {
+                    // Value search
+                    if let Some(view) = app.current_view_mut() {
+                        let start = view.state.cr.saturating_sub(1);
+                        if let Some(pos) = find_value(&view.dataframe, &col_name, &value, start, false) {
+                            view.state.cr = pos;
+                            view.state.ensure_visible();
+                            app.set_message(format!("Found: {}={}", col_name, value));
+                        } else {
+                            app.set_message("No more matches".to_string());
+                        }
+                    }
+                } else {
+                    app.set_message("No search active".to_string());
                 }
             } else {
                 app.set_message("No search active".to_string());
@@ -400,6 +521,7 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                         let value_str = value.to_string();
                         app.search.col_name = Some(col_name.clone());
                         app.search.value = Some(value_str.clone());
+                        app.search.regex = None; // Clear regex search
                         app.set_message(format!("Search: {}={}", col_name, value_str));
                     }
                 }
@@ -482,40 +604,60 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
             }
         }
         KeyCode::Enter => {
-            // Enter: Filter parent table from frequency view
+            // Enter: Filter parent table from frequency view (supports multiple selections)
             if let Some(view) = app.current_view() {
                 if let (Some(parent_id), Some(freq_col)) = (view.parent_id, view.freq_col.clone()) {
-                    // Get the value from first column at current row
-                    let cr = view.state.cr;
-                    let value = view.dataframe.get_columns()[0]
-                        .get(cr)
-                        .ok()
-                        .map(|v| v.to_string())
-                        .unwrap_or_default();
+                    // Get values to filter by: selected rows or current row
+                    let rows_to_use: Vec<usize> = if app.selected_rows.is_empty() {
+                        vec![view.state.cr]
+                    } else {
+                        app.selected_rows.iter().copied().collect()
+                    };
 
-                    // Find parent view and filter
-                    if let Some(parent) = app.stack.find_by_id(parent_id) {
+                    let values: Vec<String> = rows_to_use.iter()
+                        .filter_map(|&row| {
+                            view.dataframe.get_columns()[0]
+                                .get(row)
+                                .ok()
+                                .map(|v| {
+                                    let s = v.to_string();
+                                    // Strip quotes from string values
+                                    if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
+                                        s[1..s.len()-1].to_string()
+                                    } else {
+                                        s
+                                    }
+                                })
+                        })
+                        .collect();
+
+                    if values.is_empty() {
+                        app.set_message("No values to filter".to_string());
+                    } else if let Some(parent) = app.stack.find_by_id(parent_id) {
                         let parent_df = parent.dataframe.clone();
                         let parent_filename = parent.filename.clone();
 
-                        // Create filter expression
-                        let filter_expr = format!("{}=={}", freq_col, value);
-                        let cmd = Box::new(Filter { expression: filter_expr });
-
-                        // Push a temporary view with parent data, then filter
-                        let id = app.next_id();
-                        let filtered_view = state::ViewState::new(
-                            id,
-                            format!("{}={}", freq_col, value),
-                            parent_df,
-                            parent_filename,
-                        );
-                        app.stack.push(filtered_view);
-
-                        // Now apply the filter
-                        if let Err(e) = CommandExecutor::execute(app, cmd) {
-                            app.set_message(format!("Error: {}", e));
-                            app.stack.pop(); // Remove the failed view
+                        // Filter by matching any of the selected values
+                        match filter_by_values(&parent_df, &freq_col, &values) {
+                            Ok(filtered_df) => {
+                                let row_count = filtered_df.height();
+                                let id = app.next_id();
+                                let view_name = if values.len() == 1 {
+                                    format!("{}={}", freq_col, values[0])
+                                } else {
+                                    format!("{}∈{{{}}}", freq_col, values.len())
+                                };
+                                let new_view = state::ViewState::new(
+                                    id,
+                                    view_name,
+                                    filtered_df,
+                                    parent_filename,
+                                );
+                                app.stack.push(new_view);
+                                app.selected_rows.clear();
+                                app.set_message(format!("Filtered: {} rows", row_count));
+                            }
+                            Err(e) => app.set_message(format!("Error: {}", e)),
                         }
                     }
                 }
@@ -536,17 +678,6 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                                 app.set_message(format!("Copied column '{}' to '{}'", col_name, new_name));
                             }
                         }
-                    }
-                }
-            }
-        }
-        KeyCode::Char('d') => {
-            // d: Delete current column (same as D but lowercase)
-            if let Some(view) = app.current_view() {
-                if let Some(col_name) = view.state.current_column(&view.dataframe) {
-                    let cmd = Box::new(DelCol { col_name: col_name.to_string() });
-                    if let Err(e) = CommandExecutor::execute(app, cmd) {
-                        app.set_message(format!("Error: {}", e));
                     }
                 }
             }
@@ -661,6 +792,306 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                 Err(e) => app.set_message(format!("Error: {}", e)),
             }
         }
+        KeyCode::Char('C') => {
+            // C: Correlation matrix (uses selected columns if >= 2, otherwise all numeric)
+            if app.has_view() {
+                let selected: Vec<usize> = app.selected_cols.iter().copied().collect();
+                let cmd = Box::new(Correlation { selected_cols: selected });
+                if let Err(e) = CommandExecutor::execute(app, cmd) {
+                    app.set_message(format!("Error: {}", e));
+                } else {
+                    // Clear selection after successful correlation
+                    app.selected_cols.clear();
+                }
+            }
+        }
+        KeyCode::Char('?') => {
+            // ?: Regex search in current column
+            if let Some(view) = app.current_view() {
+                if let Some(col_name) = view.state.current_column(&view.dataframe) {
+                    if let Some(pattern) = prompt_input(app, "Regex: ")? {
+                        match regex::Regex::new(&pattern) {
+                            Ok(re) => {
+                                app.search.col_name = Some(col_name.clone());
+                                app.search.regex = Some(pattern.clone());
+                                app.search.value = None;
+
+                                // Find first match
+                                if let Some(view) = app.current_view_mut() {
+                                    if let Some(pos) = find_regex(&view.dataframe, &col_name, &re, 0, true) {
+                                        view.state.cr = pos;
+                                        view.state.ensure_visible();
+                                        app.set_message(format!("Regex match: /{}/", pattern));
+                                    } else {
+                                        app.set_message(format!("No match: /{}/", pattern));
+                                    }
+                                }
+                            }
+                            Err(e) => app.set_message(format!("Invalid regex: {}", e)),
+                        }
+                    }
+                }
+            }
+        }
+        KeyCode::Char('|') => {
+            // |: Regex filter on current column
+            let col_info = app.current_view().map(|view| {
+                (
+                    view.state.current_column(&view.dataframe),
+                    view.dataframe.clone(),
+                    view.filename.clone(),
+                )
+            });
+            if let Some((Some(col_name), df, filename)) = col_info {
+                if let Some(pattern) = prompt_input(app, "Regex filter: ")? {
+                    match regex::Regex::new(&pattern) {
+                        Ok(re) => {
+                            // Filter rows matching regex
+                            match filter_by_regex(&df, &col_name, &re) {
+                                Ok(filtered_df) => {
+                                    let row_count = filtered_df.height();
+                                    let id = app.next_id();
+                                    let new_view = state::ViewState::new(
+                                        id,
+                                        format!("{}~/{}/", col_name, pattern),
+                                        filtered_df,
+                                        filename,
+                                    );
+                                    app.stack.push(new_view);
+                                    app.set_message(format!("Regex filter: {} rows", row_count));
+                                }
+                                Err(e) => app.set_message(format!("Error: {}", e)),
+                            }
+                        }
+                        Err(e) => app.set_message(format!("Invalid regex: {}", e)),
+                    }
+                }
+            } else {
+                app.set_message("No table loaded".to_string());
+            }
+        }
+        KeyCode::Char(':') => {
+            // :: Jump to row number
+            if let Some(input) = prompt_input(app, "Go to row: ")? {
+                if let Ok(row) = input.parse::<usize>() {
+                    if let Some(view) = app.current_view_mut() {
+                        let max_rows = view.row_count();
+                        if row < max_rows {
+                            view.state.cr = row;
+                            view.state.ensure_visible();
+                            app.set_message(format!("Row {}", row));
+                        } else {
+                            app.set_message(format!("Row {} out of range (max {})", row, max_rows - 1));
+                        }
+                    }
+                } else {
+                    app.set_message("Invalid row number".to_string());
+                }
+            }
+        }
+        KeyCode::Char('@') => {
+            // @: Jump to column by name
+            if let Some(view) = app.current_view() {
+                let col_names: Vec<String> = view.dataframe.get_column_names()
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect();
+                if let Ok(Some(selected)) = picker::pick(col_names.clone(), "Column: ") {
+                    if let Some(idx) = col_names.iter().position(|c| c == &selected) {
+                        if let Some(view) = app.current_view_mut() {
+                            view.state.cc = idx;
+                            app.set_message(format!("Column: {}", selected));
+                        }
+                    }
+                }
+            }
+        }
+        KeyCode::Char('m') => {
+            // m: Toggle bookmark on current row
+            if let Some(view) = app.current_view() {
+                let cr = view.state.cr;
+                if let Some(pos) = app.bookmarks.iter().position(|&r| r == cr) {
+                    app.bookmarks.remove(pos);
+                    app.set_message(format!("Removed bookmark at row {}", cr));
+                } else {
+                    app.bookmarks.push(cr);
+                    app.bookmarks.sort();
+                    app.set_message(format!("Bookmarked row {} ({} total)", cr, app.bookmarks.len()));
+                }
+            }
+        }
+        KeyCode::Char('\'') => {
+            // ': Jump to next bookmark
+            if app.bookmarks.is_empty() {
+                app.set_message("No bookmarks".to_string());
+            } else {
+                let cr = app.current_view().map(|v| v.state.cr).unwrap_or(0);
+                // Find next bookmark after current row
+                let next = app.bookmarks.iter().find(|&&r| r > cr).copied()
+                    .or_else(|| app.bookmarks.first().copied());
+                if let Some(row) = next {
+                    if let Some(view) = app.current_view_mut() {
+                        view.state.cr = row;
+                        view.state.ensure_visible();
+                    }
+                    app.set_message(format!("Bookmark: row {}", row));
+                }
+            }
+        }
+        KeyCode::Char(' ') => {
+            // Space: Toggle selection (rows in Meta/Freq views, columns otherwise)
+            if let Some(view) = app.current_view() {
+                let is_meta = view.name == "metadata";
+                let is_freq = view.name.starts_with("Freq:");
+
+                if is_meta || is_freq {
+                    // Select rows in metadata/frequency views
+                    let cr = view.state.cr;
+                    if app.selected_rows.contains(&cr) {
+                        app.selected_rows.remove(&cr);
+                        app.set_message(format!("Deselected row ({} selected)", app.selected_rows.len()));
+                    } else {
+                        app.selected_rows.insert(cr);
+                        app.set_message(format!("Selected row ({} selected)", app.selected_rows.len()));
+                    }
+                } else {
+                    // Select columns in regular views
+                    let cc = view.state.cc;
+                    if app.selected_cols.contains(&cc) {
+                        app.selected_cols.remove(&cc);
+                        app.set_message(format!("Deselected column ({} selected)", app.selected_cols.len()));
+                    } else {
+                        app.selected_cols.insert(cc);
+                        app.set_message(format!("Selected column ({} selected)", app.selected_cols.len()));
+                    }
+                }
+            }
+        }
+        KeyCode::Esc => {
+            // Esc: Clear selection
+            if !app.selected_cols.is_empty() || !app.selected_rows.is_empty() {
+                app.selected_cols.clear();
+                app.selected_rows.clear();
+                app.set_message("Selection cleared".to_string());
+            }
+        }
+        KeyCode::Char('0') => {
+            // 0: In Meta view, select rows with 100% null; otherwise select all-null columns
+            if let Some(view) = app.current_view() {
+                let is_meta = view.name == "metadata";
+
+                if is_meta {
+                    // In Meta view: select rows where "null%" column == 100
+                    let df = &view.dataframe;
+                    if let Ok(null_col) = df.column("null%") {
+                        let series = null_col.as_materialized_series();
+                        let mut null_rows = Vec::new();
+
+                        for row_idx in 0..series.len() {
+                            if let Ok(val) = series.get(row_idx) {
+                                // Check if null% is 100
+                                let val_str = val.to_string();
+                                if val_str == "100" || val_str == "100.0" {
+                                    null_rows.push(row_idx);
+                                }
+                            }
+                        }
+
+                        if null_rows.is_empty() {
+                            app.set_message("No all-null columns found".to_string());
+                        } else {
+                            for idx in &null_rows {
+                                app.selected_rows.insert(*idx);
+                            }
+                            app.set_message(format!("Selected {} row(s) with 100% null", null_rows.len()));
+                        }
+                    }
+                } else {
+                    // Normal view: select all-null columns
+                    let df = &view.dataframe;
+                    let total_rows = df.height();
+                    let mut null_cols = Vec::new();
+
+                    for (col_idx, col) in df.get_columns().iter().enumerate() {
+                        let series = col.as_materialized_series();
+                        if series.null_count() == total_rows {
+                            null_cols.push(col_idx);
+                        }
+                    }
+
+                    if null_cols.is_empty() {
+                        app.set_message("No all-null columns found".to_string());
+                    } else {
+                        for idx in &null_cols {
+                            app.selected_cols.insert(*idx);
+                        }
+                        app.set_message(format!("Selected {} all-null column(s)", null_cols.len()));
+                    }
+                }
+            }
+        }
+        KeyCode::Char('1') => {
+            // 1: In Meta view, select rows with 1 distinct value; otherwise select single-value columns
+            if let Some(view) = app.current_view() {
+                let is_meta = view.name == "metadata";
+
+                if is_meta {
+                    // In Meta view: select rows where "distinct" column == 1
+                    let df = &view.dataframe;
+                    // Find the "distinct" column (index 3)
+                    if let Ok(distinct_col) = df.column("distinct") {
+                        let series = distinct_col.as_materialized_series();
+                        let mut single_value_rows = Vec::new();
+
+                        for row_idx in 0..series.len() {
+                            if let Ok(val) = series.get(row_idx) {
+                                let val_str = val.to_string();
+                                if val_str == "1" {
+                                    single_value_rows.push(row_idx);
+                                }
+                            }
+                        }
+
+                        if single_value_rows.is_empty() {
+                            app.set_message("No single-value columns found".to_string());
+                        } else {
+                            for idx in &single_value_rows {
+                                app.selected_rows.insert(*idx);
+                            }
+                            app.set_message(format!("Selected {} row(s) with 1 distinct value", single_value_rows.len()));
+                        }
+                    }
+                } else {
+                    // Normal view: select single-value columns
+                    let df = &view.dataframe;
+                    let mut single_value_cols = Vec::new();
+
+                    for (col_idx, col) in df.get_columns().iter().enumerate() {
+                        let series = col.as_materialized_series();
+                        if let Ok(n_unique) = series.n_unique() {
+                            let null_count = series.null_count();
+                            let has_only_one_non_null_value = if null_count > 0 && null_count < series.len() {
+                                n_unique <= 2
+                            } else {
+                                n_unique == 1
+                            };
+                            if has_only_one_non_null_value {
+                                single_value_cols.push(col_idx);
+                            }
+                        }
+                    }
+
+                    if single_value_cols.is_empty() {
+                        app.set_message("No single-value columns found".to_string());
+                    } else {
+                        for idx in &single_value_cols {
+                            app.selected_cols.insert(*idx);
+                        }
+                        app.set_message(format!("Selected {} single-value column(s)", single_value_cols.len()));
+                    }
+                }
+            }
+        }
         _ => {}
     }
 
@@ -699,6 +1130,100 @@ fn find_value(df: &polars::prelude::DataFrame, col_name: &str, value: &str, star
         }
     }
     None
+}
+
+/// Find a regex match in a column, returns row index
+fn find_regex(df: &polars::prelude::DataFrame, col_name: &str, re: &regex::Regex, start: usize, forward: bool) -> Option<usize> {
+    let col = df.column(col_name).ok()?;
+    let len = col.len();
+
+    if forward {
+        for i in start..len {
+            if let Ok(v) = col.get(i) {
+                let s = v.to_string();
+                // Strip quotes for string values
+                let text = if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
+                    &s[1..s.len()-1]
+                } else {
+                    &s
+                };
+                if re.is_match(text) {
+                    return Some(i);
+                }
+            }
+        }
+    } else {
+        for i in (0..=start).rev() {
+            if let Ok(v) = col.get(i) {
+                let s = v.to_string();
+                let text = if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
+                    &s[1..s.len()-1]
+                } else {
+                    &s
+                };
+                if re.is_match(text) {
+                    return Some(i);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Filter DataFrame by regex match on a column
+fn filter_by_regex(df: &polars::prelude::DataFrame, col_name: &str, re: &regex::Regex) -> anyhow::Result<polars::prelude::DataFrame> {
+    use polars::prelude::*;
+
+    let col = df.column(col_name)?;
+    let len = col.len();
+
+    let mut mask: Vec<bool> = Vec::with_capacity(len);
+    for i in 0..len {
+        let matches = col.get(i)
+            .map(|v| {
+                let s = v.to_string();
+                let text = if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
+                    s[1..s.len()-1].to_string()
+                } else {
+                    s
+                };
+                re.is_match(&text)
+            })
+            .unwrap_or(false);
+        mask.push(matches);
+    }
+
+    let bool_mask = BooleanChunked::from_slice("mask".into(), &mask);
+    Ok(df.filter(&bool_mask)?)
+}
+
+/// Filter DataFrame by matching any of the given values in a column
+fn filter_by_values(df: &polars::prelude::DataFrame, col_name: &str, values: &[String]) -> anyhow::Result<polars::prelude::DataFrame> {
+    use polars::prelude::*;
+    use std::collections::HashSet;
+
+    let value_set: HashSet<&str> = values.iter().map(|s| s.as_str()).collect();
+    let col = df.column(col_name)?;
+    let len = col.len();
+
+    let mut mask: Vec<bool> = Vec::with_capacity(len);
+    for i in 0..len {
+        let matches = col.get(i)
+            .map(|v| {
+                let s = v.to_string();
+                let text = if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
+                    &s[1..s.len()-1]
+                } else {
+                    &s
+                };
+                value_set.contains(text)
+            })
+            .unwrap_or(false);
+        mask.push(matches);
+    }
+
+    let bool_mask = BooleanChunked::from_slice("mask".into(), &mask);
+    Ok(df.filter(&bool_mask)?)
 }
 
 /// Aggregate dataframe by column

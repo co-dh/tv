@@ -48,8 +48,11 @@ pub struct Filter {
 impl Command for Filter {
     fn execute(&mut self, app: &mut AppContext) -> Result<()> {
         let view = app
-            .current_view_mut()
+            .current_view()
             .ok_or_else(|| anyhow!("No table loaded"))?;
+
+        let df = &view.dataframe;
+        let filename = view.filename.clone();
 
         // Parse the filter expression
         // For MVP, we support simple filters like "col>value", "col<value", "col==value"
@@ -75,8 +78,7 @@ impl Command for Filter {
         let value_str = parts[1].trim();
 
         // Get the column
-        let col = view
-            .dataframe
+        let col = df
             .column(col_name)
             .map_err(|_| anyhow!("Column '{}' not found", col_name))?;
         let series = col.as_materialized_series();
@@ -104,13 +106,20 @@ impl Command for Filter {
             }
         };
 
-        // Apply filter
-        view.dataframe = view.dataframe.filter(&mask)?;
+        // Apply filter to create new dataframe
+        let filtered_df = df.filter(&mask)?;
+        let row_count = filtered_df.height();
 
-        // Reset cursor to top
-        view.state.goto_top();
+        // Push new view onto stack
+        let id = app.next_id();
+        let new_view = crate::state::ViewState::new(
+            id,
+            self.expression.clone(),
+            filtered_df,
+            filename,
+        );
+        app.stack.push(new_view);
 
-        let row_count = view.row_count();
         app.set_message(format!("Filtered: {} ({} rows)", self.expression, row_count));
         Ok(())
     }
@@ -279,5 +288,98 @@ impl Command for RenameCol {
 
     fn to_command_string(&self) -> String {
         format!("rename {} {}", self.old_name, self.new_name)
+    }
+}
+
+/// Delete all-null columns command
+pub struct DelNull;
+
+impl Command for DelNull {
+    fn execute(&mut self, app: &mut AppContext) -> Result<()> {
+        let view = app
+            .current_view_mut()
+            .ok_or_else(|| anyhow!("No table loaded"))?;
+
+        let total_rows = view.dataframe.height();
+        let null_cols: Vec<String> = view.dataframe.get_columns()
+            .iter()
+            .filter(|col| col.as_materialized_series().null_count() == total_rows)
+            .map(|col| col.name().to_string())
+            .collect();
+
+        if null_cols.is_empty() {
+            app.set_message("No all-null columns found".to_string());
+            return Ok(());
+        }
+
+        let count = null_cols.len();
+        for col_name in null_cols {
+            let _ = view.dataframe.drop_in_place(&col_name);
+        }
+
+        // Adjust cursor if needed
+        let max_cols = view.col_count();
+        if max_cols > 0 && view.state.cc >= max_cols {
+            view.state.cc = max_cols - 1;
+        }
+
+        app.set_message(format!("Deleted {} all-null column(s)", count));
+        Ok(())
+    }
+
+    fn to_command_string(&self) -> String {
+        String::from("delnull")
+    }
+}
+
+/// Delete single-value columns command
+pub struct DelSingle;
+
+impl Command for DelSingle {
+    fn execute(&mut self, app: &mut AppContext) -> Result<()> {
+        let view = app
+            .current_view_mut()
+            .ok_or_else(|| anyhow!("No table loaded"))?;
+
+        let single_cols: Vec<String> = view.dataframe.get_columns()
+            .iter()
+            .filter(|col| {
+                let series = col.as_materialized_series();
+                if let Ok(n_unique) = series.n_unique() {
+                    let null_count = series.null_count();
+                    if null_count > 0 && null_count < series.len() {
+                        n_unique <= 2
+                    } else {
+                        n_unique == 1
+                    }
+                } else {
+                    false
+                }
+            })
+            .map(|col| col.name().to_string())
+            .collect();
+
+        if single_cols.is_empty() {
+            app.set_message("No single-value columns found".to_string());
+            return Ok(());
+        }
+
+        let count = single_cols.len();
+        for col_name in single_cols {
+            let _ = view.dataframe.drop_in_place(&col_name);
+        }
+
+        // Adjust cursor if needed
+        let max_cols = view.col_count();
+        if max_cols > 0 && view.state.cc >= max_cols {
+            view.state.cc = max_cols - 1;
+        }
+
+        app.set_message(format!("Deleted {} single-value column(s)", count));
+        Ok(())
+    }
+
+    fn to_command_string(&self) -> String {
+        String::from("del1")
     }
 }
