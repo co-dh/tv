@@ -218,97 +218,39 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
             // Ctrl+C to force quit
             return Ok(false);
         }
-        KeyCode::Up => {
-            if let Some(view) = app.current_view_mut() {
-                view.state.move_up(1);
-            }
-        }
-        KeyCode::Down => {
-            if let Some(view) = app.current_view_mut() {
-                let max_rows = view.row_count();
-                view.state.move_down(1, max_rows);
-            }
-        }
-        KeyCode::Left => {
-            if let Some(view) = app.current_view_mut() {
-                view.state.move_left(1);
-            }
-        }
-        KeyCode::Right => {
-            if let Some(view) = app.current_view_mut() {
-                let max_cols = view.col_count();
-                view.state.move_right(1, max_cols);
-            }
-        }
-        KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            // Ctrl+D: Page down
-            if let Some(view) = app.current_view_mut() {
-                let max_rows = view.row_count();
-                view.state.page_down(max_rows);
-            }
-        }
-        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            // Ctrl+U: Page up
-            if let Some(view) = app.current_view_mut() {
-                view.state.page_up();
-            }
-        }
-        KeyCode::Char('g') => {
-            // g: Go to top
-            if let Some(view) = app.current_view_mut() {
-                view.state.goto_top();
-            }
-        }
-        KeyCode::Char('G') => {
-            // G: Go to bottom
-            if let Some(view) = app.current_view_mut() {
-                let max_rows = view.row_count();
-                view.state.goto_bottom(max_rows);
-            }
-        }
-        KeyCode::PageUp => {
-            // Page Up
-            if let Some(view) = app.current_view_mut() {
-                view.state.page_up();
-            }
-        }
-        KeyCode::PageDown => {
-            // Page Down
-            if let Some(view) = app.current_view_mut() {
-                let max_rows = view.row_count();
-                view.state.page_down(max_rows);
-            }
-        }
-        KeyCode::Home => {
-            // Home: Go to top
-            if let Some(view) = app.current_view_mut() {
-                view.state.goto_top();
-            }
-        }
-        KeyCode::End => {
-            // End: Go to bottom
-            if let Some(view) = app.current_view_mut() {
-                let max_rows = view.row_count();
-                view.state.goto_bottom(max_rows);
-            }
+        KeyCode::Up => app.nav_row(-1),
+        KeyCode::Down => app.nav_row(1),
+        KeyCode::Left => app.nav_col(-1),
+        KeyCode::Right => app.nav_col(1),
+        KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => app.nav_row(app.page_size()),
+        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => app.nav_row(-app.page_size()),
+        KeyCode::Char('g') => app.nav_row(isize::MIN),
+        KeyCode::Char('G') => app.nav_row(isize::MAX),
+        KeyCode::PageUp => app.nav_row(-app.page_size()),
+        KeyCode::PageDown => app.nav_row(app.page_size()),
+        KeyCode::Home => app.nav_row(isize::MIN),
+        KeyCode::End => app.nav_row(isize::MAX),
+        KeyCode::Char('I') => {
+            // I: Toggle info box
+            app.show_info = !app.show_info;
         }
         KeyCode::Char('L') => {
             // L: Load file
             if let Some(file_path) = prompt_input(app, "Load file: ")? {
                 let cmd = Box::new(Load { file_path });
                 if let Err(e) = CommandExecutor::execute(app, cmd) {
-                    app.set_message(format!("Error: {}", e));
+                    app.set_error(e);
                 }
             }
         }
         KeyCode::Char('S') => {
             // S: Save file
             if !app.has_view() {
-                app.set_message("No table loaded".to_string());
+                app.no_table();
             } else if let Some(file_path) = prompt_input(app, "Save to: ")? {
                 let cmd = Box::new(Save { file_path });
                 if let Err(e) = CommandExecutor::execute(app, cmd) {
-                    app.set_message(format!("Error: {}", e));
+                    app.set_error(e);
                 }
             }
         }
@@ -333,14 +275,7 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                             view.dataframe.get_columns()[0]
                                 .get(row)
                                 .ok()
-                                .map(|v| {
-                                    let s = v.to_string();
-                                    if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
-                                        s[1..s.len()-1].to_string()
-                                    } else {
-                                        s
-                                    }
-                                })
+                                .map(|v| strip_quotes(&v.to_string()))
                         })
                         .collect();
                     (true, parent_id, col_names)
@@ -399,53 +334,13 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
             // /: Search column values with skim (supports glob patterns for strings)
             if let Some(view) = app.current_view() {
                 if let Some(col_name) = view.state.current_column(&view.dataframe) {
-                    let mut items: Vec<String> = Vec::new();
-
-                    // Add glob pattern examples based on current cell value (for string columns)
-                    if let Ok(col) = view.dataframe.column(&col_name) {
-                        if matches!(col.dtype(), polars::prelude::DataType::String) {
-                            if let Ok(val) = col.get(view.state.cr) {
-                                let s = val.to_string();
-                                let cell_val = if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
-                                    s[1..s.len()-1].to_string()
-                                } else {
-                                    s
-                                };
-                                if cell_val.len() >= 2 {
-                                    let prefix = &cell_val[..2];
-                                    let suffix = &cell_val[cell_val.len()-2..];
-                                    items.push(format!("{}*", prefix));
-                                    items.push(format!("*{}", suffix));
-                                }
-                            }
-                        }
-                    }
-
-                    // Get unique values as hints
-                    if let Some(uniq) = view.dataframe.column(&col_name)
-                        .ok()
-                        .and_then(|c| c.unique().ok())
-                    {
-                        for i in 0..uniq.len() {
-                            if let Ok(v) = uniq.get(i) {
-                                let s = v.to_string();
-                                let val = if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
-                                    s[1..s.len()-1].to_string()
-                                } else {
-                                    s
-                                };
-                                items.push(val);
-                            }
-                        }
-                    }
+                    let items = get_column_hints(&view.dataframe, &col_name, view.state.cr, "");
 
                     if let Ok(Some(selected)) = picker::input_with_hints(items, &format!("{}> ", col_name)) {
-                        // Store search state for n/N
                         app.search.col_name = Some(col_name.clone());
                         app.search.value = Some(selected.clone());
-                        app.search.regex = None; // Clear regex search
+                        app.search.regex = None;
 
-                        // Find first occurrence (supports glob patterns)
                         if let Some(view) = app.current_view_mut() {
                             if let Some(pos) = find_value(&view.dataframe, &col_name, &selected, 0, true) {
                                 view.state.cr = pos;
@@ -463,55 +358,18 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
             // \: Filter rows with expression (using skim with column values as hints)
             if let Some(view) = app.current_view() {
                 if let Some(col_name) = view.state.current_column(&view.dataframe) {
-                    let mut items: Vec<String> = Vec::new();
-
-                    // Add glob pattern examples based on current cell value (for string columns)
-                    if let Ok(col) = view.dataframe.column(&col_name) {
-                        if matches!(col.dtype(), polars::prelude::DataType::String) {
-                            if let Ok(val) = col.get(view.state.cr) {
-                                let s = val.to_string();
-                                let cell_val = if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
-                                    s[1..s.len()-1].to_string()
-                                } else {
-                                    s
-                                };
-                                if cell_val.len() >= 2 {
-                                    let prefix = &cell_val[..2];
-                                    let suffix = &cell_val[cell_val.len()-2..];
-                                    items.push(format!("{}=={}*", col_name, prefix));
-                                    items.push(format!("{}==*{}", col_name, suffix));
-                                }
-                            }
-                        }
-                    }
-
-                    // Get unique values as hints
-                    if let Some(uniq) = view.dataframe.column(&col_name)
-                        .ok()
-                        .and_then(|c| c.unique().ok())
-                    {
-                        for i in 0..uniq.len() {
-                            if let Ok(v) = uniq.get(i) {
-                                let s = v.to_string();
-                                let val = if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
-                                    &s[1..s.len()-1]
-                                } else {
-                                    &s
-                                };
-                                items.push(format!("{}=={}", col_name, val));
-                            }
-                        }
-                    }
+                    let prefix_fmt = format!("{}==", col_name);
+                    let items = get_column_hints(&view.dataframe, &col_name, view.state.cr, &prefix_fmt);
 
                     if let Ok(Some(expression)) = picker::input_with_hints(items, "Filter> ") {
                         let cmd = Box::new(Filter { expression });
                         if let Err(e) = CommandExecutor::execute(app, cmd) {
-                            app.set_message(format!("Error: {}", e));
+                            app.set_error(e);
                         }
                     }
                 }
             } else {
-                app.set_message("No table loaded".to_string());
+                app.no_table();
             }
         }
         KeyCode::Char('n') => {
@@ -605,7 +463,7 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
         KeyCode::Char('s') => {
             // s: Select columns
             if !app.has_view() {
-                app.set_message("No table loaded".to_string());
+                app.no_table();
             } else if let Some(cols_str) = prompt_input(app, "Select columns (comma-separated): ")? {
                 let col_names: Vec<String> = cols_str
                     .split(',')
@@ -613,7 +471,7 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                     .collect();
                 let cmd = Box::new(Select { col_names });
                 if let Err(e) = CommandExecutor::execute(app, cmd) {
-                    app.set_message(format!("Error: {}", e));
+                    app.set_error(e);
                 }
             }
         }
@@ -623,7 +481,7 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                 if let Some(col_name) = view.state.current_column(&view.dataframe) {
                     let cmd = Box::new(Frequency { col_name });
                     if let Err(e) = CommandExecutor::execute(app, cmd) {
-                        app.set_message(format!("Error: {}", e));
+                        app.set_error(e);
                     }
                 }
             }
@@ -633,7 +491,7 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
             if app.has_view() {
                 let cmd = Box::new(Metadata);
                 if let Err(e) = CommandExecutor::execute(app, cmd) {
-                    app.set_message(format!("Error: {}", e));
+                    app.set_error(e);
                 }
             }
         }
@@ -646,7 +504,7 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                         descending: false,
                     });
                     if let Err(e) = CommandExecutor::execute(app, cmd) {
-                        app.set_message(format!("Error: {}", e));
+                        app.set_error(e);
                     }
                 }
             }
@@ -660,7 +518,7 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                         descending: true,
                     });
                     if let Err(e) = CommandExecutor::execute(app, cmd) {
-                        app.set_message(format!("Error: {}", e));
+                        app.set_error(e);
                     }
                 }
             }
@@ -672,7 +530,7 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                     if let Some(new_name) = prompt_input(app, &format!("Rename '{}' to: ", old_name))? {
                         let cmd = Box::new(RenameCol { old_name, new_name });
                         if let Err(e) = CommandExecutor::execute(app, cmd) {
-                            app.set_message(format!("Error: {}", e));
+                            app.set_error(e);
                         }
                     }
                 }
@@ -694,14 +552,7 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                             view.dataframe.get_columns()[0]
                                 .get(row)
                                 .ok()
-                                .map(|v| {
-                                    let s = v.to_string();
-                                    if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
-                                        s[1..s.len()-1].to_string()
-                                    } else {
-                                        s
-                                    }
-                                })
+                                .map(|v| strip_quotes(&v.to_string()))
                         })
                         .collect();
 
@@ -739,7 +590,7 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                             app.stack.push(new_view);
                             app.set_message(format!("Filtered: {} rows", row_count));
                         }
-                        Err(e) => app.set_message(format!("Error: {}", e)),
+                        Err(e) => app.set_error(e),
                     }
                 }
             }
@@ -754,7 +605,7 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                         if let Some(view) = app.current_view_mut() {
                             let new_col = c.as_materialized_series().clone().with_name(new_name.clone().into());
                             if let Err(e) = view.dataframe.with_column(new_col) {
-                                app.set_message(format!("Error: {}", e));
+                                app.set_error(e);
                             } else {
                                 app.set_message(format!("Copied column '{}' to '{}'", col_name, new_name));
                             }
@@ -789,12 +640,12 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                             match result {
                                 Ok(new_col) => {
                                     if let Err(e) = view.dataframe.with_column(new_col) {
-                                        app.set_message(format!("Error: {}", e));
+                                        app.set_error(e);
                                     } else {
                                         app.set_message(format!("Converted '{}' to {}", col_name, selected));
                                     }
                                 }
-                                Err(e) => app.set_message(format!("Error: {}", e)),
+                                Err(e) => app.set_error(e),
                             }
                         }
                     }
@@ -829,7 +680,7 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                                 app.stack.push(new_view);
                                 app.set_message(format!("{} by '{}'", agg_fn, col_name));
                             }
-                            Err(e) => app.set_message(format!("Error: {}", e)),
+                            Err(e) => app.set_error(e),
                         }
                     }
                 }
@@ -870,7 +721,7 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                     app.stack.push(new_view);
                     app.set_message(format!("Directory: {}", dir.display()));
                 }
-                Err(e) => app.set_message(format!("Error: {}", e)),
+                Err(e) => app.set_error(e),
             }
         }
         KeyCode::Char('C') => {
@@ -881,7 +732,7 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
             if app.has_view() {
                 let cmd = Box::new(Correlation { selected_cols: selected });
                 if let Err(e) = CommandExecutor::execute(app, cmd) {
-                    app.set_message(format!("Error: {}", e));
+                    app.set_error(e);
                 } else {
                     if let Some(view) = app.current_view_mut() {
                         view.selected_cols.clear();
@@ -944,14 +795,14 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                                     app.stack.push(new_view);
                                     app.set_message(format!("Regex filter: {} rows", row_count));
                                 }
-                                Err(e) => app.set_message(format!("Error: {}", e)),
+                                Err(e) => app.set_error(e),
                             }
                         }
                         Err(e) => app.set_message(format!("Invalid regex: {}", e)),
                     }
                 }
             } else {
-                app.set_message("No table loaded".to_string());
+                app.no_table();
             }
         }
         KeyCode::Char(':') => {
@@ -1177,19 +1028,50 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
     Ok(true)
 }
 
+/// Strip quotes from polars string values
+fn strip_quotes(s: &str) -> String {
+    if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
+        s[1..s.len()-1].to_string()
+    } else {
+        s.to_string()
+    }
+}
+
+/// Get column hints: glob patterns from current cell + unique values
+fn get_column_hints(df: &polars::prelude::DataFrame, col_name: &str, row: usize, prefix_fmt: &str) -> Vec<String> {
+    let mut items = Vec::new();
+
+    if let Ok(col) = df.column(col_name) {
+        // Add glob pattern examples for string columns
+        if matches!(col.dtype(), polars::prelude::DataType::String) {
+            if let Ok(val) = col.get(row) {
+                let cell_val = strip_quotes(&val.to_string());
+                if cell_val.len() >= 2 {
+                    let prefix = &cell_val[..2];
+                    let suffix = &cell_val[cell_val.len()-2..];
+                    items.push(format!("{}{}*", prefix_fmt, prefix));
+                    items.push(format!("{}*{}", prefix_fmt, suffix));
+                }
+            }
+        }
+
+        // Add unique values
+        if let Ok(uniq) = col.unique() {
+            for i in 0..uniq.len() {
+                if let Ok(v) = uniq.get(i) {
+                    let val = strip_quotes(&v.to_string());
+                    items.push(format!("{}{}", prefix_fmt, val));
+                }
+            }
+        }
+    }
+    items
+}
+
 /// Find a value in a column, returns row index (supports glob patterns: *abc, abc*, *abc*)
 fn find_value(df: &polars::prelude::DataFrame, col_name: &str, value: &str, start: usize, forward: bool) -> Option<usize> {
     let col = df.column(col_name).ok()?;
     let len = col.len();
-
-    // Helper to strip quotes from string values
-    let strip_quotes = |s: String| -> String {
-        if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
-            s[1..s.len()-1].to_string()
-        } else {
-            s
-        }
-    };
 
     // Determine match type based on glob pattern
     let matches_value = |cell: &str| -> bool {
@@ -1211,7 +1093,7 @@ fn find_value(df: &polars::prelude::DataFrame, col_name: &str, value: &str, star
     if forward {
         for i in start..len {
             if let Ok(v) = col.get(i) {
-                if matches_value(&strip_quotes(v.to_string())) {
+                if matches_value(&strip_quotes(&v.to_string())) {
                     return Some(i);
                 }
             }
@@ -1219,7 +1101,7 @@ fn find_value(df: &polars::prelude::DataFrame, col_name: &str, value: &str, star
     } else {
         for i in (0..=start).rev() {
             if let Ok(v) = col.get(i) {
-                if matches_value(&strip_quotes(v.to_string())) {
+                if matches_value(&strip_quotes(&v.to_string())) {
                     return Some(i);
                 }
             }
@@ -1236,14 +1118,7 @@ fn find_regex(df: &polars::prelude::DataFrame, col_name: &str, re: &regex::Regex
     if forward {
         for i in start..len {
             if let Ok(v) = col.get(i) {
-                let s = v.to_string();
-                // Strip quotes for string values
-                let text = if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
-                    &s[1..s.len()-1]
-                } else {
-                    &s
-                };
-                if re.is_match(text) {
+                if re.is_match(&strip_quotes(&v.to_string())) {
                     return Some(i);
                 }
             }
@@ -1251,13 +1126,7 @@ fn find_regex(df: &polars::prelude::DataFrame, col_name: &str, re: &regex::Regex
     } else {
         for i in (0..=start).rev() {
             if let Ok(v) = col.get(i) {
-                let s = v.to_string();
-                let text = if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
-                    &s[1..s.len()-1]
-                } else {
-                    &s
-                };
-                if re.is_match(text) {
+                if re.is_match(&strip_quotes(&v.to_string())) {
                     return Some(i);
                 }
             }
@@ -1271,23 +1140,9 @@ fn filter_by_regex(df: &polars::prelude::DataFrame, col_name: &str, re: &regex::
     use polars::prelude::*;
 
     let col = df.column(col_name)?;
-    let len = col.len();
-
-    let mut mask: Vec<bool> = Vec::with_capacity(len);
-    for i in 0..len {
-        let matches = col.get(i)
-            .map(|v| {
-                let s = v.to_string();
-                let text = if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
-                    s[1..s.len()-1].to_string()
-                } else {
-                    s
-                };
-                re.is_match(&text)
-            })
-            .unwrap_or(false);
-        mask.push(matches);
-    }
+    let mask: Vec<bool> = (0..col.len())
+        .map(|i| col.get(i).map(|v| re.is_match(&strip_quotes(&v.to_string()))).unwrap_or(false))
+        .collect();
 
     let bool_mask = BooleanChunked::from_slice("mask".into(), &mask);
     Ok(df.filter(&bool_mask)?)
@@ -1300,23 +1155,9 @@ fn filter_by_values(df: &polars::prelude::DataFrame, col_name: &str, values: &[S
 
     let value_set: HashSet<&str> = values.iter().map(|s| s.as_str()).collect();
     let col = df.column(col_name)?;
-    let len = col.len();
-
-    let mut mask: Vec<bool> = Vec::with_capacity(len);
-    for i in 0..len {
-        let matches = col.get(i)
-            .map(|v| {
-                let s = v.to_string();
-                let text = if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
-                    &s[1..s.len()-1]
-                } else {
-                    &s
-                };
-                value_set.contains(text)
-            })
-            .unwrap_or(false);
-        mask.push(matches);
-    }
+    let mask: Vec<bool> = (0..col.len())
+        .map(|i| col.get(i).map(|v| value_set.contains(strip_quotes(&v.to_string()).as_str())).unwrap_or(false))
+        .collect();
 
     let bool_mask = BooleanChunked::from_slice("mask".into(), &mask);
     Ok(df.filter(&bool_mask)?)

@@ -11,12 +11,8 @@ pub struct Frequency {
 
 impl Command for Frequency {
     fn execute(&mut self, app: &mut AppContext) -> Result<()> {
-        let parent_id = app
-            .current_view()
-            .ok_or_else(|| anyhow!("No table loaded"))?
-            .id;
-
-        let current_view = app.current_view().unwrap();
+        let current_view = app.require_view()?;
+        let parent_id = current_view.id;
 
         // Check if column exists
         let found = current_view.dataframe.get_column_names()
@@ -82,12 +78,8 @@ pub struct Metadata;
 
 impl Command for Metadata {
     fn execute(&mut self, app: &mut AppContext) -> Result<()> {
-        let parent_id = app
-            .current_view()
-            .ok_or_else(|| anyhow!("No table loaded"))?
-            .id;
-
-        let current_view = app.current_view().unwrap();
+        let current_view = app.require_view()?;
+        let parent_id = current_view.id;
         let df = &current_view.dataframe;
         let total_rows = df.height() as f64;
 
@@ -213,9 +205,7 @@ pub struct Correlation {
 
 impl Command for Correlation {
     fn execute(&mut self, app: &mut AppContext) -> Result<()> {
-        let current_view = app
-            .current_view()
-            .ok_or_else(|| anyhow!("No table loaded"))?;
+        let current_view = app.require_view()?;
 
         let df = &current_view.dataframe;
         let all_col_names: Vec<String> = df.get_column_names().iter().map(|s| s.to_string()).collect();

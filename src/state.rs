@@ -97,18 +97,6 @@ impl TableState {
         self.r0 = self.cr.saturating_sub(visible_rows.saturating_sub(1));
     }
 
-    /// Page down
-    pub fn page_down(&mut self, max_rows: usize) {
-        let page_size = (self.viewport.0 as usize).saturating_sub(2);
-        self.move_down(page_size, max_rows);
-    }
-
-    /// Page up
-    pub fn page_up(&mut self) {
-        let page_size = (self.viewport.0 as usize).saturating_sub(2);
-        self.move_up(page_size);
-    }
-
     /// Ensure cursor is visible in viewport
     pub fn ensure_visible(&mut self) {
         let visible_rows = (self.viewport.0 as usize).saturating_sub(2);

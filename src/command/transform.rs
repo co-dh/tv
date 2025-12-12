@@ -10,9 +10,7 @@ pub struct DelCol {
 
 impl Command for DelCol {
     fn execute(&mut self, app: &mut AppContext) -> Result<()> {
-        let view = app
-            .current_view_mut()
-            .ok_or_else(|| anyhow!("No table loaded"))?;
+        let view = app.require_view_mut()?;
 
         // Check if column exists
         let found = view.dataframe.get_column_names()
@@ -47,9 +45,7 @@ pub struct Filter {
 
 impl Command for Filter {
     fn execute(&mut self, app: &mut AppContext) -> Result<()> {
-        let view = app
-            .current_view()
-            .ok_or_else(|| anyhow!("No table loaded"))?;
+        let view = app.require_view()?;
 
         let df = &view.dataframe;
         let filename = view.filename.clone();
@@ -171,37 +167,27 @@ impl Filter {
     fn create_string_mask(&self, col: &Series, value: &str) -> Result<ChunkedArray<BooleanType>> {
         let col_str = col.str()?;
 
+        if !self.expression.contains("==") {
+            return Err(anyhow!("Only == operator supported for string columns"));
+        }
+
+        // Helper to create mask from predicate
+        let make_mask = |pred: fn(&str, &str) -> bool, pattern: &str| -> ChunkedArray<BooleanType> {
+            let bools: Vec<bool> = col_str.into_iter()
+                .map(|opt| opt.map(|s| pred(s, pattern)).unwrap_or(false))
+                .collect();
+            ChunkedArray::from_slice("mask".into(), &bools)
+        };
+
         // Support glob patterns: *pattern (ends with), pattern* (begins with), *pattern* (contains)
-        let mask = if self.expression.contains("==") {
-            if value.starts_with('*') && value.ends_with('*') && value.len() > 2 {
-                // *pattern* -> contains
-                let pattern = &value[1..value.len()-1];
-                let bools: Vec<bool> = col_str.into_iter()
-                    .map(|opt| opt.map(|s| s.contains(pattern)).unwrap_or(false))
-                    .collect();
-                ChunkedArray::from_slice("mask".into(), &bools)
-            } else if value.starts_with('*') && value.len() > 1 {
-                // *pattern -> ends with
-                let pattern = &value[1..];
-                let bools: Vec<bool> = col_str.into_iter()
-                    .map(|opt| opt.map(|s| s.ends_with(pattern)).unwrap_or(false))
-                    .collect();
-                ChunkedArray::from_slice("mask".into(), &bools)
-            } else if value.ends_with('*') && value.len() > 1 {
-                // pattern* -> begins with
-                let pattern = &value[..value.len()-1];
-                let bools: Vec<bool> = col_str.into_iter()
-                    .map(|opt| opt.map(|s| s.starts_with(pattern)).unwrap_or(false))
-                    .collect();
-                ChunkedArray::from_slice("mask".into(), &bools)
-            } else {
-                // exact match
-                col_str.equal(value)
-            }
+        let mask = if value.starts_with('*') && value.ends_with('*') && value.len() > 2 {
+            make_mask(|s, p| s.contains(p), &value[1..value.len()-1])
+        } else if value.starts_with('*') && value.len() > 1 {
+            make_mask(|s, p| s.ends_with(p), &value[1..])
+        } else if value.ends_with('*') && value.len() > 1 {
+            make_mask(|s, p| s.starts_with(p), &value[..value.len()-1])
         } else {
-            return Err(anyhow!(
-                "Only == operator supported for string columns"
-            ));
+            col_str.equal(value)
         };
 
         Ok(mask)
@@ -215,9 +201,7 @@ pub struct Select {
 
 impl Command for Select {
     fn execute(&mut self, app: &mut AppContext) -> Result<()> {
-        let view = app
-            .current_view_mut()
-            .ok_or_else(|| anyhow!("No table loaded"))?;
+        let view = app.require_view_mut()?;
 
         // Check if all columns exist
         let df_cols = view.dataframe.get_column_names();
@@ -252,9 +236,7 @@ pub struct Sort {
 
 impl Command for Sort {
     fn execute(&mut self, app: &mut AppContext) -> Result<()> {
-        let view = app
-            .current_view_mut()
-            .ok_or_else(|| anyhow!("No table loaded"))?;
+        let view = app.require_view_mut()?;
 
         // Check if column exists
         let found = view.dataframe.get_column_names()
@@ -292,9 +274,7 @@ pub struct RenameCol {
 
 impl Command for RenameCol {
     fn execute(&mut self, app: &mut AppContext) -> Result<()> {
-        let view = app
-            .current_view_mut()
-            .ok_or_else(|| anyhow!("No table loaded"))?;
+        let view = app.require_view_mut()?;
 
         // Check if old column exists
         let found = view.dataframe.get_column_names()
@@ -321,9 +301,7 @@ pub struct DelNull;
 
 impl Command for DelNull {
     fn execute(&mut self, app: &mut AppContext) -> Result<()> {
-        let view = app
-            .current_view_mut()
-            .ok_or_else(|| anyhow!("No table loaded"))?;
+        let view = app.require_view_mut()?;
 
         let total_rows = view.dataframe.height();
         let null_cols: Vec<String> = view.dataframe.get_columns()
@@ -362,9 +340,7 @@ pub struct DelSingle;
 
 impl Command for DelSingle {
     fn execute(&mut self, app: &mut AppContext) -> Result<()> {
-        let view = app
-            .current_view_mut()
-            .ok_or_else(|| anyhow!("No table loaded"))?;
+        let view = app.require_view_mut()?;
 
         let single_cols: Vec<String> = view.dataframe.get_columns()
             .iter()

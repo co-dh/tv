@@ -91,9 +91,7 @@ pub struct Save {
 
 impl Command for Save {
     fn execute(&mut self, app: &mut AppContext) -> Result<()> {
-        let view = app
-            .current_view()
-            .ok_or_else(|| anyhow!("No table loaded"))?;
+        let view = app.require_view()?;
 
         let path = Path::new(&self.file_path);
 

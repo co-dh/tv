@@ -20,6 +20,7 @@ impl Renderer {
 
         let message = app.message.clone();
         let stack_len = app.stack.len();
+        let show_info = app.show_info;
 
         // Use buffered writer to reduce flickering
         let mut stdout = BufWriter::new(io::stdout());
@@ -30,7 +31,9 @@ impl Renderer {
             let selected_rows = view.selected_rows.clone();
             let view_name = view.name.clone();
             Self::render_table(view, rows, cols, &selected_cols, &selected_rows, &mut stdout)?;
-            Self::render_info_box(&view_name, stack_len, rows, cols, &mut stdout)?;
+            if show_info {
+                Self::render_info_box(&view_name, stack_len, rows, cols, &mut stdout)?;
+            }
             Self::render_status_bar(view, &message, rows, cols, &mut stdout)?;
         } else {
             Self::render_empty_message(&message, rows, cols, &mut stdout)?;
@@ -306,25 +309,14 @@ impl Renderer {
     /// Format a single cell value
     fn format_value(df: &DataFrame, col_idx: usize, row_idx: usize) -> String {
         let col = df.get_columns()[col_idx].as_materialized_series();
-        match col.dtype() {
-            DataType::Int8 | DataType::Int16 | DataType::Int32 | DataType::Int64
-            | DataType::UInt8 | DataType::UInt16 | DataType::UInt32 | DataType::UInt64 => {
-                col.get(row_idx).map(|v| v.to_string()).unwrap_or_else(|_| "null".to_string())
-            }
-            DataType::Float32 | DataType::Float64 => {
-                col.get(row_idx).map(|v| v.to_string()).unwrap_or_else(|_| "null".to_string())
-            }
-            DataType::String => {
-                col.str()
-                    .ok()
-                    .and_then(|s| s.get(row_idx))
-                    .unwrap_or("null")
-                    .to_string()
-            }
-            DataType::Boolean => {
-                col.get(row_idx).map(|v| v.to_string()).unwrap_or_else(|_| "null".to_string())
-            }
-            _ => col.get(row_idx).map(|v| v.to_string()).unwrap_or_else(|_| "null".to_string()),
+        if matches!(col.dtype(), DataType::String) {
+            col.str()
+                .ok()
+                .and_then(|s| s.get(row_idx))
+                .unwrap_or("null")
+                .to_string()
+        } else {
+            col.get(row_idx).map(|v| v.to_string()).unwrap_or_else(|_| "null".to_string())
         }
     }
 
@@ -482,22 +474,17 @@ impl Renderer {
             ]
         };
 
-        // Format key hints
-        let hints: Vec<String> = keys.iter()
-            .map(|(k, desc)| format!("{:>5} {}", k, desc))
-            .collect();
-
         // Calculate box dimensions
-        let max_hint_len = hints.iter().map(|h| h.len()).max().unwrap_or(10);
-        let box_width = max_hint_len + 4; // padding
-        let box_height = hints.len() + 2; // border top/bottom
+        let max_desc_len = keys.iter().map(|(_, d)| d.len()).max().unwrap_or(10);
+        let box_width = max_desc_len + 11; // key(5) + spaces(4) + borders(2)
+        let box_height = keys.len() + 2; // border top/bottom
 
         // Position: bottom right, above status bar
         let box_x = cols.saturating_sub(box_width as u16 + 1);
         let box_y = rows.saturating_sub(box_height as u16 + 1);
 
-        // Draw box
-        execute!(writer, SetForegroundColor(Color::DarkGrey))?;
+        // Draw box with brighter colors
+        execute!(writer, SetForegroundColor(Color::Cyan))?;
 
         // Top border with view info
         let title = format!(" [{}] ", if stack_len > 1 { format!("#{}", stack_len) } else { "tv".to_string() });
@@ -505,13 +492,17 @@ impl Renderer {
         execute!(writer, cursor::MoveTo(box_x, box_y), Print(&top_border))?;
 
         // Content rows
-        for (i, hint) in hints.iter().enumerate() {
+        for (i, (key, desc)) in keys.iter().enumerate() {
             let row = box_y + 1 + i as u16;
-            let content = format!("│ {:width$} │", hint, width = box_width - 4);
-            execute!(writer, cursor::MoveTo(box_x, row), Print(&content))?;
+            execute!(writer, cursor::MoveTo(box_x, row))?;
+            execute!(writer, SetForegroundColor(Color::Cyan), Print("│ "))?;
+            execute!(writer, SetForegroundColor(Color::Yellow), Print(format!("{:>5}", key)))?;
+            execute!(writer, SetForegroundColor(Color::White), Print(format!(" {:width$}", desc, width = box_width - 9)))?;
+            execute!(writer, SetForegroundColor(Color::Cyan), Print(" │"))?;
         }
 
         // Bottom border
+        execute!(writer, SetForegroundColor(Color::Cyan))?;
         let bottom_border = format!("└{}┘", "─".repeat(box_width - 2));
         execute!(writer, cursor::MoveTo(box_x, box_y + box_height as u16 - 1), Print(&bottom_border))?;
 
