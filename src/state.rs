@@ -127,6 +127,7 @@ impl TableState {
 #[derive(Clone)]
 pub struct ViewState {
     /// View identifier (e.g., "main", "frequency:col_name")
+    #[allow(dead_code)]
     pub name: String,
     /// Table data
     pub dataframe: DataFrame,
@@ -215,6 +216,7 @@ impl StateStack {
     }
 
     /// Check if stack is empty
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.stack.is_empty()
     }

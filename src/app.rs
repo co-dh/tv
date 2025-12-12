@@ -25,6 +25,7 @@ impl AppContext {
     }
 
     /// Create with an initial view
+    #[allow(dead_code)]
     pub fn with_view(view: ViewState) -> Self {
         Self {
             stack: StateStack::with_initial(view),

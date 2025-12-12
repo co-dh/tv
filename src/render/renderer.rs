@@ -8,7 +8,7 @@ use crossterm::{
     terminal,
 };
 use polars::prelude::*;
-use std::io::{self, Write};
+use std::io::{self, BufWriter, Write};
 
 pub struct Renderer;
 
@@ -19,19 +19,22 @@ impl Renderer {
 
         let message = app.message.clone();
 
+        // Use buffered writer to reduce flickering
+        let mut stdout = BufWriter::new(io::stdout());
+
         if let Some(view) = app.current_view_mut() {
-            Self::render_table(view, rows, cols)?;
-            Self::render_status_bar(view, &message, rows, cols)?;
+            Self::render_table(view, rows, cols, &mut stdout)?;
+            Self::render_status_bar(view, &message, rows, cols, &mut stdout)?;
         } else {
-            Self::render_empty_message(&message, rows, cols)?;
+            Self::render_empty_message(&message, rows, cols, &mut stdout)?;
         }
 
-        io::stdout().flush()?;
+        stdout.flush()?;
         Ok(())
     }
 
     /// Render the table data
-    fn render_table(view: &mut ViewState, rows: u16, cols: u16) -> Result<()> {
+    fn render_table<W: Write>(view: &mut ViewState, rows: u16, cols: u16, writer: &mut W) -> Result<()> {
         let df = &view.dataframe;
 
         // Calculate column widths if needed
@@ -87,7 +90,7 @@ impl Renderer {
 
         if df.height() == 0 || df.width() == 0 {
             execute!(
-                io::stdout(),
+                writer,
                 cursor::MoveTo(0, 0),
                 Print("(empty table)")
             )?;
@@ -103,20 +106,20 @@ impl Renderer {
         let data_cols = cols.saturating_sub(row_num_width + 1); // -1 for separator
 
         // Render column headers
-        Self::render_headers(df, state, data_cols, row_num_width)?;
+        Self::render_headers(df, state, data_cols, row_num_width, writer)?;
 
         // Render data rows
         for row_idx in state.r0..end_row {
             let screen_row = (row_idx - state.r0 + 1) as u16; // +1 for header
-            execute!(io::stdout(), cursor::MoveTo(0, screen_row))?;
+            execute!(writer, cursor::MoveTo(0, screen_row))?;
 
-            Self::render_row(df, row_idx, state, data_cols, row_num_width)?;
+            Self::render_row(df, row_idx, state, data_cols, row_num_width, writer)?;
         }
 
         // Clear any remaining lines
         for screen_row in (end_row - state.r0 + 1)..visible_rows {
             execute!(
-                io::stdout(),
+                writer,
                 cursor::MoveTo(0, screen_row as u16 + 1),
                 terminal::Clear(terminal::ClearType::CurrentLine)
             )?;
@@ -126,16 +129,16 @@ impl Renderer {
     }
 
     /// Render column headers
-    fn render_headers(df: &DataFrame, state: &TableState, term_cols: u16, row_num_width: u16) -> Result<()> {
+    fn render_headers<W: Write>(df: &DataFrame, state: &TableState, term_cols: u16, row_num_width: u16, writer: &mut W) -> Result<()> {
         execute!(
-            io::stdout(),
+            writer,
             cursor::MoveTo(0, 0),
             terminal::Clear(terminal::ClearType::CurrentLine)
         )?;
 
         // Render row number header
         let header = format!("{:>width$} ", "#", width = row_num_width as usize);
-        execute!(io::stdout(), Print(&header))?;
+        execute!(writer, Print(&header))?;
 
         let mut col_offset = 0u16;
         for (col_idx, col_name) in df.get_column_names().iter().enumerate().skip(state.c0) {
@@ -147,7 +150,7 @@ impl Renderer {
 
             if is_current {
                 execute!(
-                    io::stdout(),
+                    writer,
                     SetBackgroundColor(Color::Blue),
                     SetForegroundColor(Color::White)
                 )?;
@@ -156,13 +159,13 @@ impl Renderer {
             let col_width = Self::column_width(state, col_idx);
             let display = format!("{:width$}", col_name, width = col_width as usize);
 
-            execute!(io::stdout(), Print(&display[..display.len().min(col_width as usize)]))?;
+            execute!(writer, Print(&display[..display.len().min(col_width as usize)]))?;
 
             if is_current {
-                execute!(io::stdout(), ResetColor)?;
+                execute!(writer, ResetColor)?;
             }
 
-            execute!(io::stdout(), Print(" "))?;
+            execute!(writer, Print(" "))?;
             col_offset += col_width + 1;
         }
 
@@ -170,19 +173,19 @@ impl Renderer {
     }
 
     /// Render a single data row
-    fn render_row(df: &DataFrame, row_idx: usize, state: &TableState, term_cols: u16, row_num_width: u16) -> Result<()> {
+    fn render_row<W: Write>(df: &DataFrame, row_idx: usize, state: &TableState, term_cols: u16, row_num_width: u16, writer: &mut W) -> Result<()> {
         // Clear the line first
-        execute!(io::stdout(), terminal::Clear(terminal::ClearType::CurrentLine))?;
+        execute!(writer, terminal::Clear(terminal::ClearType::CurrentLine))?;
 
         // Render row number
         let is_current_row = row_idx == state.cr;
         if is_current_row {
-            execute!(io::stdout(), SetForegroundColor(Color::Yellow))?;
+            execute!(writer, SetForegroundColor(Color::Yellow))?;
         }
         let row_num = format!("{:>width$} ", row_idx, width = row_num_width as usize);
-        execute!(io::stdout(), Print(&row_num))?;
+        execute!(writer, Print(&row_num))?;
         if is_current_row {
-            execute!(io::stdout(), ResetColor)?;
+            execute!(writer, ResetColor)?;
         }
 
         let mut col_offset = 0u16;
@@ -197,25 +200,25 @@ impl Renderer {
 
             if is_current_cell {
                 execute!(
-                    io::stdout(),
+                    writer,
                     SetBackgroundColor(Color::Yellow),
                     SetForegroundColor(Color::Black)
                 )?;
             } else if is_current_row {
-                execute!(io::stdout(), SetForegroundColor(Color::White))?;
+                execute!(writer, SetForegroundColor(Color::White))?;
             }
 
             let col_width = Self::column_width(state, col_idx);
             let value = Self::format_value(df, col_idx, row_idx);
             let display = format!("{:width$}", value, width = col_width as usize);
 
-            execute!(io::stdout(), Print(&display[..display.len().min(col_width as usize)]))?;
+            execute!(writer, Print(&display[..display.len().min(col_width as usize)]))?;
 
             if is_current_cell || is_current_row {
-                execute!(io::stdout(), ResetColor)?;
+                execute!(writer, ResetColor)?;
             }
 
-            execute!(io::stdout(), Print(" "))?;
+            execute!(writer, Print(" "))?;
             col_offset += col_width + 1;
         }
 
@@ -282,9 +285,9 @@ impl Renderer {
     }
 
     /// Render status bar at the bottom
-    fn render_status_bar(view: &ViewState, message: &str, rows: u16, cols: u16) -> Result<()> {
+    fn render_status_bar<W: Write>(view: &ViewState, message: &str, rows: u16, cols: u16, writer: &mut W) -> Result<()> {
         let status_row = rows - 1;
-        execute!(io::stdout(), cursor::MoveTo(0, status_row))?;
+        execute!(writer, cursor::MoveTo(0, status_row))?;
 
         let status = if !message.is_empty() {
             message.to_string()
@@ -301,7 +304,7 @@ impl Renderer {
         };
 
         execute!(
-            io::stdout(),
+            writer,
             SetBackgroundColor(Color::DarkGrey),
             SetForegroundColor(Color::White),
             Print(&status[..status.len().min(cols as usize)]),
@@ -312,9 +315,9 @@ impl Renderer {
     }
 
     /// Render message when no table is loaded
-    fn render_empty_message(message: &str, rows: u16, _cols: u16) -> Result<()> {
+    fn render_empty_message<W: Write>(message: &str, rows: u16, _cols: u16, writer: &mut W) -> Result<()> {
         execute!(
-            io::stdout(),
+            writer,
             cursor::MoveTo(0, rows / 2),
             Print(message)
         )?;

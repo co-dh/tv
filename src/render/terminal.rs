@@ -42,6 +42,7 @@ impl Terminal {
     }
 
     /// Clear the screen
+    #[allow(dead_code)]
     pub fn clear() -> Result<()> {
         execute!(io::stdout(), terminal::Clear(terminal::ClearType::All))?;
         Ok(())
