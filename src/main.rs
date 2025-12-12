@@ -143,12 +143,16 @@ fn run_script(script_path: &str) -> Result<()> {
     Ok(())
 }
 
-/// Print table to stdout (for script mode)
+/// Print table to stdout (for script mode) - header in bold
 fn print_table(app: &AppContext) {
     if let Some(view) = app.view() {
         let df = &view.dataframe;
         println!("=== {} ({} rows) ===", view.name, df.height());
-        println!("{}", df);
+        let s = format!("{}", df);
+        for (i, line) in s.lines().enumerate() {
+            if i == 2 { println!("\x1b[1m{}\x1b[0m", line); }  // bold header row
+            else { println!("{}", line); }
+        }
     } else {
         println!("No table loaded");
     }
