@@ -47,11 +47,19 @@ tv --script commands.txt
 
 | Key | Action |
 |-----|--------|
-| `/` | Search column values (fuzzy finder) |
+| `/` | Search column values (fuzzy finder, supports glob patterns) |
 | `?` | Regex search in current column |
 | `n` | Find next occurrence |
 | `N` | Find previous occurrence |
 | `*` | Search for current cell value |
+
+Search patterns (for string columns):
+- `abc` - Exact match
+- `*abc*` - Contains "abc"
+- `*abc` - Ends with "abc"
+- `abc*` - Starts with "abc"
+
+Hints shown in fuzzy finder include glob examples based on current cell (e.g., `Fi*`, `*ce` for "Finance").
 
 ### Filter
 
@@ -72,6 +80,8 @@ String filter patterns (glob-style):
 - `col==*abc*` - Contains "abc"
 - `col==*abc` - Ends with "abc"
 - `col==abc*` - Starts with "abc"
+
+Hints shown in fuzzy finder include glob examples based on current cell (e.g., `col==Fi*`, `col==*ce` for "Finance").
 
 Filtering pushes a new view onto the stack. Press `q` to return to the original data.
 

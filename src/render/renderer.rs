@@ -19,6 +19,7 @@ impl Renderer {
         let (cols, rows) = terminal::size()?;
 
         let message = app.message.clone();
+        let stack_len = app.stack.len();
 
         // Use buffered writer to reduce flickering
         let mut stdout = BufWriter::new(io::stdout());
@@ -27,7 +28,9 @@ impl Renderer {
             // Get selection from view (clone to avoid borrow issues)
             let selected_cols = view.selected_cols.clone();
             let selected_rows = view.selected_rows.clone();
+            let view_name = view.name.clone();
             Self::render_table(view, rows, cols, &selected_cols, &selected_rows, &mut stdout)?;
+            Self::render_info_box(&view_name, stack_len, rows, cols, &mut stdout)?;
             Self::render_status_bar(view, &message, rows, cols, &mut stdout)?;
         } else {
             Self::render_empty_message(&message, rows, cols, &mut stdout)?;
@@ -423,6 +426,97 @@ impl Renderer {
                 }
             }
         }
+    }
+
+    /// Render info box at bottom right corner (like Kakoune)
+    fn render_info_box<W: Write>(view_name: &str, stack_len: usize, rows: u16, cols: u16, writer: &mut W) -> Result<()> {
+        // Determine context-sensitive key hints
+        let keys: Vec<(&str, &str)> = if view_name.starts_with("Freq:") {
+            vec![
+                ("Enter", "filter parent"),
+                ("Space", "select row"),
+                ("g", "top"),
+                ("G", "bottom"),
+                ("^D", "page down"),
+                ("^U", "page up"),
+                ("q", "back"),
+            ]
+        } else if view_name == "metadata" {
+            vec![
+                ("0", "sel null cols"),
+                ("1", "sel single cols"),
+                ("D", "delete sel"),
+                ("Space", "select row"),
+                ("g", "top"),
+                ("G", "bottom"),
+                ("q", "back"),
+            ]
+        } else if view_name == "correlation" {
+            vec![
+                ("g", "top"),
+                ("G", "bottom"),
+                ("q", "back"),
+            ]
+        } else {
+            vec![
+                ("/", "search"),
+                ("\\", "filter"),
+                ("?", "regex search"),
+                ("|", "regex filter"),
+                ("n", "next match"),
+                ("N", "prev match"),
+                ("[", "sort asc"),
+                ("]", "sort desc"),
+                ("F", "freq table"),
+                ("M", "metadata"),
+                ("C", "correlation"),
+                ("Space", "select col"),
+                ("D", "delete col"),
+                ("g", "top"),
+                ("G", "bottom"),
+                ("^D", "page down"),
+                ("^U", "page up"),
+                ("L", "load file"),
+                ("S", "save file"),
+                ("q", "quit"),
+            ]
+        };
+
+        // Format key hints
+        let hints: Vec<String> = keys.iter()
+            .map(|(k, desc)| format!("{:>5} {}", k, desc))
+            .collect();
+
+        // Calculate box dimensions
+        let max_hint_len = hints.iter().map(|h| h.len()).max().unwrap_or(10);
+        let box_width = max_hint_len + 4; // padding
+        let box_height = hints.len() + 2; // border top/bottom
+
+        // Position: bottom right, above status bar
+        let box_x = cols.saturating_sub(box_width as u16 + 1);
+        let box_y = rows.saturating_sub(box_height as u16 + 1);
+
+        // Draw box
+        execute!(writer, SetForegroundColor(Color::DarkGrey))?;
+
+        // Top border with view info
+        let title = format!(" [{}] ", if stack_len > 1 { format!("#{}", stack_len) } else { "tv".to_string() });
+        let top_border = format!("┌{}{}┐", title, "─".repeat(box_width.saturating_sub(title.len() + 2)));
+        execute!(writer, cursor::MoveTo(box_x, box_y), Print(&top_border))?;
+
+        // Content rows
+        for (i, hint) in hints.iter().enumerate() {
+            let row = box_y + 1 + i as u16;
+            let content = format!("│ {:width$} │", hint, width = box_width - 4);
+            execute!(writer, cursor::MoveTo(box_x, row), Print(&content))?;
+        }
+
+        // Bottom border
+        let bottom_border = format!("└{}┘", "─".repeat(box_width - 2));
+        execute!(writer, cursor::MoveTo(box_x, box_y + box_height as u16 - 1), Print(&bottom_border))?;
+
+        execute!(writer, ResetColor)?;
+        Ok(())
     }
 
     /// Render status bar at the bottom (left: msg/file, middle: col stats, right: row/total)

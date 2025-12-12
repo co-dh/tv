@@ -396,42 +396,63 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
             }
         }
         KeyCode::Char('/') => {
-            // /: Search column values with skim
+            // /: Search column values with skim (supports glob patterns for strings)
             if let Some(view) = app.current_view() {
                 if let Some(col_name) = view.state.current_column(&view.dataframe) {
-                    // Get unique values for current column
-                    let col = view.dataframe.column(&col_name).ok();
-                    if let Some(c) = col {
-                        let unique = c.unique().ok();
-                        if let Some(u) = unique {
-                            let items: Vec<String> = (0..u.len())
-                                .filter_map(|i| u.get(i).ok().map(|v| {
-                                    // Strip quotes from string values
-                                    let s = v.to_string();
-                                    if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
-                                        s[1..s.len()-1].to_string()
-                                    } else {
-                                        s
-                                    }
-                                }))
-                                .collect();
+                    let mut items: Vec<String> = Vec::new();
 
-                            if let Ok(Some(selected)) = picker::pick(items, &format!("{}> ", col_name)) {
-                                // Store search state for n/N
-                                app.search.col_name = Some(col_name.clone());
-                                app.search.value = Some(selected.clone());
-                                app.search.regex = None; // Clear regex search
-
-                                // Find first occurrence
-                                if let Some(view) = app.current_view_mut() {
-                                    if let Some(pos) = find_value(&view.dataframe, &col_name, &selected, 0, true) {
-                                        view.state.cr = pos;
-                                        view.state.ensure_visible();
-                                        app.set_message(format!("Found: {}={}", col_name, selected));
-                                    } else {
-                                        app.set_message(format!("Not found: {}={}", col_name, selected));
-                                    }
+                    // Add glob pattern examples based on current cell value (for string columns)
+                    if let Ok(col) = view.dataframe.column(&col_name) {
+                        if matches!(col.dtype(), polars::prelude::DataType::String) {
+                            if let Ok(val) = col.get(view.state.cr) {
+                                let s = val.to_string();
+                                let cell_val = if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
+                                    s[1..s.len()-1].to_string()
+                                } else {
+                                    s
+                                };
+                                if cell_val.len() >= 2 {
+                                    let prefix = &cell_val[..2];
+                                    let suffix = &cell_val[cell_val.len()-2..];
+                                    items.push(format!("{}*", prefix));
+                                    items.push(format!("*{}", suffix));
                                 }
+                            }
+                        }
+                    }
+
+                    // Get unique values as hints
+                    if let Some(uniq) = view.dataframe.column(&col_name)
+                        .ok()
+                        .and_then(|c| c.unique().ok())
+                    {
+                        for i in 0..uniq.len() {
+                            if let Ok(v) = uniq.get(i) {
+                                let s = v.to_string();
+                                let val = if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
+                                    s[1..s.len()-1].to_string()
+                                } else {
+                                    s
+                                };
+                                items.push(val);
+                            }
+                        }
+                    }
+
+                    if let Ok(Some(selected)) = picker::input_with_hints(items, &format!("{}> ", col_name)) {
+                        // Store search state for n/N
+                        app.search.col_name = Some(col_name.clone());
+                        app.search.value = Some(selected.clone());
+                        app.search.regex = None; // Clear regex search
+
+                        // Find first occurrence (supports glob patterns)
+                        if let Some(view) = app.current_view_mut() {
+                            if let Some(pos) = find_value(&view.dataframe, &col_name, &selected, 0, true) {
+                                view.state.cr = pos;
+                                view.state.ensure_visible();
+                                app.set_message(format!("Found: {}={}", col_name, selected));
+                            } else {
+                                app.set_message(format!("Not found: {}={}", col_name, selected));
                             }
                         }
                     }
@@ -442,25 +463,45 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
             // \: Filter rows with expression (using skim with column values as hints)
             if let Some(view) = app.current_view() {
                 if let Some(col_name) = view.state.current_column(&view.dataframe) {
+                    let mut items: Vec<String> = Vec::new();
+
+                    // Add glob pattern examples based on current cell value (for string columns)
+                    if let Ok(col) = view.dataframe.column(&col_name) {
+                        if matches!(col.dtype(), polars::prelude::DataType::String) {
+                            if let Ok(val) = col.get(view.state.cr) {
+                                let s = val.to_string();
+                                let cell_val = if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
+                                    s[1..s.len()-1].to_string()
+                                } else {
+                                    s
+                                };
+                                if cell_val.len() >= 2 {
+                                    let prefix = &cell_val[..2];
+                                    let suffix = &cell_val[cell_val.len()-2..];
+                                    items.push(format!("{}=={}*", col_name, prefix));
+                                    items.push(format!("{}==*{}", col_name, suffix));
+                                }
+                            }
+                        }
+                    }
+
                     // Get unique values as hints
-                    let items: Vec<String> = view.dataframe.column(&col_name)
+                    if let Some(uniq) = view.dataframe.column(&col_name)
                         .ok()
                         .and_then(|c| c.unique().ok())
-                        .map(|u| {
-                            (0..u.len())
-                                .filter_map(|i| u.get(i).ok().map(|v| {
-                                    let s = v.to_string();
-                                    // Strip quotes and format as filter expression
-                                    let val = if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
-                                        &s[1..s.len()-1]
-                                    } else {
-                                        &s
-                                    };
-                                    format!("{}=={}", col_name, val)
-                                }))
-                                .collect()
-                        })
-                        .unwrap_or_default();
+                    {
+                        for i in 0..uniq.len() {
+                            if let Ok(v) = uniq.get(i) {
+                                let s = v.to_string();
+                                let val = if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
+                                    &s[1..s.len()-1]
+                                } else {
+                                    &s
+                                };
+                                items.push(format!("{}=={}", col_name, val));
+                            }
+                        }
+                    }
 
                     if let Ok(Some(expression)) = picker::input_with_hints(items, "Filter> ") {
                         let cmd = Box::new(Filter { expression });
@@ -1136,7 +1177,7 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
     Ok(true)
 }
 
-/// Find a value in a column, returns row index
+/// Find a value in a column, returns row index (supports glob patterns: *abc, abc*, *abc*)
 fn find_value(df: &polars::prelude::DataFrame, col_name: &str, value: &str, start: usize, forward: bool) -> Option<usize> {
     let col = df.column(col_name).ok()?;
     let len = col.len();
@@ -1150,10 +1191,27 @@ fn find_value(df: &polars::prelude::DataFrame, col_name: &str, value: &str, star
         }
     };
 
+    // Determine match type based on glob pattern
+    let matches_value = |cell: &str| -> bool {
+        if value.starts_with('*') && value.ends_with('*') && value.len() > 2 {
+            // *pattern* -> contains
+            cell.contains(&value[1..value.len()-1])
+        } else if value.starts_with('*') && value.len() > 1 {
+            // *pattern -> ends with
+            cell.ends_with(&value[1..])
+        } else if value.ends_with('*') && value.len() > 1 {
+            // pattern* -> starts with
+            cell.starts_with(&value[..value.len()-1])
+        } else {
+            // exact match
+            cell == value
+        }
+    };
+
     if forward {
         for i in start..len {
             if let Ok(v) = col.get(i) {
-                if strip_quotes(v.to_string()) == value {
+                if matches_value(&strip_quotes(v.to_string())) {
                     return Some(i);
                 }
             }
@@ -1161,7 +1219,7 @@ fn find_value(df: &polars::prelude::DataFrame, col_name: &str, value: &str, star
     } else {
         for i in (0..=start).rev() {
             if let Ok(v) = col.get(i) {
-                if strip_quotes(v.to_string()) == value {
+                if matches_value(&strip_quotes(v.to_string())) {
                     return Some(i);
                 }
             }
@@ -1371,5 +1429,56 @@ fn prompt_input(app: &mut AppContext, prompt: &str) -> Result<Option<String>> {
                 _ => {}
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use polars::prelude::*;
+
+    fn make_test_df() -> DataFrame {
+        df! {
+            "name" => &["apple", "banana", "cherry", "pineapple", "grape", "blueberry"]
+        }.unwrap()
+    }
+
+    #[test]
+    fn test_find_value_exact() {
+        let df = make_test_df();
+        assert_eq!(find_value(&df, "name", "banana", 0, true), Some(1));
+        assert_eq!(find_value(&df, "name", "notfound", 0, true), None);
+    }
+
+    #[test]
+    fn test_find_value_starts_with() {
+        let df = make_test_df();
+        // "b*" matches banana (1) and blueberry (5)
+        assert_eq!(find_value(&df, "name", "b*", 0, true), Some(1));
+        assert_eq!(find_value(&df, "name", "b*", 2, true), Some(5));
+    }
+
+    #[test]
+    fn test_find_value_ends_with() {
+        let df = make_test_df();
+        // "*rry" matches cherry (2) and blueberry (5)
+        assert_eq!(find_value(&df, "name", "*rry", 0, true), Some(2));
+        assert_eq!(find_value(&df, "name", "*rry", 3, true), Some(5));
+    }
+
+    #[test]
+    fn test_find_value_contains() {
+        let df = make_test_df();
+        // "*apple*" matches apple (0) and pineapple (3)
+        assert_eq!(find_value(&df, "name", "*apple*", 0, true), Some(0));
+        assert_eq!(find_value(&df, "name", "*apple*", 1, true), Some(3));
+    }
+
+    #[test]
+    fn test_find_value_backward() {
+        let df = make_test_df();
+        // Search backward for "b*" from position 5
+        assert_eq!(find_value(&df, "name", "b*", 5, false), Some(5)); // blueberry
+        assert_eq!(find_value(&df, "name", "b*", 4, false), Some(1)); // banana
     }
 }
