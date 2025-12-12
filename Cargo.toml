@@ -1,0 +1,9 @@
+[package]
+name = "tv"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+polars = { version = "0.45", features = ["lazy", "csv", "parquet"] }
+crossterm = "0.28"
+anyhow = "1.0"
