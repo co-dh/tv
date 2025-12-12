@@ -4,6 +4,15 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::PathBuf;
 
+/// Search state for n/N navigation
+#[derive(Clone, Default)]
+pub struct SearchState {
+    /// Column name being searched
+    pub col_name: Option<String>,
+    /// Search value
+    pub value: Option<String>,
+}
+
 /// Application context holding all state
 pub struct AppContext {
     /// Stack of table views
@@ -14,6 +23,8 @@ pub struct AppContext {
     pub message: String,
     /// Counter for generating view IDs
     next_view_id: usize,
+    /// Current search state for n/N
+    pub search: SearchState,
 }
 
 impl AppContext {
@@ -24,6 +35,7 @@ impl AppContext {
             history_file: PathBuf::from("commands.txt"),
             message: String::from("Press L to load a file, q to quit"),
             next_view_id: 0,
+            search: SearchState::default(),
         }
     }
 
@@ -42,6 +54,7 @@ impl AppContext {
             history_file: PathBuf::from("commands.txt"),
             message: String::new(),
             next_view_id: 1,
+            search: SearchState::default(),
         }
     }
 

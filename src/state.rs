@@ -107,6 +107,16 @@ impl TableState {
         let page_size = (self.viewport.0 as usize).saturating_sub(2);
         self.move_up(page_size);
     }
+
+    /// Ensure cursor is visible in viewport
+    pub fn ensure_visible(&mut self) {
+        let visible_rows = (self.viewport.0 as usize).saturating_sub(2);
+        if self.cr < self.r0 {
+            self.r0 = self.cr;
+        } else if self.cr >= self.r0 + visible_rows {
+            self.r0 = self.cr.saturating_sub(visible_rows.saturating_sub(1));
+        }
+    }
 }
 
 /// Complete table view with history
@@ -246,5 +256,13 @@ impl StateStack {
     /// Find a view by ID (mutable)
     pub fn find_by_id_mut(&mut self, id: usize) -> Option<&mut ViewState> {
         self.stack.iter_mut().find(|v| v.id == id)
+    }
+
+    /// Swap top two views on stack
+    pub fn swap_top(&mut self) {
+        let len = self.stack.len();
+        if len >= 2 {
+            self.stack.swap(len - 1, len - 2);
+        }
     }
 }

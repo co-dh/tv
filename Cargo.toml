@@ -7,3 +7,5 @@ edition = "2021"
 polars = { version = "0.45", features = ["lazy", "csv", "parquet"] }
 crossterm = "0.28"
 anyhow = "1.0"
+skim = "0.10"
+chrono = "0.4"
