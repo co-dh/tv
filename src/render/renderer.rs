@@ -87,8 +87,23 @@ impl Renderer {
 
             view.state.col_widths = widths;
             view.state.widths_calc_row = view.state.cr;
-            view.state.visible_col_count = visible_indices.len();
         }
+
+        // Always calculate visible column count based on current c0
+        let row_num_width = df.height().to_string().len().max(3) as u16;
+        let available_width = cols.saturating_sub(row_num_width + 1);
+        let mut visible_count = 0usize;
+        let mut used_width = 0u16;
+        for col_idx in view.state.c0..df.width() {
+            let col_width = view.state.col_widths.get(col_idx).copied().unwrap_or(10);
+            let space = if visible_count > 0 { 1 } else { 0 };
+            if used_width + space + col_width > available_width && visible_count > 0 {
+                break;
+            }
+            used_width += space + col_width;
+            visible_count += 1;
+        }
+        view.state.visible_col_count = visible_count;
 
         let state = &view.state;
 
