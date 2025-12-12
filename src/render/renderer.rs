@@ -102,11 +102,12 @@ impl Renderer {
             Self::render_row_xs(df, row_idx, state, &xs, screen_width, row_num_width, writer)?;
         }
 
-        // Clear any remaining lines
-        for screen_row in (end_row - state.r0 + 1)..visible_rows {
+        // Clear any remaining lines (after header + data rows)
+        let first_clear_row = (end_row - state.r0 + 1) as u16; // +1 for header
+        for screen_row in first_clear_row..(rows - 1) { // -1 for status bar
             execute!(
                 writer,
-                cursor::MoveTo(0, screen_row as u16 + 1),
+                cursor::MoveTo(0, screen_row),
                 terminal::Clear(terminal::ClearType::CurrentLine)
             )?;
         }
