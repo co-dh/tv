@@ -1,6 +1,5 @@
 use crate::state::{StateStack, ViewState};
 use anyhow::Result;
-use std::collections::HashSet;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::PathBuf;
@@ -30,10 +29,6 @@ pub struct AppContext {
     pub search: SearchState,
     /// Bookmarked row indices for current view
     pub bookmarks: Vec<usize>,
-    /// Selected column indices (for multi-column operations)
-    pub selected_cols: HashSet<usize>,
-    /// Selected row indices (for Meta/Frequency views)
-    pub selected_rows: HashSet<usize>,
 }
 
 impl AppContext {
@@ -46,8 +41,6 @@ impl AppContext {
             next_view_id: 0,
             search: SearchState::default(),
             bookmarks: Vec::new(),
-            selected_cols: HashSet::new(),
-            selected_rows: HashSet::new(),
         }
     }
 
@@ -68,8 +61,6 @@ impl AppContext {
             next_view_id: 1,
             search: SearchState::default(),
             bookmarks: Vec::new(),
-            selected_cols: HashSet::new(),
-            selected_rows: HashSet::new(),
         }
     }
 

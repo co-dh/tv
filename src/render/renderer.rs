@@ -19,13 +19,14 @@ impl Renderer {
         let (cols, rows) = terminal::size()?;
 
         let message = app.message.clone();
-        let selected_cols = app.selected_cols.clone();
-        let selected_rows = app.selected_rows.clone();
 
         // Use buffered writer to reduce flickering
         let mut stdout = BufWriter::new(io::stdout());
 
         if let Some(view) = app.current_view_mut() {
+            // Get selection from view (clone to avoid borrow issues)
+            let selected_cols = view.selected_cols.clone();
+            let selected_rows = view.selected_rows.clone();
             Self::render_table(view, rows, cols, &selected_cols, &selected_rows, &mut stdout)?;
             Self::render_status_bar(view, &message, rows, cols, &mut stdout)?;
         } else {

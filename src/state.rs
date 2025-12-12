@@ -1,4 +1,5 @@
 use polars::prelude::*;
+use std::collections::HashSet;
 
 /// Display cursor and viewport state for a table view
 #[derive(Clone, Debug)]
@@ -140,6 +141,10 @@ pub struct ViewState {
     pub parent_id: Option<usize>,
     /// Column name used for frequency (for filtering parent)
     pub freq_col: Option<String>,
+    /// Selected column indices
+    pub selected_cols: HashSet<usize>,
+    /// Selected row indices
+    pub selected_rows: HashSet<usize>,
 }
 
 impl ViewState {
@@ -154,6 +159,8 @@ impl ViewState {
             show_row_numbers: false,
             parent_id: None,
             freq_col: None,
+            selected_cols: HashSet::new(),
+            selected_rows: HashSet::new(),
         }
     }
 
@@ -168,6 +175,8 @@ impl ViewState {
             show_row_numbers: false,
             parent_id: Some(parent_id),
             freq_col: Some(freq_col),
+            selected_cols: HashSet::new(),
+            selected_rows: HashSet::new(),
         }
     }
 

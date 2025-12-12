@@ -279,21 +279,20 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
         }
         KeyCode::Char('D') => {
             // D: Delete column(s) - in metadata view, delete from parent; otherwise delete current
-            if let Some(view) = app.current_view() {
+            // Extract needed data first to avoid borrow issues
+            let delete_info: Option<(bool, Option<usize>, Vec<String>)> = app.current_view().map(|view| {
                 let is_meta = view.name == "metadata";
+                let parent_id = view.parent_id;
 
                 if is_meta {
-                    // In metadata view: delete selected columns from parent
-                    let parent_id = view.parent_id;
-                    let rows_to_delete: Vec<usize> = if app.selected_rows.is_empty() {
+                    let rows_to_delete: Vec<usize> = if view.selected_rows.is_empty() {
                         vec![view.state.cr]
                     } else {
-                        let mut rows: Vec<usize> = app.selected_rows.iter().copied().collect();
-                        rows.sort_by(|a, b| b.cmp(a)); // Sort descending to delete from end first
+                        let mut rows: Vec<usize> = view.selected_rows.iter().copied().collect();
+                        rows.sort_by(|a, b| b.cmp(a));
                         rows
                     };
 
-                    // Get column names from metadata view's first column
                     let col_names: Vec<String> = rows_to_delete.iter()
                         .filter_map(|&row| {
                             view.dataframe.get_columns()[0]
@@ -309,9 +308,30 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                                 })
                         })
                         .collect();
+                    (true, parent_id, col_names)
+                } else {
+                    let cols_to_delete: Vec<String> = if view.selected_cols.is_empty() {
+                        view.state.current_column(&view.dataframe)
+                            .map(|c| vec![c.to_string()])
+                            .unwrap_or_default()
+                    } else {
+                        let col_names: Vec<String> = view.dataframe.get_column_names()
+                            .iter()
+                            .map(|s| s.to_string())
+                            .collect();
+                        let mut selected: Vec<usize> = view.selected_cols.iter().copied().collect();
+                        selected.sort_by(|a, b| b.cmp(a));
+                        selected.iter()
+                            .filter_map(|&idx| col_names.get(idx).cloned())
+                            .collect()
+                    };
+                    (false, None, cols_to_delete)
+                }
+            });
 
+            if let Some((is_meta, parent_id, col_names)) = delete_info {
+                if is_meta {
                     if let Some(pid) = parent_id {
-                        // Delete columns from parent
                         if let Some(parent) = app.stack.find_by_id_mut(pid) {
                             let mut deleted = 0;
                             for col_name in &col_names {
@@ -319,45 +339,24 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                                     deleted += 1;
                                 }
                             }
-                            app.selected_rows.clear();
-                            // Pop metadata view to show updated parent
                             app.stack.pop();
                             app.set_message(format!("Deleted {} column(s)", deleted));
                         }
                     }
+                } else if col_names.is_empty() {
+                    app.set_message("No columns to delete".to_string());
                 } else {
-                    // Normal view: delete selected columns or current column
-                    let cols_to_delete: Vec<String> = if app.selected_cols.is_empty() {
-                        // No selection: delete current column
-                        view.state.current_column(&view.dataframe)
-                            .map(|c| vec![c.to_string()])
-                            .unwrap_or_default()
-                    } else {
-                        // Delete all selected columns
-                        let col_names: Vec<String> = view.dataframe.get_column_names()
-                            .iter()
-                            .map(|s| s.to_string())
-                            .collect();
-                        let mut selected: Vec<usize> = app.selected_cols.iter().copied().collect();
-                        selected.sort_by(|a, b| b.cmp(a)); // Sort descending
-                        selected.iter()
-                            .filter_map(|&idx| col_names.get(idx).cloned())
-                            .collect()
-                    };
-
-                    if cols_to_delete.is_empty() {
-                        app.set_message("No columns to delete".to_string());
-                    } else {
-                        let mut deleted = 0;
-                        for col_name in &cols_to_delete {
-                            let cmd = Box::new(DelCol { col_name: col_name.clone() });
-                            if CommandExecutor::execute(app, cmd).is_ok() {
-                                deleted += 1;
-                            }
+                    let mut deleted = 0;
+                    for col_name in &col_names {
+                        let cmd = Box::new(DelCol { col_name: col_name.clone() });
+                        if CommandExecutor::execute(app, cmd).is_ok() {
+                            deleted += 1;
                         }
-                        app.selected_cols.clear();
-                        app.set_message(format!("Deleted {} column(s)", deleted));
                     }
+                    if let Some(view) = app.current_view_mut() {
+                        view.selected_cols.clear();
+                    }
+                    app.set_message(format!("Deleted {} column(s)", deleted));
                 }
             }
         }
@@ -605,13 +604,13 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
         }
         KeyCode::Enter => {
             // Enter: Filter parent table from frequency view (supports multiple selections)
-            if let Some(view) = app.current_view() {
+            // Extract needed info first
+            let filter_info: Option<(usize, String, Vec<String>, Option<String>)> = app.current_view().and_then(|view| {
                 if let (Some(parent_id), Some(freq_col)) = (view.parent_id, view.freq_col.clone()) {
-                    // Get values to filter by: selected rows or current row
-                    let rows_to_use: Vec<usize> = if app.selected_rows.is_empty() {
+                    let rows_to_use: Vec<usize> = if view.selected_rows.is_empty() {
                         vec![view.state.cr]
                     } else {
-                        app.selected_rows.iter().copied().collect()
+                        view.selected_rows.iter().copied().collect()
                     };
 
                     let values: Vec<String> = rows_to_use.iter()
@@ -621,7 +620,6 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                                 .ok()
                                 .map(|v| {
                                     let s = v.to_string();
-                                    // Strip quotes from string values
                                     if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
                                         s[1..s.len()-1].to_string()
                                     } else {
@@ -631,34 +629,41 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                         })
                         .collect();
 
-                    if values.is_empty() {
-                        app.set_message("No values to filter".to_string());
-                    } else if let Some(parent) = app.stack.find_by_id(parent_id) {
-                        let parent_df = parent.dataframe.clone();
-                        let parent_filename = parent.filename.clone();
+                    if let Some(parent) = app.stack.find_by_id(parent_id) {
+                        Some((parent_id, freq_col, values, parent.filename.clone()))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            });
 
-                        // Filter by matching any of the selected values
-                        match filter_by_values(&parent_df, &freq_col, &values) {
-                            Ok(filtered_df) => {
-                                let row_count = filtered_df.height();
-                                let id = app.next_id();
-                                let view_name = if values.len() == 1 {
-                                    format!("{}={}", freq_col, values[0])
-                                } else {
-                                    format!("{}∈{{{}}}", freq_col, values.len())
-                                };
-                                let new_view = state::ViewState::new(
-                                    id,
-                                    view_name,
-                                    filtered_df,
-                                    parent_filename,
-                                );
-                                app.stack.push(new_view);
-                                app.selected_rows.clear();
-                                app.set_message(format!("Filtered: {} rows", row_count));
-                            }
-                            Err(e) => app.set_message(format!("Error: {}", e)),
+            if let Some((parent_id, freq_col, values, parent_filename)) = filter_info {
+                if values.is_empty() {
+                    app.set_message("No values to filter".to_string());
+                } else if let Some(parent) = app.stack.find_by_id(parent_id) {
+                    let parent_df = parent.dataframe.clone();
+
+                    match filter_by_values(&parent_df, &freq_col, &values) {
+                        Ok(filtered_df) => {
+                            let row_count = filtered_df.height();
+                            let id = app.next_id();
+                            let view_name = if values.len() == 1 {
+                                format!("{}={}", freq_col, values[0])
+                            } else {
+                                format!("{}∈{{{}}}", freq_col, values.len())
+                            };
+                            let new_view = state::ViewState::new(
+                                id,
+                                view_name,
+                                filtered_df,
+                                parent_filename,
+                            );
+                            app.stack.push(new_view);
+                            app.set_message(format!("Filtered: {} rows", row_count));
                         }
+                        Err(e) => app.set_message(format!("Error: {}", e)),
                     }
                 }
             }
@@ -794,14 +799,17 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
         }
         KeyCode::Char('C') => {
             // C: Correlation matrix (uses selected columns if >= 2, otherwise all numeric)
+            let selected: Vec<usize> = app.current_view()
+                .map(|v| v.selected_cols.iter().copied().collect())
+                .unwrap_or_default();
             if app.has_view() {
-                let selected: Vec<usize> = app.selected_cols.iter().copied().collect();
                 let cmd = Box::new(Correlation { selected_cols: selected });
                 if let Err(e) = CommandExecutor::execute(app, cmd) {
                     app.set_message(format!("Error: {}", e));
                 } else {
-                    // Clear selection after successful correlation
-                    app.selected_cols.clear();
+                    if let Some(view) = app.current_view_mut() {
+                        view.selected_cols.clear();
+                    }
                 }
             }
         }
@@ -940,154 +948,149 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
         }
         KeyCode::Char(' ') => {
             // Space: Toggle selection (rows in Meta/Freq views, columns otherwise)
-            if let Some(view) = app.current_view() {
+            let msg: Option<String> = if let Some(view) = app.current_view_mut() {
                 let is_meta = view.name == "metadata";
                 let is_freq = view.name.starts_with("Freq:");
 
                 if is_meta || is_freq {
-                    // Select rows in metadata/frequency views
                     let cr = view.state.cr;
-                    if app.selected_rows.contains(&cr) {
-                        app.selected_rows.remove(&cr);
-                        app.set_message(format!("Deselected row ({} selected)", app.selected_rows.len()));
+                    if view.selected_rows.contains(&cr) {
+                        view.selected_rows.remove(&cr);
+                        Some(format!("Deselected row ({} selected)", view.selected_rows.len()))
                     } else {
-                        app.selected_rows.insert(cr);
-                        app.set_message(format!("Selected row ({} selected)", app.selected_rows.len()));
+                        view.selected_rows.insert(cr);
+                        Some(format!("Selected row ({} selected)", view.selected_rows.len()))
                     }
                 } else {
-                    // Select columns in regular views
                     let cc = view.state.cc;
-                    if app.selected_cols.contains(&cc) {
-                        app.selected_cols.remove(&cc);
-                        app.set_message(format!("Deselected column ({} selected)", app.selected_cols.len()));
+                    if view.selected_cols.contains(&cc) {
+                        view.selected_cols.remove(&cc);
+                        Some(format!("Deselected column ({} selected)", view.selected_cols.len()))
                     } else {
-                        app.selected_cols.insert(cc);
-                        app.set_message(format!("Selected column ({} selected)", app.selected_cols.len()));
+                        view.selected_cols.insert(cc);
+                        Some(format!("Selected column ({} selected)", view.selected_cols.len()))
                     }
                 }
+            } else {
+                None
+            };
+            if let Some(m) = msg {
+                app.set_message(m);
             }
         }
         KeyCode::Esc => {
             // Esc: Clear selection
-            if !app.selected_cols.is_empty() || !app.selected_rows.is_empty() {
-                app.selected_cols.clear();
-                app.selected_rows.clear();
-                app.set_message("Selection cleared".to_string());
+            if let Some(view) = app.current_view_mut() {
+                if !view.selected_cols.is_empty() || !view.selected_rows.is_empty() {
+                    view.selected_cols.clear();
+                    view.selected_rows.clear();
+                    app.set_message("Selection cleared".to_string());
+                }
             }
         }
         KeyCode::Char('0') => {
             // 0: In Meta view, select rows with 100% null; otherwise select all-null columns
-            if let Some(view) = app.current_view() {
+            // First pass: collect indices
+            let selection: Option<(bool, Vec<usize>)> = app.current_view().map(|view| {
                 let is_meta = view.name == "metadata";
-
                 if is_meta {
-                    // In Meta view: select rows where "null%" column == 100
                     let df = &view.dataframe;
-                    if let Ok(null_col) = df.column("null%") {
+                    let null_rows: Vec<usize> = df.column("null%").ok().map(|null_col| {
                         let series = null_col.as_materialized_series();
-                        let mut null_rows = Vec::new();
-
-                        for row_idx in 0..series.len() {
-                            if let Ok(val) = series.get(row_idx) {
-                                // Check if null% is 100
-                                let val_str = val.to_string();
-                                if val_str == "100" || val_str == "100.0" {
-                                    null_rows.push(row_idx);
-                                }
-                            }
-                        }
-
-                        if null_rows.is_empty() {
-                            app.set_message("No all-null columns found".to_string());
-                        } else {
-                            for idx in &null_rows {
-                                app.selected_rows.insert(*idx);
-                            }
-                            app.set_message(format!("Selected {} row(s) with 100% null", null_rows.len()));
-                        }
-                    }
+                        (0..series.len())
+                            .filter(|&row_idx| {
+                                series.get(row_idx).ok()
+                                    .map(|v| {
+                                        let s = v.to_string();
+                                        s == "100" || s == "100.0"
+                                    })
+                                    .unwrap_or(false)
+                            })
+                            .collect()
+                    }).unwrap_or_default();
+                    (true, null_rows)
                 } else {
-                    // Normal view: select all-null columns
                     let df = &view.dataframe;
                     let total_rows = df.height();
-                    let mut null_cols = Vec::new();
+                    let null_cols: Vec<usize> = df.get_columns().iter().enumerate()
+                        .filter(|(_, col)| col.as_materialized_series().null_count() == total_rows)
+                        .map(|(idx, _)| idx)
+                        .collect();
+                    (false, null_cols)
+                }
+            });
 
-                    for (col_idx, col) in df.get_columns().iter().enumerate() {
-                        let series = col.as_materialized_series();
-                        if series.null_count() == total_rows {
-                            null_cols.push(col_idx);
+            if let Some((is_rows, indices)) = selection {
+                if indices.is_empty() {
+                    app.set_message("No all-null columns found".to_string());
+                } else if let Some(view) = app.current_view_mut() {
+                    let count = indices.len();
+                    if is_rows {
+                        for idx in indices {
+                            view.selected_rows.insert(idx);
                         }
-                    }
-
-                    if null_cols.is_empty() {
-                        app.set_message("No all-null columns found".to_string());
+                        app.set_message(format!("Selected {} row(s) with 100% null", count));
                     } else {
-                        for idx in &null_cols {
-                            app.selected_cols.insert(*idx);
+                        for idx in indices {
+                            view.selected_cols.insert(idx);
                         }
-                        app.set_message(format!("Selected {} all-null column(s)", null_cols.len()));
+                        app.set_message(format!("Selected {} all-null column(s)", count));
                     }
                 }
             }
         }
         KeyCode::Char('1') => {
             // 1: In Meta view, select rows with 1 distinct value; otherwise select single-value columns
-            if let Some(view) = app.current_view() {
+            let selection: Option<(bool, Vec<usize>)> = app.current_view().map(|view| {
                 let is_meta = view.name == "metadata";
-
                 if is_meta {
-                    // In Meta view: select rows where "distinct" column == 1
                     let df = &view.dataframe;
-                    // Find the "distinct" column (index 3)
-                    if let Ok(distinct_col) = df.column("distinct") {
+                    let single_rows: Vec<usize> = df.column("distinct").ok().map(|distinct_col| {
                         let series = distinct_col.as_materialized_series();
-                        let mut single_value_rows = Vec::new();
-
-                        for row_idx in 0..series.len() {
-                            if let Ok(val) = series.get(row_idx) {
-                                let val_str = val.to_string();
-                                if val_str == "1" {
-                                    single_value_rows.push(row_idx);
-                                }
-                            }
-                        }
-
-                        if single_value_rows.is_empty() {
-                            app.set_message("No single-value columns found".to_string());
-                        } else {
-                            for idx in &single_value_rows {
-                                app.selected_rows.insert(*idx);
-                            }
-                            app.set_message(format!("Selected {} row(s) with 1 distinct value", single_value_rows.len()));
-                        }
-                    }
+                        (0..series.len())
+                            .filter(|&row_idx| {
+                                series.get(row_idx).ok()
+                                    .map(|v| v.to_string() == "1")
+                                    .unwrap_or(false)
+                            })
+                            .collect()
+                    }).unwrap_or_default();
+                    (true, single_rows)
                 } else {
-                    // Normal view: select single-value columns
                     let df = &view.dataframe;
-                    let mut single_value_cols = Vec::new();
+                    let single_cols: Vec<usize> = df.get_columns().iter().enumerate()
+                        .filter(|(_, col)| {
+                            let series = col.as_materialized_series();
+                            series.n_unique().ok().map(|n_unique| {
+                                let null_count = series.null_count();
+                                if null_count > 0 && null_count < series.len() {
+                                    n_unique <= 2
+                                } else {
+                                    n_unique == 1
+                                }
+                            }).unwrap_or(false)
+                        })
+                        .map(|(idx, _)| idx)
+                        .collect();
+                    (false, single_cols)
+                }
+            });
 
-                    for (col_idx, col) in df.get_columns().iter().enumerate() {
-                        let series = col.as_materialized_series();
-                        if let Ok(n_unique) = series.n_unique() {
-                            let null_count = series.null_count();
-                            let has_only_one_non_null_value = if null_count > 0 && null_count < series.len() {
-                                n_unique <= 2
-                            } else {
-                                n_unique == 1
-                            };
-                            if has_only_one_non_null_value {
-                                single_value_cols.push(col_idx);
-                            }
+            if let Some((is_rows, indices)) = selection {
+                if indices.is_empty() {
+                    app.set_message("No single-value columns found".to_string());
+                } else if let Some(view) = app.current_view_mut() {
+                    let count = indices.len();
+                    if is_rows {
+                        for idx in indices {
+                            view.selected_rows.insert(idx);
                         }
-                    }
-
-                    if single_value_cols.is_empty() {
-                        app.set_message("No single-value columns found".to_string());
+                        app.set_message(format!("Selected {} row(s) with 1 distinct value", count));
                     } else {
-                        for idx in &single_value_cols {
-                            app.selected_cols.insert(*idx);
+                        for idx in indices {
+                            view.selected_cols.insert(idx);
                         }
-                        app.set_message(format!("Selected {} single-value column(s)", single_value_cols.len()));
+                        app.set_message(format!("Selected {} single-value column(s)", count));
                     }
                 }
             }
