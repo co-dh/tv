@@ -12,14 +12,28 @@ use command::view::{Frequency, Metadata};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use crossterm::{cursor, execute, style::Print, terminal};
 use render::{Renderer, Terminal};
+use std::fs;
 use std::io::{self, Write};
 
 fn main() -> Result<()> {
+    // Get command line args
+    let args: Vec<String> = std::env::args().collect();
+
+    // Check for --script argument
+    let script_mode = args.iter().position(|a| a == "--script");
+
+    if let Some(idx) = script_mode {
+        // Script mode: run commands from file and print result
+        if args.len() <= idx + 1 {
+            eprintln!("Usage: tv --script <script_file>");
+            std::process::exit(1);
+        }
+        let script_path = &args[idx + 1];
+        return run_script(script_path);
+    }
+
     // Initialize terminal
     let _terminal = Terminal::init()?;
-
-    // Get file path from command line args
-    let args: Vec<String> = std::env::args().collect();
 
     // Create app context
     let mut app = if args.len() > 1 {
@@ -59,6 +73,85 @@ fn main() -> Result<()> {
 
     Terminal::restore()?;
     Ok(())
+}
+
+/// Run commands from a script file and print result
+fn run_script(script_path: &str) -> Result<()> {
+    let script = fs::read_to_string(script_path)?;
+    let mut app = AppContext::new();
+
+    // Set a reasonable viewport for printing
+    app.update_viewport(50, 120);
+
+    for line in script.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+
+        if line == "quit" {
+            break;
+        }
+
+        // Parse and execute command
+        if let Some(cmd) = parse_command(line, &app) {
+            if let Err(e) = CommandExecutor::execute(&mut app, cmd) {
+                eprintln!("Error executing '{}': {}", line, e);
+            }
+        } else {
+            eprintln!("Unknown command: {}", line);
+        }
+    }
+
+    // Print the final state
+    print_table(&app);
+
+    Ok(())
+}
+
+/// Print table to stdout (for script mode)
+fn print_table(app: &AppContext) {
+    if let Some(view) = app.current_view() {
+        let df = &view.dataframe;
+        println!("=== {} ({} rows) ===", view.name, df.height());
+        println!("{}", df);
+    } else {
+        println!("No table loaded");
+    }
+}
+
+/// Parse a text command into a Command object
+fn parse_command(line: &str, _app: &AppContext) -> Option<Box<dyn command::Command>> {
+    let parts: Vec<&str> = line.splitn(2, ' ').collect();
+    let cmd = parts[0].to_lowercase();
+    let arg = parts.get(1).map(|s| s.trim()).unwrap_or("");
+
+    match cmd.as_str() {
+        "load" => Some(Box::new(Load { file_path: arg.to_string() })),
+        "save" => Some(Box::new(Save { file_path: arg.to_string() })),
+        "freq" | "frequency" => Some(Box::new(Frequency { col_name: arg.to_string() })),
+        "meta" | "metadata" => Some(Box::new(Metadata)),
+        "delcol" => Some(Box::new(DelCol { col_name: arg.to_string() })),
+        "filter" => Some(Box::new(Filter { expression: arg.to_string() })),
+        "select" | "sel" => {
+            let col_names: Vec<String> = arg.split(',').map(|s| s.trim().to_string()).collect();
+            Some(Box::new(Select { col_names }))
+        }
+        "sort" => Some(Box::new(Sort { col_name: arg.to_string(), descending: false })),
+        "sortdesc" => Some(Box::new(Sort { col_name: arg.to_string(), descending: true })),
+        "rename" => {
+            let rename_parts: Vec<&str> = arg.splitn(2, ' ').collect();
+            if rename_parts.len() == 2 {
+                Some(Box::new(RenameCol {
+                    old_name: rename_parts[0].to_string(),
+                    new_name: rename_parts[1].to_string(),
+                }))
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
 }
 
 /// Handle keyboard input
