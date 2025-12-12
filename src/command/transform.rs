@@ -3,295 +3,136 @@ use crate::command::Command;
 use anyhow::{anyhow, Result};
 use polars::prelude::*;
 
-/// Delete column command
-pub struct DelCol {
-    pub col_name: String,
-}
+/// Delete column
+pub struct DelCol { pub col_name: String }
 
 impl Command for DelCol {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
-        let view = app.req_mut()?;
-
-        // Check if column exists
-        let found = view.dataframe.get_column_names()
-            .iter()
-            .any(|c| c.as_str() == self.col_name.as_str());
-        if !found {
-            return Err(anyhow!("Column '{}' not found", self.col_name));
-        }
-
-        // Drop the column
-        view.dataframe = view.dataframe.drop(&self.col_name)?;
-
-        // Adjust cursor if needed
-        let max_cols = view.cols();
-        if max_cols > 0 && view.state.cc >= max_cols {
-            view.state.cc = max_cols - 1;
-        }
-
+        let v = app.req_mut()?;
+        v.dataframe = v.dataframe.drop(&self.col_name)?;
+        if v.state.cc >= v.cols() && v.cols() > 0 { v.state.cc = v.cols() - 1; }
         Ok(())
     }
-
     fn to_str(&self) -> String { format!("delcol {}", self.col_name) }
 }
 
-/// Filter rows command
-pub struct Filter {
-    pub expression: String,
-}
+/// Filter rows
+pub struct Filter { pub expression: String }
 
 impl Command for Filter {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
-        let view = app.req()?;
-        let df = &view.dataframe;
+        let (filtered, filename) = {
+            let v = app.req()?;
+            let df = &v.dataframe;
 
-        // Parse the filter expression
-        // For MVP, we support simple filters like "col>value", "col<value", "col==value"
-        let parts: Vec<&str> = if self.expression.contains(">=") {
-            self.expression.splitn(2, ">=").collect()
-        } else if self.expression.contains("<=") {
-            self.expression.splitn(2, "<=").collect()
-        } else if self.expression.contains("==") {
-            self.expression.splitn(2, "==").collect()
-        } else if self.expression.contains('>') {
-            self.expression.splitn(2, '>').collect()
-        } else if self.expression.contains('<') {
-            self.expression.splitn(2, '<').collect()
-        } else {
-            return Err(anyhow!("Invalid filter expression. Use: col>value, col<value, col==value, col>=value, or col<=value"));
+            // Parse: col op value
+            let (col_name, op, val) = self.parse_expr()?;
+            let col = df.column(col_name)?.as_materialized_series();
+
+            let mask = match col.dtype() {
+                DataType::Int64 | DataType::Int32 | DataType::Int16 | DataType::Int8 |
+                DataType::UInt64 | DataType::UInt32 | DataType::UInt16 | DataType::UInt8 |
+                DataType::Float64 | DataType::Float32 => {
+                    let n: f64 = val.parse().map_err(|_| anyhow!("Invalid number"))?;
+                    self.num_mask(col.cast(&DataType::Float64)?.f64()?, op, n)
+                }
+                DataType::String => self.str_mask(col.str()?, op, val)?,
+                _ => return Err(anyhow!("Unsupported type: {:?}", col.dtype())),
+            };
+            (df.filter(&mask)?, v.filename.clone())
         };
-
-        if parts.len() != 2 {
-            return Err(anyhow!("Invalid filter expression"));
-        }
-
-        let col_name = parts[0].trim();
-        let value_str = parts[1].trim();
-
-        // Get the column
-        let col = df
-            .column(col_name)
-            .map_err(|_| anyhow!("Column '{}' not found", col_name))?;
-        let series = col.as_materialized_series();
-
-        // Create filter mask based on column type and operator
-        let mask = match series.dtype() {
-            DataType::Int64 | DataType::Int32 | DataType::Int16 | DataType::Int8 => {
-                let value = value_str
-                    .parse::<i64>()
-                    .map_err(|_| anyhow!("Invalid integer value"))?;
-                self.create_int_mask(series, value)?
-            }
-            DataType::Float64 | DataType::Float32 => {
-                let value = value_str
-                    .parse::<f64>()
-                    .map_err(|_| anyhow!("Invalid float value"))?;
-                self.create_float_mask(series, value)?
-            }
-            DataType::String => self.create_string_mask(series, value_str)?,
-            _ => {
-                return Err(anyhow!(
-                    "Filtering not supported for column type: {:?}",
-                    series.dtype()
-                ))
-            }
-        };
-
-        // Apply filter to create new dataframe
-        let filtered_df = df.filter(&mask)?;
-        let filename = view.filename.clone();
-
-        // Push new view onto stack
         let id = app.next_id();
-        app.stack.push(crate::state::ViewState::new(id, self.expression.clone(), filtered_df, filename));
+        app.stack.push(crate::state::ViewState::new(id, self.expression.clone(), filtered, filename));
         Ok(())
     }
-
     fn to_str(&self) -> String { format!("filter {}", self.expression) }
 }
 
 impl Filter {
-    fn create_int_mask(&self, col: &Series, value: i64) -> Result<ChunkedArray<BooleanType>> {
-        let col_i64 = col.cast(&DataType::Int64)?;
-        let col_i64 = col_i64.i64()?;
-
-        let mask = if self.expression.contains(">=") {
-            col_i64.gt_eq(value)
-        } else if self.expression.contains("<=") {
-            col_i64.lt_eq(value)
-        } else if self.expression.contains("==") {
-            col_i64.equal(value)
-        } else if self.expression.contains('>') {
-            col_i64.gt(value)
-        } else {
-            col_i64.lt(value)
-        };
-
-        Ok(mask)
-    }
-
-    fn create_float_mask(&self, col: &Series, value: f64) -> Result<ChunkedArray<BooleanType>> {
-        let col_f64 = col.cast(&DataType::Float64)?;
-        let col_f64 = col_f64.f64()?;
-
-        let mask = if self.expression.contains(">=") {
-            col_f64.gt_eq(value)
-        } else if self.expression.contains("<=") {
-            col_f64.lt_eq(value)
-        } else if self.expression.contains("==") {
-            col_f64.equal(value)
-        } else if self.expression.contains('>') {
-            col_f64.gt(value)
-        } else {
-            col_f64.lt(value)
-        };
-
-        Ok(mask)
-    }
-
-    fn create_string_mask(&self, col: &Series, value: &str) -> Result<ChunkedArray<BooleanType>> {
-        let col_str = col.str()?;
-
-        if !self.expression.contains("==") {
-            return Err(anyhow!("Only == operator supported for string columns"));
+    fn parse_expr(&self) -> Result<(&str, &str, &str)> {
+        for op in [">=", "<=", "==", ">", "<"] {
+            if let Some(i) = self.expression.find(op) {
+                return Ok((self.expression[..i].trim(), op, self.expression[i+op.len()..].trim()));
+            }
         }
+        Err(anyhow!("Invalid filter. Use: col>value, col==value, etc."))
+    }
 
-        // Helper to create mask from predicate
-        let make_mask = |pred: fn(&str, &str) -> bool, pattern: &str| -> ChunkedArray<BooleanType> {
-            let bools: Vec<bool> = col_str.into_iter()
-                .map(|opt| opt.map(|s| pred(s, pattern)).unwrap_or(false))
-                .collect();
-            ChunkedArray::from_slice("mask".into(), &bools)
-        };
+    fn num_mask(&self, c: &Float64Chunked, op: &str, v: f64) -> BooleanChunked {
+        match op { ">=" => c.gt_eq(v), "<=" => c.lt_eq(v), "==" => c.equal(v), ">" => c.gt(v), _ => c.lt(v) }
+    }
 
-        // Support glob patterns: *pattern (ends with), pattern* (begins with), *pattern* (contains)
-        let mask = if value.starts_with('*') && value.ends_with('*') && value.len() > 2 {
-            make_mask(|s, p| s.contains(p), &value[1..value.len()-1])
-        } else if value.starts_with('*') && value.len() > 1 {
-            make_mask(|s, p| s.ends_with(p), &value[1..])
-        } else if value.ends_with('*') && value.len() > 1 {
-            make_mask(|s, p| s.starts_with(p), &value[..value.len()-1])
+    fn str_mask(&self, c: &StringChunked, op: &str, v: &str) -> Result<BooleanChunked> {
+        if op != "==" { return Err(anyhow!("Strings only support ==")); }
+        // Glob: *x* (contains), *x (ends), x* (starts), x (exact)
+        Ok(if v.starts_with('*') && v.ends_with('*') && v.len() > 2 {
+            let p = &v[1..v.len()-1];
+            BooleanChunked::from_iter_values("m".into(), c.into_iter().map(|s| s.map(|x| x.contains(p)).unwrap_or(false)))
+        } else if v.starts_with('*') && v.len() > 1 {
+            let p = &v[1..];
+            BooleanChunked::from_iter_values("m".into(), c.into_iter().map(|s| s.map(|x| x.ends_with(p)).unwrap_or(false)))
+        } else if v.ends_with('*') && v.len() > 1 {
+            let p = &v[..v.len()-1];
+            BooleanChunked::from_iter_values("m".into(), c.into_iter().map(|s| s.map(|x| x.starts_with(p)).unwrap_or(false)))
         } else {
-            col_str.equal(value)
-        };
-
-        Ok(mask)
+            c.equal(v)
+        })
     }
 }
 
-/// Select columns command
-pub struct Select {
-    pub col_names: Vec<String>,
-}
+/// Select columns
+pub struct Select { pub col_names: Vec<String> }
 
 impl Command for Select {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
-        let view = app.req_mut()?;
-
-        // Check if all columns exist
-        let df_cols = view.dataframe.get_column_names();
-        for col_name in &self.col_names {
-            let found = df_cols.iter().any(|c| c.as_str() == col_name.as_str());
-            if !found {
-                return Err(anyhow!("Column '{}' not found", col_name));
-            }
-        }
-
-        // Select columns
-        view.dataframe = view.dataframe.select(self.col_names.iter().map(|s| s.as_str()).collect::<Vec<&str>>())?;
-
-        // Reset cursor
-        view.state.cc = 0;
-
+        let v = app.req_mut()?;
+        v.dataframe = v.dataframe.select(&self.col_names)?;
+        v.state.cc = 0;
         Ok(())
     }
-
     fn to_str(&self) -> String { format!("sel {}", self.col_names.join(",")) }
 }
 
-/// Sort by column command
-pub struct Sort {
-    pub col_name: String,
-    pub descending: bool,
-}
+/// Sort by column
+pub struct Sort { pub col_name: String, pub descending: bool }
 
 impl Command for Sort {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
-        let view = app.req_mut()?;
-
-        // Check if column exists
-        let found = view.dataframe.get_column_names()
-            .iter()
-            .any(|c| c.as_str() == self.col_name.as_str());
-        if !found {
-            return Err(anyhow!("Column '{}' not found", self.col_name));
-        }
-
-        // Sort the dataframe
-        view.dataframe = view.dataframe.sort(
-            [&self.col_name],
-            SortMultipleOptions::default().with_order_descending(self.descending)
-        )?;
-
+        let v = app.req_mut()?;
+        v.dataframe = v.dataframe.sort([&self.col_name], SortMultipleOptions::default().with_order_descending(self.descending))?;
         Ok(())
     }
-
-    fn to_str(&self) -> String {
-        format!("{} {}", if self.descending { "sort_desc" } else { "sort_asc" }, self.col_name)
-    }
+    fn to_str(&self) -> String { format!("{} {}", if self.descending { "sort_desc" } else { "sort_asc" }, self.col_name) }
 }
 
-/// Rename column command
-pub struct RenameCol {
-    pub old_name: String,
-    pub new_name: String,
-}
+/// Rename column
+pub struct RenameCol { pub old_name: String, pub new_name: String }
 
 impl Command for RenameCol {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
-        let view = app.req_mut()?;
-
-        // Check if old column exists
-        let found = view.dataframe.get_column_names()
-            .iter()
-            .any(|c| c.as_str() == self.old_name.as_str());
-        if !found {
-            return Err(anyhow!("Column '{}' not found", self.old_name));
-        }
-
-        // Rename the column
-        view.dataframe.rename(&self.old_name, self.new_name.as_str().into())?;
-
+        app.req_mut()?.dataframe.rename(&self.old_name, self.new_name.as_str().into())?;
         Ok(())
     }
-
     fn to_str(&self) -> String { format!("rename {} {}", self.old_name, self.new_name) }
 }
 
-/// Delete all-null columns command
+/// Delete all-null columns
 pub struct DelNull;
 
 impl Command for DelNull {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
-        let view = app.req_mut()?;
-        let null_cols: Vec<String> = view.dataframe.get_columns()
-            .iter()
-            .filter(|col| col.as_materialized_series().null_count() == view.dataframe.height())
-            .map(|col| col.name().to_string())
-            .collect();
-
-        if null_cols.is_empty() { return Ok(()); }
-
-        for col_name in null_cols {
-            let _ = view.dataframe.drop_in_place(&col_name);
+        let v = app.req_mut()?;
+        let h = v.dataframe.height();
+        // Keep cols where null_count < height (i.e., not all null)
+        let keep: Vec<String> = v.dataframe.get_columns().iter()
+            .filter(|c| c.as_materialized_series().null_count() < h)
+            .map(|c| c.name().to_string()).collect();
+        if keep.len() < v.cols() {
+            v.dataframe = v.dataframe.select(&keep)?;
+            if v.state.cc >= v.cols() && v.cols() > 0 { v.state.cc = v.cols() - 1; }
         }
-
-        // Adjust cursor if needed
-        let n = view.cols();
-        if n > 0 && view.state.cc >= n { view.state.cc = n - 1; }
         Ok(())
     }
-
     fn to_str(&self) -> String { "delnull".into() }
 }
 
@@ -300,33 +141,23 @@ pub struct DelSingle;
 
 impl Command for DelSingle {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
-        let view = app.req_mut()?;
-
-        let single_cols: Vec<String> = view.dataframe.get_columns()
-            .iter()
-            .filter(|col| {
-                let series = col.as_materialized_series();
-                if let Ok(n_unique) = series.n_unique() {
-                    let null_count = series.null_count();
-                    if null_count > 0 && null_count < series.len() { n_unique <= 2 }
-                    else { n_unique == 1 }
-                } else { false }
+        let v = app.req_mut()?;
+        // Keep cols with >1 unique value (accounting for nulls)
+        let keep: Vec<String> = v.dataframe.get_columns().iter()
+            .filter(|c| {
+                let s = c.as_materialized_series();
+                s.n_unique().map(|u| {
+                    let nc = s.null_count();
+                    if nc > 0 && nc < s.len() { u > 2 } else { u > 1 }
+                }).unwrap_or(true)
             })
-            .map(|col| col.name().to_string())
-            .collect();
-
-        if single_cols.is_empty() { return Ok(()); }
-
-        for col_name in single_cols {
-            let _ = view.dataframe.drop_in_place(&col_name);
+            .map(|c| c.name().to_string()).collect();
+        if keep.len() < v.cols() {
+            v.dataframe = v.dataframe.select(&keep)?;
+            if v.state.cc >= v.cols() && v.cols() > 0 { v.state.cc = v.cols() - 1; }
         }
-
-        // Adjust cursor if needed
-        let n = view.cols();
-        if n > 0 && view.state.cc >= n { view.state.cc = n - 1; }
         Ok(())
     }
-
     fn to_str(&self) -> String { "del1".into() }
 }
 
@@ -334,52 +165,39 @@ impl Command for DelSingle {
 mod tests {
     use super::*;
 
-    fn make_string_df() -> DataFrame {
-        df! {
-            "name" => &["apple", "banana", "cherry", "pineapple", "grape", "blueberry"]
-        }.unwrap()
+    fn make_df() -> DataFrame {
+        df! { "name" => &["apple", "banana", "cherry", "pineapple", "grape", "blueberry"] }.unwrap()
     }
 
     #[test]
-    fn test_string_filter_exact_match() {
-        let df = make_string_df();
-        let filter = Filter { expression: "name==apple".to_string() };
-        let col = df.column("name").unwrap();
-        let mask = filter.create_string_mask(col.as_materialized_series(), "apple").unwrap();
-        let result = df.filter(&mask).unwrap();
-        assert_eq!(result.height(), 1);
+    fn test_str_exact() {
+        let df = make_df();
+        let f = Filter { expression: "name==apple".into() };
+        let m = f.str_mask(df.column("name").unwrap().str().unwrap(), "==", "apple").unwrap();
+        assert_eq!(df.filter(&m).unwrap().height(), 1);
     }
 
     #[test]
-    fn test_string_filter_contains() {
-        let df = make_string_df();
-        let filter = Filter { expression: "name==*apple*".to_string() };
-        let col = df.column("name").unwrap();
-        let mask = filter.create_string_mask(col.as_materialized_series(), "*apple*").unwrap();
-        let result = df.filter(&mask).unwrap();
-        // "apple" and "pineapple" both contain "apple"
-        assert_eq!(result.height(), 2);
+    fn test_str_contains() {
+        let df = make_df();
+        let f = Filter { expression: "name==*apple*".into() };
+        let m = f.str_mask(df.column("name").unwrap().str().unwrap(), "==", "*apple*").unwrap();
+        assert_eq!(df.filter(&m).unwrap().height(), 2);  // apple, pineapple
     }
 
     #[test]
-    fn test_string_filter_ends_with() {
-        let df = make_string_df();
-        let filter = Filter { expression: "name==*rry".to_string() };
-        let col = df.column("name").unwrap();
-        let mask = filter.create_string_mask(col.as_materialized_series(), "*rry").unwrap();
-        let result = df.filter(&mask).unwrap();
-        // "cherry", "blueberry" end with "rry"
-        assert_eq!(result.height(), 2);
+    fn test_str_ends() {
+        let df = make_df();
+        let f = Filter { expression: "name==*rry".into() };
+        let m = f.str_mask(df.column("name").unwrap().str().unwrap(), "==", "*rry").unwrap();
+        assert_eq!(df.filter(&m).unwrap().height(), 2);  // cherry, blueberry
     }
 
     #[test]
-    fn test_string_filter_starts_with() {
-        let df = make_string_df();
-        let filter = Filter { expression: "name==b*".to_string() };
-        let col = df.column("name").unwrap();
-        let mask = filter.create_string_mask(col.as_materialized_series(), "b*").unwrap();
-        let result = df.filter(&mask).unwrap();
-        // "banana", "blueberry" start with "b"
-        assert_eq!(result.height(), 2);
+    fn test_str_starts() {
+        let df = make_df();
+        let f = Filter { expression: "name==b*".into() };
+        let m = f.str_mask(df.column("name").unwrap().str().unwrap(), "==", "b*").unwrap();
+        assert_eq!(df.filter(&m).unwrap().height(), 2);  // banana, blueberry
     }
 }
