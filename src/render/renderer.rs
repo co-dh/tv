@@ -83,24 +83,19 @@ impl Renderer {
         xs.push(0);
         for col_idx in 0..df.width() {
             let col_width = state.col_widths.get(col_idx).copied().unwrap_or(10) as i32;
-            let last = *xs.last().unwrap();
-            xs.push(last + col_width + 1); // +1 for space between columns
+            xs.push(*xs.last().unwrap() + col_width + 1);
         }
 
         // If cursor column right edge exceeds screen width, shift left
-        let cursor_right = xs.get(state.cc + 1).copied().unwrap_or(0);
-        if cursor_right > screen_width {
-            // Find shift: first column whose position > (cursor_right - screen_width)
-            let threshold = cursor_right - screen_width;
-            let shift = xs.iter().find(|&&x| x > threshold).copied().unwrap_or(0);
+        if let Some(cursor_right) = xs.get(state.cc + 1).copied().filter(|&r| r > screen_width) {
+            let shift = xs.iter().find(|&&x| x > cursor_right - screen_width).copied().unwrap_or(0);
             for x in xs.iter_mut() {
                 *x -= shift;
             }
         }
 
         // Calculate visible area
-        let visible_rows = (rows as usize).saturating_sub(2);
-        let end_row = (state.r0 + visible_rows).min(df.height());
+        let end_row = (state.r0 + (rows as usize).saturating_sub(2)).min(df.height());
 
         // Render column headers
         Self::render_headers_xs(df, state, &xs, screen_width, row_num_width, selected_cols, writer)?;
@@ -114,8 +109,7 @@ impl Renderer {
         }
 
         // Clear empty rows between data and status bar
-        let first_empty_row = (end_row - state.r0 + 1) as u16;
-        for screen_row in first_empty_row..(rows - 1) {
+        for screen_row in ((end_row - state.r0 + 1) as u16)..(rows - 1) {
             execute!(
                 writer,
                 cursor::MoveTo(0, screen_row),
@@ -137,8 +131,7 @@ impl Renderer {
 
         // Render row number header (if showing row numbers)
         if row_num_width > 0 {
-            let header = format!("{:>width$} ", "#", width = row_num_width as usize);
-            execute!(writer, Print(&header))?;
+            execute!(writer, Print(format!("{:>width$} ", "#", width = row_num_width as usize)))?;
         }
 
         for (col_idx, col_name) in df.get_column_names().iter().enumerate() {
@@ -201,8 +194,7 @@ impl Renderer {
             } else if is_selected_row {
                 execute!(writer, SetForegroundColor(Color::Magenta))?;
             }
-            let row_num = format!("{:>width$} ", row_idx, width = row_num_width as usize);
-            execute!(writer, Print(&row_num))?;
+            execute!(writer, Print(format!("{:>width$} ", row_idx, width = row_num_width as usize)))?;
             if is_current_row || is_selected_row {
                 execute!(writer, ResetColor)?;
             }
@@ -325,13 +317,10 @@ impl Renderer {
         const MAX_WIDTH: usize = 30;
         const MIN_WIDTH: usize = 3;
 
-        let col_name = &df.get_column_names()[col_idx];
-        let mut max_width = col_name.len();
+        let mut max_width = df.get_column_names()[col_idx].len();
 
         // Sample 2-3 pages around current row for performance
-        let page_size = state.viewport.0.saturating_sub(2) as usize;
-        let sample_size = (page_size * 3).max(100); // At least 100 rows
-
+        let sample_size = ((state.viewport.0.saturating_sub(2) as usize) * 3).max(100);
         let start_row = state.cr.saturating_sub(sample_size / 2);
         let end_row = (start_row + sample_size).min(df.height());
 
@@ -351,9 +340,8 @@ impl Renderer {
 
     /// Format number with commas (e.g., 1000000 -> "1,000,000")
     fn commify(n: usize) -> String {
-        let s = n.to_string();
         let mut result = String::new();
-        for (i, c) in s.chars().rev().enumerate() {
+        for (i, c) in n.to_string().chars().rev().enumerate() {
             if i > 0 && i % 3 == 0 {
                 result.push(',');
             }
@@ -372,8 +360,7 @@ impl Renderer {
 
         // Count nulls (including empty strings for String type)
         let null_count = if col.dtype() == &DataType::String {
-            let str_col = col.str().unwrap();
-            str_col.into_iter()
+            col.str().unwrap().into_iter()
                 .filter(|v| v.is_none() || v.map(|s| s.is_empty()).unwrap_or(false))
                 .count()
         } else {
