@@ -7,6 +7,8 @@ pub struct TableState {
     pub r0: usize,
     /// Current row cursor
     pub cr: usize,
+    /// First visible column (viewport left)
+    pub c0: usize,
     /// Current column cursor
     pub cc: usize,
     /// Terminal dimensions (rows, cols)
@@ -18,6 +20,7 @@ impl TableState {
         Self {
             r0: 0,
             cr: 0,
+            c0: 0,
             cc: 0,
             viewport: (0, 0),
         }
@@ -60,11 +63,22 @@ impl TableState {
             return;
         }
         self.cc = (self.cc + n).min(max_cols - 1);
+
+        // Adjust horizontal viewport - simple approach: show columns starting from current if needed
+        // The renderer will need to calculate actual visible columns
+        if self.cc >= self.c0 + 5 {
+            self.c0 = self.cc.saturating_sub(4);
+        }
     }
 
     /// Move cursor left by n columns
     pub fn move_left(&mut self, n: usize) {
         self.cc = self.cc.saturating_sub(n);
+
+        // Adjust horizontal viewport to show current column
+        if self.cc < self.c0 {
+            self.c0 = self.cc;
+        }
     }
 
     /// Jump to top of table

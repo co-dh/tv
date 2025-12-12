@@ -72,7 +72,7 @@ impl Renderer {
         execute!(io::stdout(), cursor::MoveTo(0, 0))?;
 
         let mut col_offset = 0u16;
-        for (col_idx, col_name) in df.get_column_names().iter().enumerate() {
+        for (col_idx, col_name) in df.get_column_names().iter().enumerate().skip(state.c0) {
             if col_offset >= term_cols {
                 break;
             }
@@ -107,7 +107,7 @@ impl Renderer {
     fn render_row(df: &DataFrame, row_idx: usize, state: &TableState, term_cols: u16) -> Result<()> {
         let mut col_offset = 0u16;
 
-        for (col_idx, _col) in df.get_columns().iter().enumerate() {
+        for (col_idx, _col) in df.get_columns().iter().enumerate().skip(state.c0) {
             if col_offset >= term_cols {
                 break;
             }
