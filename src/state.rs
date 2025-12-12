@@ -1,253 +1,118 @@
 use polars::prelude::*;
 use std::collections::HashSet;
 
-/// Display cursor and viewport state for a table view
+/// Table cursor/viewport state
 #[derive(Clone, Debug)]
 pub struct TableState {
-    /// First visible row (viewport top)
-    pub r0: usize,
-    /// Current row cursor
-    pub cr: usize,
-    /// Current column cursor
-    pub cc: usize,
-    /// Terminal dimensions (rows, cols)
-    pub viewport: (u16, u16),
-    /// Cached column widths
-    pub col_widths: Vec<u16>,
-    /// Row position where widths were calculated
-    pub widths_calc_row: usize,
+    pub r0: usize,              // first visible row
+    pub cr: usize,              // cursor row
+    pub cc: usize,              // cursor col
+    pub viewport: (u16, u16),   // (rows, cols)
+    pub col_widths: Vec<u16>,   // cached widths
+    pub widths_row: usize,      // row where widths calc'd
 }
 
 impl TableState {
     pub fn new() -> Self {
-        Self {
-            r0: 0,
-            cr: 0,
-            cc: 0,
-            viewport: (0, 0),
-            col_widths: Vec::new(),
-            widths_calc_row: 0,
-        }
+        Self { r0: 0, cr: 0, cc: 0, viewport: (0, 0), col_widths: Vec::new(), widths_row: 0 }
     }
 
-    /// Check if column widths need recalculation
-    pub fn needs_width_recalc(&self) -> bool {
-        let page_size = self.viewport.0.saturating_sub(2) as usize;
-        // Recalculate if we've moved more than 1 page from where we last calculated
-        self.col_widths.is_empty() || self.cr.abs_diff(self.widths_calc_row) > page_size
+    /// Need width recalc if moved >1 page
+    pub fn need_widths(&self) -> bool {
+        self.col_widths.is_empty() || self.cr.abs_diff(self.widths_row) > self.viewport.0.saturating_sub(2) as usize
     }
 
-    /// Get the current column name from the DataFrame
-    pub fn current_column(&self, df: &DataFrame) -> Option<String> {
-        df.get_column_names()
-            .get(self.cc)
-            .map(|s| s.to_string())
+    pub fn cur_col(&self, df: &DataFrame) -> Option<String> {
+        df.get_column_names().get(self.cc).map(|s| s.to_string())
     }
 
-    /// Move cursor down by n rows, adjusting viewport if needed
-    pub fn move_down(&mut self, n: usize, max_rows: usize) {
-        if max_rows == 0 {
-            return;
-        }
-        self.cr = (self.cr + n).min(max_rows - 1);
-
-        // Adjust viewport if cursor goes below visible area
-        let visible_rows = (self.viewport.0 as usize).saturating_sub(2); // -2 for status bar
-        if self.cr >= self.r0 + visible_rows {
-            self.r0 = self.cr.saturating_sub(visible_rows - 1);
-        }
+    pub fn down(&mut self, n: usize, max: usize) {
+        if max == 0 { return; }
+        self.cr = (self.cr + n).min(max - 1);
+        let vis = (self.viewport.0 as usize).saturating_sub(2);
+        if self.cr >= self.r0 + vis { self.r0 = self.cr.saturating_sub(vis - 1); }
     }
 
-    /// Move cursor up by n rows, adjusting viewport if needed
-    pub fn move_up(&mut self, n: usize) {
+    pub fn up(&mut self, n: usize) {
         self.cr = self.cr.saturating_sub(n);
-
-        // Adjust viewport if cursor goes above visible area
-        if self.cr < self.r0 {
-            self.r0 = self.cr;
-        }
+        if self.cr < self.r0 { self.r0 = self.cr; }
     }
 
-    /// Move cursor right by n columns (just update cc, renderer handles visibility)
-    pub fn move_right(&mut self, n: usize, max_cols: usize) {
-        if max_cols == 0 {
-            return;
-        }
-        self.cc = (self.cc + n).min(max_cols - 1);
+    pub fn right(&mut self, n: usize, max: usize) {
+        if max > 0 { self.cc = (self.cc + n).min(max - 1); }
     }
 
-    /// Move cursor left by n columns (just update cc, renderer handles visibility)
-    pub fn move_left(&mut self, n: usize) {
-        self.cc = self.cc.saturating_sub(n);
+    pub fn left(&mut self, n: usize) { self.cc = self.cc.saturating_sub(n); }
+    pub fn top(&mut self) { self.cr = 0; self.r0 = 0; }
+
+    pub fn bot(&mut self, max: usize) {
+        if max == 0 { return; }
+        self.cr = max - 1;
+        self.r0 = self.cr.saturating_sub((self.viewport.0 as usize).saturating_sub(3));
     }
 
-    /// Jump to top of table
-    pub fn goto_top(&mut self) {
-        self.cr = 0;
-        self.r0 = 0;
-    }
-
-    /// Jump to bottom of table
-    pub fn goto_bottom(&mut self, max_rows: usize) {
-        if max_rows == 0 {
-            return;
-        }
-        self.cr = max_rows - 1;
-        let visible_rows = (self.viewport.0 as usize).saturating_sub(2);
-        self.r0 = self.cr.saturating_sub(visible_rows.saturating_sub(1));
-    }
-
-    /// Ensure cursor is visible in viewport
-    pub fn ensure_visible(&mut self) {
-        let visible_rows = (self.viewport.0 as usize).saturating_sub(2);
-        if self.cr < self.r0 {
-            self.r0 = self.cr;
-        } else if self.cr >= self.r0 + visible_rows {
-            self.r0 = self.cr.saturating_sub(visible_rows.saturating_sub(1));
-        }
+    pub fn visible(&mut self) {
+        let vis = (self.viewport.0 as usize).saturating_sub(2);
+        if self.cr < self.r0 { self.r0 = self.cr; }
+        else if self.cr >= self.r0 + vis { self.r0 = self.cr.saturating_sub(vis.saturating_sub(1)); }
     }
 }
 
-/// Complete table view with history
+/// View state
 #[derive(Clone)]
 pub struct ViewState {
-    /// Unique numeric ID for this view
     pub id: usize,
-    /// View identifier (e.g., "main", "freq:col_name")
     pub name: String,
-    /// Table data
     pub dataframe: DataFrame,
-    /// Display state
     pub state: TableState,
-    /// Command history for this view
     pub history: Vec<String>,
-    /// Source filename if applicable
     pub filename: Option<String>,
-    /// Whether to show row numbers
     pub show_row_numbers: bool,
-    /// Parent view ID (for frequency tables)
-    pub parent_id: Option<usize>,
-    /// Column name used for frequency (for filtering parent)
-    pub freq_col: Option<String>,
-    /// Selected column indices
+    pub parent_id: Option<usize>,   // for freq tables
+    pub freq_col: Option<String>,   // freq column name
     pub selected_cols: HashSet<usize>,
-    /// Selected row indices
     pub selected_rows: HashSet<usize>,
 }
 
 impl ViewState {
-    pub fn new(id: usize, name: String, dataframe: DataFrame, filename: Option<String>) -> Self {
+    pub fn new(id: usize, name: String, df: DataFrame, filename: Option<String>) -> Self {
         Self {
-            id,
-            name,
-            dataframe,
-            state: TableState::new(),
-            history: Vec::new(),
-            filename,
-            show_row_numbers: false,
-            parent_id: None,
-            freq_col: None,
-            selected_cols: HashSet::new(),
-            selected_rows: HashSet::new(),
+            id, name, dataframe: df, state: TableState::new(), history: Vec::new(),
+            filename, show_row_numbers: false, parent_id: None, freq_col: None,
+            selected_cols: HashSet::new(), selected_rows: HashSet::new(),
         }
     }
 
-    pub fn new_frequency(id: usize, name: String, dataframe: DataFrame, parent_id: usize, freq_col: String) -> Self {
+    pub fn new_freq(id: usize, name: String, df: DataFrame, pid: usize, col: String) -> Self {
         Self {
-            id,
-            name,
-            dataframe,
-            state: TableState::new(),
-            history: Vec::new(),
-            filename: None,
-            show_row_numbers: false,
-            parent_id: Some(parent_id),
-            freq_col: Some(freq_col),
-            selected_cols: HashSet::new(),
-            selected_rows: HashSet::new(),
+            id, name, dataframe: df, state: TableState::new(), history: Vec::new(),
+            filename: None, show_row_numbers: false, parent_id: Some(pid), freq_col: Some(col),
+            selected_cols: HashSet::new(), selected_rows: HashSet::new(),
         }
     }
 
-    /// Add a command to history
-    pub fn add_to_history(&mut self, cmd: String) {
-        self.history.push(cmd);
-    }
-
-    /// Get number of rows
-    pub fn row_count(&self) -> usize {
-        self.dataframe.height()
-    }
-
-    /// Get number of columns
-    pub fn col_count(&self) -> usize {
-        self.dataframe.width()
-    }
+    pub fn add_hist(&mut self, cmd: String) { self.history.push(cmd); }
+    pub fn rows(&self) -> usize { self.dataframe.height() }
+    pub fn cols(&self) -> usize { self.dataframe.width() }
 }
 
-/// Stack of table views for navigation
-pub struct StateStack {
-    stack: Vec<ViewState>,
-}
+/// View stack
+pub struct StateStack { stack: Vec<ViewState> }
 
 impl StateStack {
-    pub fn new() -> Self {
-        Self { stack: Vec::new() }
-    }
+    pub fn new() -> Self { Self { stack: Vec::new() } }
+    pub fn init(v: ViewState) -> Self { Self { stack: vec![v] } }
+    pub fn push(&mut self, v: ViewState) { self.stack.push(v); }
+    pub fn pop(&mut self) -> Option<ViewState> { if self.stack.len() > 1 { self.stack.pop() } else { None } }
+    pub fn cur(&self) -> Option<&ViewState> { self.stack.last() }
+    pub fn cur_mut(&mut self) -> Option<&mut ViewState> { self.stack.last_mut() }
+    pub fn len(&self) -> usize { self.stack.len() }
+    pub fn has_view(&self) -> bool { !self.stack.is_empty() }
+    pub fn find(&self, id: usize) -> Option<&ViewState> { self.stack.iter().find(|v| v.id == id) }
+    pub fn find_mut(&mut self, id: usize) -> Option<&mut ViewState> { self.stack.iter_mut().find(|v| v.id == id) }
 
-    /// Create with an initial view
-    pub fn with_initial(view: ViewState) -> Self {
-        Self { stack: vec![view] }
-    }
-
-    /// Push a new view onto the stack
-    pub fn push(&mut self, view: ViewState) {
-        self.stack.push(view);
-    }
-
-    /// Pop the top view (returns None if only one view remains)
-    pub fn pop(&mut self) -> Option<ViewState> {
-        if self.stack.len() > 1 {
-            self.stack.pop()
-        } else {
-            None
-        }
-    }
-
-    /// Get reference to current view
-    pub fn current(&self) -> Option<&ViewState> {
-        self.stack.last()
-    }
-
-    /// Get mutable reference to current view
-    pub fn current_mut(&mut self) -> Option<&mut ViewState> {
-        self.stack.last_mut()
-    }
-
-    /// Get stack size
-    pub fn len(&self) -> usize {
-        self.stack.len()
-    }
-
-    /// Check if we have a current view
-    pub fn has_view(&self) -> bool {
-        !self.stack.is_empty()
-    }
-
-    /// Find a view by ID
-    pub fn find_by_id(&self, id: usize) -> Option<&ViewState> {
-        self.stack.iter().find(|v| v.id == id)
-    }
-
-    /// Find a view by ID (mutable)
-    pub fn find_by_id_mut(&mut self, id: usize) -> Option<&mut ViewState> {
-        self.stack.iter_mut().find(|v| v.id == id)
-    }
-
-    /// Swap top two views on stack
-    pub fn swap_top(&mut self) {
-        let len = self.stack.len();
-        if len >= 2 {
-            self.stack.swap(len - 1, len - 2);
-        }
+    pub fn swap(&mut self) {
+        let n = self.stack.len();
+        if n >= 2 { self.stack.swap(n - 1, n - 2); }
     }
 }

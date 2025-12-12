@@ -4,144 +4,81 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::PathBuf;
 
-/// Search state for n/N navigation
+/// Search state for n/N
 #[derive(Clone, Default)]
 pub struct SearchState {
-    /// Column name being searched
-    pub col_name: Option<String>,
-    /// Search value
-    pub value: Option<String>,
-    /// Regex pattern for regex search
-    pub regex: Option<String>,
+    pub col_name: Option<String>,  // column being searched
+    pub value: Option<String>,     // search value
+    pub regex: Option<String>,     // regex pattern
 }
 
-/// Application context holding all state
+/// App context
 pub struct AppContext {
-    /// Stack of table views
-    pub stack: StateStack,
-    /// Path to command history file
-    pub history_file: PathBuf,
-    /// Message to display in status bar
-    pub message: String,
-    /// Counter for generating view IDs
-    next_view_id: usize,
-    /// Current search state for n/N
-    pub search: SearchState,
-    /// Bookmarked row indices for current view
-    pub bookmarks: Vec<usize>,
-    /// Show info box (toggle with I)
-    pub show_info: bool,
+    pub stack: StateStack,         // view stack
+    pub history_file: PathBuf,     // cmd history file
+    pub message: String,           // status bar msg
+    next_id: usize,                // view id counter
+    pub search: SearchState,       // search state
+    pub bookmarks: Vec<usize>,     // bookmarked rows
+    pub show_info: bool,           // toggle info box
 }
 
 impl AppContext {
-    /// Create new app context with empty state
     pub fn new() -> Self {
         Self {
             stack: StateStack::new(),
             history_file: PathBuf::from("commands.txt"),
-            message: String::from("Press L to load a file, q to quit"),
-            next_view_id: 0,
+            message: "Press L to load a file, q to quit".into(),
+            next_id: 0,
             search: SearchState::default(),
             bookmarks: Vec::new(),
             show_info: true,
         }
     }
 
-    /// Get next view ID
-    pub fn next_id(&mut self) -> usize {
-        let id = self.next_view_id;
-        self.next_view_id += 1;
-        id
-    }
+    pub fn next_id(&mut self) -> usize { let i = self.next_id; self.next_id += 1; i }
+    pub fn has_view(&self) -> bool { self.stack.has_view() }
+    pub fn view(&self) -> Option<&ViewState> { self.stack.cur() }
+    pub fn view_mut(&mut self) -> Option<&mut ViewState> { self.stack.cur_mut() }
+    pub fn req(&self) -> Result<&ViewState> { self.view().ok_or_else(|| anyhow!("No table loaded")) }
+    pub fn req_mut(&mut self) -> Result<&mut ViewState> { self.view_mut().ok_or_else(|| anyhow!("No table loaded")) }
 
-    /// Check if we have a current view
-    pub fn has_view(&self) -> bool {
-        self.stack.has_view()
-    }
-
-    /// Get current view
-    pub fn current_view(&self) -> Option<&ViewState> {
-        self.stack.current()
-    }
-
-    /// Get mutable reference to current view
-    pub fn current_view_mut(&mut self) -> Option<&mut ViewState> {
-        self.stack.current_mut()
-    }
-
-    /// Get current view or error if none
-    pub fn require_view(&self) -> Result<&ViewState> {
-        self.current_view().ok_or_else(|| anyhow!("No table loaded"))
-    }
-
-    /// Get mutable current view or error if none
-    pub fn require_view_mut(&mut self) -> Result<&mut ViewState> {
-        self.current_view_mut().ok_or_else(|| anyhow!("No table loaded"))
-    }
-
-    /// Record a command to history file
-    pub fn record_command(&mut self, cmd: &str) -> Result<()> {
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.history_file)?;
-
-        writeln!(file, "{}", cmd)?;
+    pub fn record(&mut self, cmd: &str) -> Result<()> {
+        writeln!(OpenOptions::new().create(true).append(true).open(&self.history_file)?, "{}", cmd)?;
         Ok(())
     }
 
-    /// Set status message
-    pub fn set_message(&mut self, msg: String) {
-        self.message = msg;
+    pub fn msg(&mut self, s: String) { self.message = s; }
+    pub fn err(&mut self, e: impl std::fmt::Display) { self.message = format!("Error: {}", e); }
+    pub fn no_table(&mut self) { self.message = "No table loaded".into(); }
+
+    pub fn viewport(&mut self, rows: u16, cols: u16) {
+        if let Some(v) = self.stack.cur_mut() { v.state.viewport = (rows, cols); }
     }
 
-    /// Set error message
-    pub fn set_error(&mut self, e: impl std::fmt::Display) {
-        self.message = format!("Error: {}", e);
-    }
-
-    /// Set no table loaded message
-    pub fn no_table(&mut self) {
-        self.message = "No table loaded".to_string();
-    }
-
-    /// Update viewport size for current view
-    pub fn update_viewport(&mut self, rows: u16, cols: u16) {
-        if let Some(view) = self.stack.current_mut() {
-            view.state.viewport = (rows, cols);
-        }
-    }
-
-    /// Navigate rows: positive = down, negative = up
-    /// isize::MIN = top, isize::MAX = bottom
-    pub fn nav_row(&mut self, delta: isize) {
-        if let Some(view) = self.current_view_mut() {
-            let max_rows = view.row_count();
-            match delta {
-                isize::MIN => view.state.goto_top(),
-                isize::MAX => view.state.goto_bottom(max_rows),
-                d if d < 0 => view.state.move_up((-d) as usize),
-                d => view.state.move_down(d as usize, max_rows),
+    /// Navigate rows: +down, -up, MIN=top, MAX=bot
+    pub fn nav_row(&mut self, d: isize) {
+        if let Some(v) = self.view_mut() {
+            let n = v.rows();
+            match d {
+                isize::MIN => v.state.top(),
+                isize::MAX => v.state.bot(n),
+                _ if d < 0 => v.state.up((-d) as usize),
+                _ => v.state.down(d as usize, n),
             }
         }
     }
 
-    /// Navigate columns: positive = right, negative = left
-    pub fn nav_col(&mut self, delta: isize) {
-        if let Some(view) = self.current_view_mut() {
-            let max_cols = view.col_count();
-            if delta < 0 {
-                view.state.move_left((-delta) as usize);
-            } else {
-                view.state.move_right(delta as usize, max_cols);
-            }
+    /// Navigate cols: +right, -left
+    pub fn nav_col(&mut self, d: isize) {
+        if let Some(v) = self.view_mut() {
+            let n = v.cols();
+            if d < 0 { v.state.left((-d) as usize); }
+            else { v.state.right(d as usize, n); }
         }
     }
 
-    /// Get page size for navigation
-    pub fn page_size(&self) -> isize {
-        self.current_view()
-            .map(|v| (v.state.viewport.0 as isize).saturating_sub(2))
-            .unwrap_or(10)
+    pub fn page(&self) -> isize {
+        self.view().map(|v| (v.state.viewport.0 as isize).saturating_sub(2)).unwrap_or(10)
     }
 }

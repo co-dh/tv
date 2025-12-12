@@ -25,7 +25,7 @@ impl Renderer {
         // Use buffered writer to reduce flickering
         let mut stdout = BufWriter::new(io::stdout());
 
-        if let Some(view) = app.current_view_mut() {
+        if let Some(view) = app.view_mut() {
             // Get selection from view (clone to avoid borrow issues)
             let selected_cols = view.selected_cols.clone();
             let selected_rows = view.selected_rows.clone();
@@ -49,14 +49,14 @@ impl Renderer {
         let is_correlation = view.name == "correlation";
 
         // Calculate column widths if needed
-        if view.state.needs_width_recalc() {
+        if view.state.need_widths() {
             // Calculate base widths for all columns
             let widths: Vec<u16> = (0..df.width())
                 .map(|col_idx| Self::calculate_column_width(df, col_idx, &view.state))
                 .collect();
 
             view.state.col_widths = widths;
-            view.state.widths_calc_row = view.state.cr;
+            view.state.widths_row = view.state.cr;
         }
 
         let state = &view.state;
@@ -503,7 +503,7 @@ impl Renderer {
         execute!(writer, cursor::MoveTo(0, status_row))?;
 
         // Format total with commas
-        let total = view.row_count();
+        let total = view.rows();
         let total_str = Self::commify(total);
 
         // Left side: message or filename (for special views like Freq:*, show the name)
@@ -516,7 +516,7 @@ impl Renderer {
         };
 
         // Column statistics (for right side)
-        let col_stats = if view.col_count() > 0 {
+        let col_stats = if view.cols() > 0 {
             Self::column_stats(&view.dataframe, view.state.cc)
         } else {
             String::new()

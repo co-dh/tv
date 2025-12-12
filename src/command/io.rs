@@ -11,7 +11,7 @@ pub struct Load {
 }
 
 impl Command for Load {
-    fn execute(&mut self, app: &mut AppContext) -> Result<()> {
+    fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         let path = Path::new(&self.file_path);
 
         if !path.exists() {
@@ -34,36 +34,26 @@ impl Command for Load {
             return Err(anyhow!("File is empty"));
         }
 
-        // Create new view with the loaded data
-        let id = app.next_id();
-        let view = ViewState::new(
-            id,
+        // Replace the current stack with new view
+        app.stack = crate::state::StateStack::init(ViewState::new(
+            app.next_id(),
             self.file_path.clone(),
             df,
             Some(self.file_path.clone()),
-        );
+        ));
 
-        // Replace the current stack with new view
-        app.stack = crate::state::StateStack::with_initial(view);
-
-        app.set_message(format!(
+        app.msg(format!(
             "Loaded {} ({} rows, {} cols)",
             self.file_path,
-            app.current_view().unwrap().row_count(),
-            app.current_view().unwrap().col_count()
+            app.view().unwrap().rows(),
+            app.view().unwrap().cols()
         ));
 
         Ok(())
     }
 
-    fn to_command_string(&self) -> String {
-        format!("load {}", self.file_path)
-    }
-
-    fn should_record(&self) -> bool {
-        // Don't record load commands in history
-        false
-    }
+    fn to_str(&self) -> String { format!("load {}", self.file_path) }
+    fn record(&self) -> bool { false }  // don't record load in history
 }
 
 impl Load {
@@ -77,8 +67,7 @@ impl Load {
     }
 
     fn load_parquet(&self, path: &Path) -> Result<DataFrame> {
-        let file = std::fs::File::open(path)?;
-        ParquetReader::new(file)
+        ParquetReader::new(std::fs::File::open(path)?)
             .finish()
             .map_err(|e| anyhow!("Failed to read Parquet: {}", e))
     }
@@ -90,8 +79,8 @@ pub struct Save {
 }
 
 impl Command for Save {
-    fn execute(&mut self, app: &mut AppContext) -> Result<()> {
-        let view = app.require_view()?;
+    fn exec(&mut self, app: &mut AppContext) -> Result<()> {
+        let view = app.req()?;
 
         let path = Path::new(&self.file_path);
 
@@ -104,27 +93,23 @@ impl Command for Save {
             }
         }
 
-        app.set_message(format!("Saved to {}", self.file_path));
+        app.msg(format!("Saved to {}", self.file_path));
         Ok(())
     }
 
-    fn to_command_string(&self) -> String {
-        format!("save {}", self.file_path)
-    }
+    fn to_str(&self) -> String { format!("save {}", self.file_path) }
 }
 
 impl Save {
     fn save_parquet(&self, df: &DataFrame, path: &Path) -> Result<()> {
-        let file = std::fs::File::create(path)?;
-        ParquetWriter::new(file)
+        ParquetWriter::new(std::fs::File::create(path)?)
             .finish(&mut df.clone())
             .map_err(|e| anyhow!("Failed to write Parquet: {}", e))?;
         Ok(())
     }
 
     fn save_csv(&self, df: &DataFrame, path: &Path) -> Result<()> {
-        let mut file = std::fs::File::create(path)?;
-        CsvWriter::new(&mut file)
+        CsvWriter::new(&mut std::fs::File::create(path)?)
             .finish(&mut df.clone())
             .map_err(|e| anyhow!("Failed to write CSV: {}", e))?;
         Ok(())

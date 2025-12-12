@@ -9,8 +9,8 @@ pub struct DelCol {
 }
 
 impl Command for DelCol {
-    fn execute(&mut self, app: &mut AppContext) -> Result<()> {
-        let view = app.require_view_mut()?;
+    fn exec(&mut self, app: &mut AppContext) -> Result<()> {
+        let view = app.req_mut()?;
 
         // Check if column exists
         let found = view.dataframe.get_column_names()
@@ -24,18 +24,16 @@ impl Command for DelCol {
         view.dataframe = view.dataframe.drop(&self.col_name)?;
 
         // Adjust cursor if needed
-        let max_cols = view.col_count();
+        let max_cols = view.cols();
         if max_cols > 0 && view.state.cc >= max_cols {
             view.state.cc = max_cols - 1;
         }
 
-        app.set_message(format!("Deleted column '{}'", self.col_name));
+        app.msg(format!("Deleted column '{}'", self.col_name));
         Ok(())
     }
 
-    fn to_command_string(&self) -> String {
-        format!("delcol {}", self.col_name)
-    }
+    fn to_str(&self) -> String { format!("delcol {}", self.col_name) }
 }
 
 /// Filter rows command
@@ -44,11 +42,9 @@ pub struct Filter {
 }
 
 impl Command for Filter {
-    fn execute(&mut self, app: &mut AppContext) -> Result<()> {
-        let view = app.require_view()?;
-
+    fn exec(&mut self, app: &mut AppContext) -> Result<()> {
+        let view = app.req()?;
         let df = &view.dataframe;
-        let filename = view.filename.clone();
 
         // Parse the filter expression
         // For MVP, we support simple filters like "col>value", "col<value", "col==value"
@@ -104,25 +100,16 @@ impl Command for Filter {
 
         // Apply filter to create new dataframe
         let filtered_df = df.filter(&mask)?;
-        let row_count = filtered_df.height();
+        let filename = view.filename.clone();
 
         // Push new view onto stack
         let id = app.next_id();
-        let new_view = crate::state::ViewState::new(
-            id,
-            self.expression.clone(),
-            filtered_df,
-            filename,
-        );
-        app.stack.push(new_view);
-
-        app.set_message(format!("Filtered: {} ({} rows)", self.expression, row_count));
+        app.msg(format!("Filtered: {} ({} rows)", self.expression, filtered_df.height()));
+        app.stack.push(crate::state::ViewState::new(id, self.expression.clone(), filtered_df, filename));
         Ok(())
     }
 
-    fn to_command_string(&self) -> String {
-        format!("filter {}", self.expression)
-    }
+    fn to_str(&self) -> String { format!("filter {}", self.expression) }
 }
 
 impl Filter {
@@ -200,8 +187,8 @@ pub struct Select {
 }
 
 impl Command for Select {
-    fn execute(&mut self, app: &mut AppContext) -> Result<()> {
-        let view = app.require_view_mut()?;
+    fn exec(&mut self, app: &mut AppContext) -> Result<()> {
+        let view = app.req_mut()?;
 
         // Check if all columns exist
         let df_cols = view.dataframe.get_column_names();
@@ -213,19 +200,16 @@ impl Command for Select {
         }
 
         // Select columns
-        let col_refs: Vec<&str> = self.col_names.iter().map(|s| s.as_str()).collect();
-        view.dataframe = view.dataframe.select(col_refs)?;
+        view.dataframe = view.dataframe.select(self.col_names.iter().map(|s| s.as_str()).collect::<Vec<&str>>())?;
 
         // Reset cursor
         view.state.cc = 0;
 
-        app.set_message(format!("Selected {} columns", self.col_names.len()));
+        app.msg(format!("Selected {} columns", self.col_names.len()));
         Ok(())
     }
 
-    fn to_command_string(&self) -> String {
-        format!("sel {}", self.col_names.join(","))
-    }
+    fn to_str(&self) -> String { format!("sel {}", self.col_names.join(",")) }
 }
 
 /// Sort by column command
@@ -235,8 +219,8 @@ pub struct Sort {
 }
 
 impl Command for Sort {
-    fn execute(&mut self, app: &mut AppContext) -> Result<()> {
-        let view = app.require_view_mut()?;
+    fn exec(&mut self, app: &mut AppContext) -> Result<()> {
+        let view = app.req_mut()?;
 
         // Check if column exists
         let found = view.dataframe.get_column_names()
@@ -252,17 +236,12 @@ impl Command for Sort {
             SortMultipleOptions::default().with_order_descending(self.descending)
         )?;
 
-        let direction = if self.descending { "desc" } else { "asc" };
-        app.set_message(format!("Sorted by {} ({})", self.col_name, direction));
+        app.msg(format!("Sorted by {} ({})", self.col_name, if self.descending { "desc" } else { "asc" }));
         Ok(())
     }
 
-    fn to_command_string(&self) -> String {
-        if self.descending {
-            format!("sort_desc {}", self.col_name)
-        } else {
-            format!("sort_asc {}", self.col_name)
-        }
+    fn to_str(&self) -> String {
+        format!("{} {}", if self.descending { "sort_desc" } else { "sort_asc" }, self.col_name)
     }
 }
 
@@ -273,8 +252,8 @@ pub struct RenameCol {
 }
 
 impl Command for RenameCol {
-    fn execute(&mut self, app: &mut AppContext) -> Result<()> {
-        let view = app.require_view_mut()?;
+    fn exec(&mut self, app: &mut AppContext) -> Result<()> {
+        let view = app.req_mut()?;
 
         // Check if old column exists
         let found = view.dataframe.get_column_names()
@@ -287,31 +266,27 @@ impl Command for RenameCol {
         // Rename the column
         view.dataframe.rename(&self.old_name, self.new_name.as_str().into())?;
 
-        app.set_message(format!("Renamed '{}' to '{}'", self.old_name, self.new_name));
+        app.msg(format!("Renamed '{}' to '{}'", self.old_name, self.new_name));
         Ok(())
     }
 
-    fn to_command_string(&self) -> String {
-        format!("rename {} {}", self.old_name, self.new_name)
-    }
+    fn to_str(&self) -> String { format!("rename {} {}", self.old_name, self.new_name) }
 }
 
 /// Delete all-null columns command
 pub struct DelNull;
 
 impl Command for DelNull {
-    fn execute(&mut self, app: &mut AppContext) -> Result<()> {
-        let view = app.require_view_mut()?;
-
-        let total_rows = view.dataframe.height();
+    fn exec(&mut self, app: &mut AppContext) -> Result<()> {
+        let view = app.req_mut()?;
         let null_cols: Vec<String> = view.dataframe.get_columns()
             .iter()
-            .filter(|col| col.as_materialized_series().null_count() == total_rows)
+            .filter(|col| col.as_materialized_series().null_count() == view.dataframe.height())
             .map(|col| col.name().to_string())
             .collect();
 
         if null_cols.is_empty() {
-            app.set_message("No all-null columns found".to_string());
+            app.msg("No all-null columns found".to_string());
             return Ok(());
         }
 
@@ -321,26 +296,23 @@ impl Command for DelNull {
         }
 
         // Adjust cursor if needed
-        let max_cols = view.col_count();
+        let max_cols = view.cols();
         if max_cols > 0 && view.state.cc >= max_cols {
             view.state.cc = max_cols - 1;
         }
-
-        app.set_message(format!("Deleted {} all-null column(s)", count));
+        app.msg(format!("Deleted {} all-null column(s)", count));
         Ok(())
     }
 
-    fn to_command_string(&self) -> String {
-        String::from("delnull")
-    }
+    fn to_str(&self) -> String { "delnull".into() }
 }
 
-/// Delete single-value columns command
+/// Delete single-value columns
 pub struct DelSingle;
 
 impl Command for DelSingle {
-    fn execute(&mut self, app: &mut AppContext) -> Result<()> {
-        let view = app.require_view_mut()?;
+    fn exec(&mut self, app: &mut AppContext) -> Result<()> {
+        let view = app.req_mut()?;
 
         let single_cols: Vec<String> = view.dataframe.get_columns()
             .iter()
@@ -361,7 +333,7 @@ impl Command for DelSingle {
             .collect();
 
         if single_cols.is_empty() {
-            app.set_message("No single-value columns found".to_string());
+            app.msg("No single-value columns found".to_string());
             return Ok(());
         }
 
@@ -371,18 +343,15 @@ impl Command for DelSingle {
         }
 
         // Adjust cursor if needed
-        let max_cols = view.col_count();
+        let max_cols = view.cols();
         if max_cols > 0 && view.state.cc >= max_cols {
             view.state.cc = max_cols - 1;
         }
-
-        app.set_message(format!("Deleted {} single-value column(s)", count));
+        app.msg(format!("Deleted {} single-value column(s)", count));
         Ok(())
     }
 
-    fn to_command_string(&self) -> String {
-        String::from("del1")
-    }
+    fn to_str(&self) -> String { "del1".into() }
 }
 
 #[cfg(test)]

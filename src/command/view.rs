@@ -10,12 +10,12 @@ pub struct Frequency {
 }
 
 impl Command for Frequency {
-    fn execute(&mut self, app: &mut AppContext) -> Result<()> {
-        let current_view = app.require_view()?;
-        let parent_id = current_view.id;
+    fn exec(&mut self, app: &mut AppContext) -> Result<()> {
+        let view = app.req()?;
+        let parent_id = view.id;
 
         // Check if column exists
-        let found = current_view.dataframe.get_column_names()
+        let found = view.dataframe.get_column_names()
             .iter()
             .any(|c| c.as_str() == self.col_name.as_str());
         if !found {
@@ -23,7 +23,7 @@ impl Command for Frequency {
         }
 
         // Get the column and compute value counts (sorted descending)
-        let col = current_view.dataframe.column(&self.col_name)?;
+        let col = view.dataframe.column(&self.col_name)?;
         let series = col.as_materialized_series();
         let value_counts = series.value_counts(true, false, "Cnt".into(), false)?;
 
@@ -49,38 +49,30 @@ impl Command for Frequency {
         result.with_column(bar_series)?;
 
         // Create new view with frequency table
-        let view_name = format!("Freq:{}", self.col_name);
         let id = app.next_id();
-        let new_view = ViewState::new_frequency(
+        app.stack.push(ViewState::new_freq(
             id,
-            view_name,
+            format!("Freq:{}", self.col_name),
             result,
             parent_id,
             self.col_name.clone(),
-        );
-
-        app.stack.push(new_view);
-        app.set_message(format!("Frequency table for '{}'", self.col_name));
+        ));
+        app.msg(format!("Frequency table for '{}'", self.col_name));
         Ok(())
     }
 
-    fn to_command_string(&self) -> String {
-        format!("freq {}", self.col_name)
-    }
-
-    fn should_record(&self) -> bool {
-        false // View commands don't modify data
-    }
+    fn to_str(&self) -> String { format!("freq {}", self.col_name) }
+    fn record(&self) -> bool { false }  // view cmd
 }
 
 /// Metadata view command - shows column types and statistics (data profile)
 pub struct Metadata;
 
 impl Command for Metadata {
-    fn execute(&mut self, app: &mut AppContext) -> Result<()> {
-        let current_view = app.require_view()?;
-        let parent_id = current_view.id;
-        let df = &current_view.dataframe;
+    fn exec(&mut self, app: &mut AppContext) -> Result<()> {
+        let view = app.req()?;
+        let parent_id = view.id;
+        let df = &view.dataframe;
         let total_rows = df.height() as f64;
 
         // Build metadata dataframe with data profiling
@@ -158,17 +150,12 @@ impl Command for Metadata {
         new_view.parent_id = Some(parent_id);
 
         app.stack.push(new_view);
-        app.set_message("Data profile".to_string());
+        app.msg("Data profile".to_string());
         Ok(())
     }
 
-    fn to_command_string(&self) -> String {
-        String::from("meta")
-    }
-
-    fn should_record(&self) -> bool {
-        false
-    }
+    fn to_str(&self) -> String { "meta".into() }
+    fn record(&self) -> bool { false }
 }
 
 /// Format a scalar value cleanly without type information
@@ -204,10 +191,10 @@ pub struct Correlation {
 }
 
 impl Command for Correlation {
-    fn execute(&mut self, app: &mut AppContext) -> Result<()> {
-        let current_view = app.require_view()?;
+    fn exec(&mut self, app: &mut AppContext) -> Result<()> {
+        let view = app.req()?;
 
-        let df = &current_view.dataframe;
+        let df = &view.dataframe;
         let all_col_names: Vec<String> = df.get_column_names().iter().map(|s| s.to_string()).collect();
 
         // Get columns to correlate: selected columns (if any and numeric) or all numeric
@@ -306,17 +293,12 @@ impl Command for Correlation {
         );
 
         app.stack.push(new_view);
-        app.set_message(format!("Correlation matrix ({} columns)", n));
+        app.msg(format!("Correlation matrix ({} columns)", n));
         Ok(())
     }
 
-    fn to_command_string(&self) -> String {
-        String::from("corr")
-    }
-
-    fn should_record(&self) -> bool {
-        false
-    }
+    fn to_str(&self) -> String { "corr".into() }
+    fn record(&self) -> bool { false }
 }
 
 /// Calculate Pearson correlation coefficient

@@ -21,27 +21,22 @@ fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
 
     // Check for -c argument (inline script)
-    let cmd_mode = args.iter().position(|a| a == "-c");
-    if let Some(idx) = cmd_mode {
+    if let Some(idx) = args.iter().position(|a| a == "-c") {
         if args.len() <= idx + 1 {
             eprintln!("Usage: tv -c '<commands>'");
             std::process::exit(1);
         }
-        let commands = &args[idx + 1];
-        return run_commands(commands);
+        return run_commands(&args[idx + 1]);
     }
 
     // Check for --script argument
-    let script_mode = args.iter().position(|a| a == "--script");
-
-    if let Some(idx) = script_mode {
+    if let Some(idx) = args.iter().position(|a| a == "--script") {
         // Script mode: run commands from file and print result
         if args.len() <= idx + 1 {
             eprintln!("Usage: tv --script <script_file>");
             std::process::exit(1);
         }
-        let script_path = &args[idx + 1];
-        return run_script(script_path);
+        return run_script(&args[idx + 1]);
     }
 
     // Initialize terminal
@@ -50,11 +45,8 @@ fn main() -> Result<()> {
     // Create app context
     let mut app = if args.len() > 1 {
         // Load file from CLI argument
-        let file_path = &args[1];
-        let cmd = Box::new(Load { file_path: file_path.clone() });
         let mut temp_app = AppContext::new();
-
-        match CommandExecutor::execute(&mut temp_app, cmd) {
+        match CommandExecutor::exec(&mut temp_app, Box::new(Load { file_path: args[1].clone() })) {
             Ok(_) => temp_app,
             Err(e) => {
                 Terminal::restore()?;
@@ -67,8 +59,7 @@ fn main() -> Result<()> {
     };
 
     // Update viewport - Terminal::size() returns (cols, rows)
-    let (cols, rows) = Terminal::size()?;
-    app.update_viewport(rows, cols);
+    app.viewport(Terminal::size()?.1, Terminal::size()?.0);
 
     // Main event loop
     loop {
@@ -90,7 +81,7 @@ fn main() -> Result<()> {
 /// Run commands from inline string (-c option)
 fn run_commands(commands: &str) -> Result<()> {
     let mut app = AppContext::new();
-    app.update_viewport(50, 120);
+    app.viewport(50, 120);
 
     for cmd_str in commands.split('|') {
         let cmd_str = cmd_str.trim();
@@ -99,7 +90,7 @@ fn run_commands(commands: &str) -> Result<()> {
         }
 
         if let Some(cmd) = parse_command(cmd_str, &app) {
-            if let Err(e) = CommandExecutor::execute(&mut app, cmd) {
+            if let Err(e) = CommandExecutor::exec(&mut app, cmd) {
                 eprintln!("Error executing '{}': {}", cmd_str, e);
             }
         } else {
@@ -113,13 +104,12 @@ fn run_commands(commands: &str) -> Result<()> {
 
 /// Run commands from a script file and print result
 fn run_script(script_path: &str) -> Result<()> {
-    let script = fs::read_to_string(script_path)?;
     let mut app = AppContext::new();
 
     // Set a reasonable viewport for printing
-    app.update_viewport(50, 120);
+    app.viewport(50, 120);
 
-    'outer: for line in script.lines() {
+    'outer: for line in fs::read_to_string(script_path)?.lines() {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
             continue;
@@ -138,7 +128,7 @@ fn run_script(script_path: &str) -> Result<()> {
 
             // Parse and execute command
             if let Some(cmd) = parse_command(cmd_str, &app) {
-                if let Err(e) = CommandExecutor::execute(&mut app, cmd) {
+                if let Err(e) = CommandExecutor::exec(&mut app, cmd) {
                     eprintln!("Error executing '{}': {}", cmd_str, e);
                 }
             } else {
@@ -155,7 +145,7 @@ fn run_script(script_path: &str) -> Result<()> {
 
 /// Print table to stdout (for script mode)
 fn print_table(app: &AppContext) {
-    if let Some(view) = app.current_view() {
+    if let Some(view) = app.view() {
         let df = &view.dataframe;
         println!("=== {} ({} rows) ===", view.name, df.height());
         println!("{}", df);
@@ -167,10 +157,9 @@ fn print_table(app: &AppContext) {
 /// Parse a text command into a Command object
 fn parse_command(line: &str, _app: &AppContext) -> Option<Box<dyn command::Command>> {
     let parts: Vec<&str> = line.splitn(2, ' ').collect();
-    let cmd = parts[0].to_lowercase();
     let arg = parts.get(1).map(|s| s.trim()).unwrap_or("");
 
-    match cmd.as_str() {
+    match parts[0].to_lowercase().as_str() {
         "load" => Some(Box::new(Load { file_path: arg.to_string() })),
         "save" => Some(Box::new(Save { file_path: arg.to_string() })),
         "freq" | "frequency" => Some(Box::new(Frequency { col_name: arg.to_string() })),
@@ -180,10 +169,9 @@ fn parse_command(line: &str, _app: &AppContext) -> Option<Box<dyn command::Comma
         "delnull" => Some(Box::new(DelNull)),
         "del1" => Some(Box::new(DelSingle)),
         "filter" => Some(Box::new(Filter { expression: arg.to_string() })),
-        "select" | "sel" => {
-            let col_names: Vec<String> = arg.split(',').map(|s| s.trim().to_string()).collect();
-            Some(Box::new(Select { col_names }))
-        }
+        "select" | "sel" => Some(Box::new(Select {
+            col_names: arg.split(',').map(|s| s.trim().to_string()).collect()
+        })),
         "sort" => Some(Box::new(Sort { col_name: arg.to_string(), descending: false })),
         "sortdesc" => Some(Box::new(Sort { col_name: arg.to_string(), descending: true })),
         "rename" => {
@@ -222,12 +210,12 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
         KeyCode::Down => app.nav_row(1),
         KeyCode::Left => app.nav_col(-1),
         KeyCode::Right => app.nav_col(1),
-        KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => app.nav_row(app.page_size()),
-        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => app.nav_row(-app.page_size()),
+        KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => app.nav_row(app.page()),
+        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => app.nav_row(-app.page()),
         KeyCode::Char('g') => app.nav_row(isize::MIN),
         KeyCode::Char('G') => app.nav_row(isize::MAX),
-        KeyCode::PageUp => app.nav_row(-app.page_size()),
-        KeyCode::PageDown => app.nav_row(app.page_size()),
+        KeyCode::PageUp => app.nav_row(-app.page()),
+        KeyCode::PageDown => app.nav_row(app.page()),
         KeyCode::Home => app.nav_row(isize::MIN),
         KeyCode::End => app.nav_row(isize::MAX),
         KeyCode::Char('I') => {
@@ -237,9 +225,8 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
         KeyCode::Char('L') => {
             // L: Load file
             if let Some(file_path) = prompt_input(app, "Load file: ")? {
-                let cmd = Box::new(Load { file_path });
-                if let Err(e) = CommandExecutor::execute(app, cmd) {
-                    app.set_error(e);
+                if let Err(e) = CommandExecutor::exec(app, Box::new(Load { file_path })) {
+                    app.err(e);
                 }
             }
         }
@@ -248,16 +235,15 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
             if !app.has_view() {
                 app.no_table();
             } else if let Some(file_path) = prompt_input(app, "Save to: ")? {
-                let cmd = Box::new(Save { file_path });
-                if let Err(e) = CommandExecutor::execute(app, cmd) {
-                    app.set_error(e);
+                if let Err(e) = CommandExecutor::exec(app, Box::new(Save { file_path })) {
+                    app.err(e);
                 }
             }
         }
         KeyCode::Char('D') => {
             // D: Delete column(s) - in metadata view, delete from parent; otherwise delete current
             // Extract needed data first to avoid borrow issues
-            let delete_info: Option<(bool, Option<usize>, Vec<String>)> = app.current_view().map(|view| {
+            let delete_info: Option<(bool, Option<usize>, Vec<String>)> = app.view().map(|view| {
                 let is_meta = view.name == "metadata";
                 let parent_id = view.parent_id;
 
@@ -281,7 +267,7 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                     (true, parent_id, col_names)
                 } else {
                     let cols_to_delete: Vec<String> = if view.selected_cols.is_empty() {
-                        view.state.current_column(&view.dataframe)
+                        view.state.cur_col(&view.dataframe)
                             .map(|c| vec![c.to_string()])
                             .unwrap_or_default()
                     } else {
@@ -302,7 +288,7 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
             if let Some((is_meta, parent_id, col_names)) = delete_info {
                 if is_meta {
                     if let Some(pid) = parent_id {
-                        if let Some(parent) = app.stack.find_by_id_mut(pid) {
+                        if let Some(parent) = app.stack.find_mut(pid) {
                             let mut deleted = 0;
                             for col_name in &col_names {
                                 if parent.dataframe.drop_in_place(col_name).is_ok() {
@@ -310,44 +296,44 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                                 }
                             }
                             app.stack.pop();
-                            app.set_message(format!("Deleted {} column(s)", deleted));
+                            app.msg(format!("Deleted {} column(s)", deleted));
                         }
                     }
                 } else if col_names.is_empty() {
-                    app.set_message("No columns to delete".to_string());
+                    app.msg("No columns to delete".to_string());
                 } else {
                     let mut deleted = 0;
                     for col_name in &col_names {
                         let cmd = Box::new(DelCol { col_name: col_name.clone() });
-                        if CommandExecutor::execute(app, cmd).is_ok() {
+                        if CommandExecutor::exec(app, cmd).is_ok() {
                             deleted += 1;
                         }
                     }
-                    if let Some(view) = app.current_view_mut() {
+                    if let Some(view) = app.view_mut() {
                         view.selected_cols.clear();
                     }
-                    app.set_message(format!("Deleted {} column(s)", deleted));
+                    app.msg(format!("Deleted {} column(s)", deleted));
                 }
             }
         }
         KeyCode::Char('/') => {
             // /: Search column values with skim (supports glob patterns for strings)
-            if let Some(view) = app.current_view() {
-                if let Some(col_name) = view.state.current_column(&view.dataframe) {
+            if let Some(view) = app.view() {
+                if let Some(col_name) = view.state.cur_col(&view.dataframe) {
                     let items = get_column_hints(&view.dataframe, &col_name, view.state.cr, "");
 
-                    if let Ok(Some(selected)) = picker::input_with_hints(items, &format!("{}> ", col_name)) {
+                    if let Ok(Some(selected)) = picker::input(items, &format!("{}> ", col_name)) {
                         app.search.col_name = Some(col_name.clone());
                         app.search.value = Some(selected.clone());
                         app.search.regex = None;
 
-                        if let Some(view) = app.current_view_mut() {
+                        if let Some(view) = app.view_mut() {
                             if let Some(pos) = find_value(&view.dataframe, &col_name, &selected, 0, true) {
                                 view.state.cr = pos;
-                                view.state.ensure_visible();
-                                app.set_message(format!("Found: {}={}", col_name, selected));
+                                view.state.visible();
+                                app.msg(format!("Found: {}={}", col_name, selected));
                             } else {
-                                app.set_message(format!("Not found: {}={}", col_name, selected));
+                                app.msg(format!("Not found: {}={}", col_name, selected));
                             }
                         }
                     }
@@ -356,15 +342,13 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
         }
         KeyCode::Char('\\') => {
             // \: Filter rows with expression (using skim with column values as hints)
-            if let Some(view) = app.current_view() {
-                if let Some(col_name) = view.state.current_column(&view.dataframe) {
-                    let prefix_fmt = format!("{}==", col_name);
-                    let items = get_column_hints(&view.dataframe, &col_name, view.state.cr, &prefix_fmt);
+            if let Some(view) = app.view() {
+                if let Some(col_name) = view.state.cur_col(&view.dataframe) {
+                    let items = get_column_hints(&view.dataframe, &col_name, view.state.cr, &format!("{}==", col_name));
 
-                    if let Ok(Some(expression)) = picker::input_with_hints(items, "Filter> ") {
-                        let cmd = Box::new(Filter { expression });
-                        if let Err(e) = CommandExecutor::execute(app, cmd) {
-                            app.set_error(e);
+                    if let Ok(Some(expression)) = picker::input(items, "Filter> ") {
+                        if let Err(e) = CommandExecutor::exec(app, Box::new(Filter { expression })) {
+                            app.err(e);
                         }
                     }
                 }
@@ -378,34 +362,34 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                 if let Some(pattern) = app.search.regex.clone() {
                     // Regex search
                     if let Ok(re) = regex::Regex::new(&pattern) {
-                        if let Some(view) = app.current_view_mut() {
+                        if let Some(view) = app.view_mut() {
                             let start = view.state.cr + 1;
                             if let Some(pos) = find_regex(&view.dataframe, &col_name, &re, start, true) {
                                 view.state.cr = pos;
-                                view.state.ensure_visible();
-                                app.set_message(format!("Regex match: /{}/", pattern));
+                                view.state.visible();
+                                app.msg(format!("Regex match: /{}/", pattern));
                             } else {
-                                app.set_message("No more matches".to_string());
+                                app.msg("No more matches".to_string());
                             }
                         }
                     }
                 } else if let Some(value) = app.search.value.clone() {
                     // Value search
-                    if let Some(view) = app.current_view_mut() {
+                    if let Some(view) = app.view_mut() {
                         let start = view.state.cr + 1;
                         if let Some(pos) = find_value(&view.dataframe, &col_name, &value, start, true) {
                             view.state.cr = pos;
-                            view.state.ensure_visible();
-                            app.set_message(format!("Found: {}={}", col_name, value));
+                            view.state.visible();
+                            app.msg(format!("Found: {}={}", col_name, value));
                         } else {
-                            app.set_message("No more matches".to_string());
+                            app.msg("No more matches".to_string());
                         }
                     }
                 } else {
-                    app.set_message("No search active".to_string());
+                    app.msg("No search active".to_string());
                 }
             } else {
-                app.set_message("No search active".to_string());
+                app.msg("No search active".to_string());
             }
         }
         KeyCode::Char('N') => {
@@ -414,48 +398,47 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                 if let Some(pattern) = app.search.regex.clone() {
                     // Regex search
                     if let Ok(re) = regex::Regex::new(&pattern) {
-                        if let Some(view) = app.current_view_mut() {
+                        if let Some(view) = app.view_mut() {
                             let start = view.state.cr.saturating_sub(1);
                             if let Some(pos) = find_regex(&view.dataframe, &col_name, &re, start, false) {
                                 view.state.cr = pos;
-                                view.state.ensure_visible();
-                                app.set_message(format!("Regex match: /{}/", pattern));
+                                view.state.visible();
+                                app.msg(format!("Regex match: /{}/", pattern));
                             } else {
-                                app.set_message("No more matches".to_string());
+                                app.msg("No more matches".to_string());
                             }
                         }
                     }
                 } else if let Some(value) = app.search.value.clone() {
                     // Value search
-                    if let Some(view) = app.current_view_mut() {
+                    if let Some(view) = app.view_mut() {
                         let start = view.state.cr.saturating_sub(1);
                         if let Some(pos) = find_value(&view.dataframe, &col_name, &value, start, false) {
                             view.state.cr = pos;
-                            view.state.ensure_visible();
-                            app.set_message(format!("Found: {}={}", col_name, value));
+                            view.state.visible();
+                            app.msg(format!("Found: {}={}", col_name, value));
                         } else {
-                            app.set_message("No more matches".to_string());
+                            app.msg("No more matches".to_string());
                         }
                     }
                 } else {
-                    app.set_message("No search active".to_string());
+                    app.msg("No search active".to_string());
                 }
             } else {
-                app.set_message("No search active".to_string());
+                app.msg("No search active".to_string());
             }
         }
         KeyCode::Char('*') => {
             // *: Search for current cell value
-            if let Some(view) = app.current_view() {
-                if let Some(col_name) = view.state.current_column(&view.dataframe) {
+            if let Some(view) = app.view() {
+                if let Some(col_name) = view.state.cur_col(&view.dataframe) {
                     let cr = view.state.cr;
-                    let col_idx = view.state.cc;
-                    if let Ok(value) = view.dataframe.get_columns()[col_idx].get(cr) {
+                    if let Ok(value) = view.dataframe.get_columns()[view.state.cc].get(cr) {
                         let value_str = value.to_string();
                         app.search.col_name = Some(col_name.clone());
                         app.search.value = Some(value_str.clone());
                         app.search.regex = None; // Clear regex search
-                        app.set_message(format!("Search: {}={}", col_name, value_str));
+                        app.msg(format!("Search: {}={}", col_name, value_str));
                     }
                 }
             }
@@ -465,23 +448,19 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
             if !app.has_view() {
                 app.no_table();
             } else if let Some(cols_str) = prompt_input(app, "Select columns (comma-separated): ")? {
-                let col_names: Vec<String> = cols_str
-                    .split(',')
-                    .map(|s| s.trim().to_string())
-                    .collect();
-                let cmd = Box::new(Select { col_names });
-                if let Err(e) = CommandExecutor::execute(app, cmd) {
-                    app.set_error(e);
+                if let Err(e) = CommandExecutor::exec(app, Box::new(Select {
+                    col_names: cols_str.split(',').map(|s| s.trim().to_string()).collect()
+                })) {
+                    app.err(e);
                 }
             }
         }
         KeyCode::Char('F') => {
             // F: Frequency table for current column
-            if let Some(view) = app.current_view() {
-                if let Some(col_name) = view.state.current_column(&view.dataframe) {
-                    let cmd = Box::new(Frequency { col_name });
-                    if let Err(e) = CommandExecutor::execute(app, cmd) {
-                        app.set_error(e);
+            if let Some(view) = app.view() {
+                if let Some(col_name) = view.state.cur_col(&view.dataframe) {
+                    if let Err(e) = CommandExecutor::exec(app, Box::new(Frequency { col_name })) {
+                        app.err(e);
                     }
                 }
             }
@@ -489,48 +468,38 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
         KeyCode::Char('M') => {
             // M: Metadata view
             if app.has_view() {
-                let cmd = Box::new(Metadata);
-                if let Err(e) = CommandExecutor::execute(app, cmd) {
-                    app.set_error(e);
+                if let Err(e) = CommandExecutor::exec(app, Box::new(Metadata)) {
+                    app.err(e);
                 }
             }
         }
         KeyCode::Char('[') => {
             // [: Sort ascending by current column
-            if let Some(view) = app.current_view() {
-                if let Some(col_name) = view.state.current_column(&view.dataframe) {
-                    let cmd = Box::new(Sort {
-                        col_name,
-                        descending: false,
-                    });
-                    if let Err(e) = CommandExecutor::execute(app, cmd) {
-                        app.set_error(e);
+            if let Some(view) = app.view() {
+                if let Some(col_name) = view.state.cur_col(&view.dataframe) {
+                    if let Err(e) = CommandExecutor::exec(app, Box::new(Sort { col_name, descending: false })) {
+                        app.err(e);
                     }
                 }
             }
         }
         KeyCode::Char(']') => {
             // ]: Sort descending by current column
-            if let Some(view) = app.current_view() {
-                if let Some(col_name) = view.state.current_column(&view.dataframe) {
-                    let cmd = Box::new(Sort {
-                        col_name,
-                        descending: true,
-                    });
-                    if let Err(e) = CommandExecutor::execute(app, cmd) {
-                        app.set_error(e);
+            if let Some(view) = app.view() {
+                if let Some(col_name) = view.state.cur_col(&view.dataframe) {
+                    if let Err(e) = CommandExecutor::exec(app, Box::new(Sort { col_name, descending: true })) {
+                        app.err(e);
                     }
                 }
             }
         }
         KeyCode::Char('^') => {
             // ^: Rename current column
-            if let Some(view) = app.current_view() {
-                if let Some(old_name) = view.state.current_column(&view.dataframe) {
+            if let Some(view) = app.view() {
+                if let Some(old_name) = view.state.cur_col(&view.dataframe) {
                     if let Some(new_name) = prompt_input(app, &format!("Rename '{}' to: ", old_name))? {
-                        let cmd = Box::new(RenameCol { old_name, new_name });
-                        if let Err(e) = CommandExecutor::execute(app, cmd) {
-                            app.set_error(e);
+                        if let Err(e) = CommandExecutor::exec(app, Box::new(RenameCol { old_name, new_name })) {
+                            app.err(e);
                         }
                     }
                 }
@@ -539,7 +508,7 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
         KeyCode::Enter => {
             // Enter: Filter parent table from frequency view (supports multiple selections)
             // Extract needed info first
-            let filter_info: Option<(usize, String, Vec<String>, Option<String>)> = app.current_view().and_then(|view| {
+            let filter_info: Option<(usize, String, Vec<String>, Option<String>)> = app.view().and_then(|view| {
                 if let (Some(parent_id), Some(freq_col)) = (view.parent_id, view.freq_col.clone()) {
                     let rows_to_use: Vec<usize> = if view.selected_rows.is_empty() {
                         vec![view.state.cr]
@@ -556,7 +525,7 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                         })
                         .collect();
 
-                    if let Some(parent) = app.stack.find_by_id(parent_id) {
+                    if let Some(parent) = app.stack.find(parent_id) {
                         Some((parent_id, freq_col, values, parent.filename.clone()))
                     } else {
                         None
@@ -568,46 +537,43 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
 
             if let Some((parent_id, freq_col, values, parent_filename)) = filter_info {
                 if values.is_empty() {
-                    app.set_message("No values to filter".to_string());
-                } else if let Some(parent) = app.stack.find_by_id(parent_id) {
+                    app.msg("No values to filter".to_string());
+                } else if let Some(parent) = app.stack.find(parent_id) {
                     let parent_df = parent.dataframe.clone();
 
                     match filter_by_values(&parent_df, &freq_col, &values) {
                         Ok(filtered_df) => {
-                            let row_count = filtered_df.height();
                             let id = app.next_id();
-                            let view_name = if values.len() == 1 {
-                                format!("{}={}", freq_col, values[0])
-                            } else {
-                                format!("{}∈{{{}}}", freq_col, values.len())
-                            };
-                            let new_view = state::ViewState::new(
+                            app.msg(format!("Filtered: {} rows", filtered_df.height()));
+                            app.stack.push(state::ViewState::new(
                                 id,
-                                view_name,
+                                if values.len() == 1 {
+                                    format!("{}={}", freq_col, values[0])
+                                } else {
+                                    format!("{}∈{{{}}}", freq_col, values.len())
+                                },
                                 filtered_df,
                                 parent_filename,
-                            );
-                            app.stack.push(new_view);
-                            app.set_message(format!("Filtered: {} rows", row_count));
+                            ));
                         }
-                        Err(e) => app.set_error(e),
+                        Err(e) => app.err(e),
                     }
                 }
             }
         }
         KeyCode::Char('c') => {
             // c: Copy current column
-            if let Some(view) = app.current_view() {
-                if let Some(col_name) = view.state.current_column(&view.dataframe) {
+            if let Some(view) = app.view() {
+                if let Some(col_name) = view.state.cur_col(&view.dataframe) {
                     let new_name = format!("{}_copy", col_name);
                     let col = view.dataframe.column(&col_name).ok().cloned();
                     if let Some(c) = col {
-                        if let Some(view) = app.current_view_mut() {
+                        if let Some(view) = app.view_mut() {
                             let new_col = c.as_materialized_series().clone().with_name(new_name.clone().into());
                             if let Err(e) = view.dataframe.with_column(new_col) {
-                                app.set_error(e);
+                                app.err(e);
                             } else {
-                                app.set_message(format!("Copied column '{}' to '{}'", col_name, new_name));
+                                app.msg(format!("Copied column '{}' to '{}'", col_name, new_name));
                             }
                         }
                     }
@@ -616,8 +582,8 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
         }
         KeyCode::Char('$') => {
             // $: Type convert column
-            if let Some(view) = app.current_view() {
-                if let Some(col_name) = view.state.current_column(&view.dataframe) {
+            if let Some(view) = app.view() {
+                if let Some(col_name) = view.state.cur_col(&view.dataframe) {
                     let types = vec![
                         "String".to_string(),
                         "Int64".to_string(),
@@ -625,7 +591,7 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                         "Boolean".to_string(),
                     ];
                     if let Ok(Some(selected)) = picker::pick(types, "Convert to: ") {
-                        if let Some(view) = app.current_view_mut() {
+                        if let Some(view) = app.view_mut() {
                             let result = match selected.as_str() {
                                 "String" => view.dataframe.column(&col_name)
                                     .and_then(|c| c.cast(&polars::prelude::DataType::String)),
@@ -640,12 +606,12 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                             match result {
                                 Ok(new_col) => {
                                     if let Err(e) = view.dataframe.with_column(new_col) {
-                                        app.set_error(e);
+                                        app.err(e);
                                     } else {
-                                        app.set_message(format!("Converted '{}' to {}", col_name, selected));
+                                        app.msg(format!("Converted '{}' to {}", col_name, selected));
                                     }
                                 }
-                                Err(e) => app.set_error(e),
+                                Err(e) => app.err(e),
                             }
                         }
                     }
@@ -654,33 +620,20 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
         }
         KeyCode::Char('b') => {
             // b: Aggregate by current column
-            if let Some(view) = app.current_view() {
-                if let Some(col_name) = view.state.current_column(&view.dataframe) {
-                    let agg_funcs = vec![
-                        "count".to_string(),
-                        "sum".to_string(),
-                        "mean".to_string(),
-                        "min".to_string(),
-                        "max".to_string(),
-                        "std".to_string(),
-                    ];
-                    if let Ok(Some(agg_fn)) = picker::pick(agg_funcs, "Aggregate: ") {
-                        let df = view.dataframe.clone();
+            if let Some(view) = app.view() {
+                if let Some(col_name) = view.state.cur_col(&view.dataframe) {
+                    if let Ok(Some(agg_fn)) = picker::pick(vec![
+                        "count".to_string(), "sum".to_string(), "mean".to_string(),
+                        "min".to_string(), "max".to_string(), "std".to_string(),
+                    ], "Aggregate: ") {
                         let filename = view.filename.clone();
-                        let result = aggregate_by(&df, &col_name, &agg_fn);
-                        match result {
+                        match aggregate_by(&view.dataframe, &col_name, &agg_fn) {
                             Ok(agg_df) => {
                                 let id = app.next_id();
-                                let new_view = state::ViewState::new(
-                                    id,
-                                    format!("{}:{}", agg_fn, col_name),
-                                    agg_df,
-                                    filename,
-                                );
-                                app.stack.push(new_view);
-                                app.set_message(format!("{} by '{}'", agg_fn, col_name));
+                                app.msg(format!("{} by '{}'", agg_fn, col_name));
+                                app.stack.push(state::ViewState::new(id, format!("{}:{}", agg_fn, col_name), agg_df, filename));
                             }
-                            Err(e) => app.set_error(e),
+                            Err(e) => app.err(e),
                         }
                     }
                 }
@@ -688,22 +641,21 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
         }
         KeyCode::Char('T') => {
             // T: Duplicate current view on stack
-            if let Some(view) = app.current_view() {
+            if let Some(view) = app.view() {
                 let mut new_view = view.clone();
-                let old_name = view.name.clone();
+                new_view.name = format!("{} (copy)", view.name);
                 new_view.id = app.next_id();
-                new_view.name = format!("{} (copy)", old_name);
                 app.stack.push(new_view);
-                app.set_message("Duplicated view".to_string());
+                app.msg("Duplicated view".to_string());
             }
         }
         KeyCode::Char('W') => {
             // W: Swap with previous view on stack
             if app.stack.len() >= 2 {
-                app.stack.swap_top();
-                app.set_message("Swapped views".to_string());
+                app.stack.swap();
+                app.msg("Swapped views".to_string());
             } else {
-                app.set_message("Need at least 2 views to swap".to_string());
+                app.msg("Need at least 2 views to swap".to_string());
             }
         }
         KeyCode::Char('l') => {
@@ -719,31 +671,27 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                         None,
                     );
                     app.stack.push(new_view);
-                    app.set_message(format!("Directory: {}", dir.display()));
+                    app.msg(format!("Directory: {}", dir.display()));
                 }
-                Err(e) => app.set_error(e),
+                Err(e) => app.err(e),
             }
         }
         KeyCode::Char('C') => {
             // C: Correlation matrix (uses selected columns if >= 2, otherwise all numeric)
-            let selected: Vec<usize> = app.current_view()
-                .map(|v| v.selected_cols.iter().copied().collect())
-                .unwrap_or_default();
             if app.has_view() {
-                let cmd = Box::new(Correlation { selected_cols: selected });
-                if let Err(e) = CommandExecutor::execute(app, cmd) {
-                    app.set_error(e);
-                } else {
-                    if let Some(view) = app.current_view_mut() {
-                        view.selected_cols.clear();
-                    }
+                if let Err(e) = CommandExecutor::exec(app, Box::new(Correlation {
+                    selected_cols: app.view().map(|v| v.selected_cols.iter().copied().collect()).unwrap_or_default()
+                })) {
+                    app.err(e);
+                } else if let Some(view) = app.view_mut() {
+                    view.selected_cols.clear();
                 }
             }
         }
         KeyCode::Char('?') => {
             // ?: Regex search in current column
-            if let Some(view) = app.current_view() {
-                if let Some(col_name) = view.state.current_column(&view.dataframe) {
+            if let Some(view) = app.view() {
+                if let Some(col_name) = view.state.cur_col(&view.dataframe) {
                     if let Some(pattern) = prompt_input(app, "Regex: ")? {
                         match regex::Regex::new(&pattern) {
                             Ok(re) => {
@@ -752,17 +700,17 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                                 app.search.value = None;
 
                                 // Find first match
-                                if let Some(view) = app.current_view_mut() {
+                                if let Some(view) = app.view_mut() {
                                     if let Some(pos) = find_regex(&view.dataframe, &col_name, &re, 0, true) {
                                         view.state.cr = pos;
-                                        view.state.ensure_visible();
-                                        app.set_message(format!("Regex match: /{}/", pattern));
+                                        view.state.visible();
+                                        app.msg(format!("Regex match: /{}/", pattern));
                                     } else {
-                                        app.set_message(format!("No match: /{}/", pattern));
+                                        app.msg(format!("No match: /{}/", pattern));
                                     }
                                 }
                             }
-                            Err(e) => app.set_message(format!("Invalid regex: {}", e)),
+                            Err(e) => app.msg(format!("Invalid regex: {}", e)),
                         }
                     }
                 }
@@ -770,9 +718,9 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
         }
         KeyCode::Char('|') => {
             // |: Regex filter on current column
-            let col_info = app.current_view().map(|view| {
+            let col_info = app.view().map(|view| {
                 (
-                    view.state.current_column(&view.dataframe),
+                    view.state.cur_col(&view.dataframe),
                     view.dataframe.clone(),
                     view.filename.clone(),
                 )
@@ -784,21 +732,19 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                             // Filter rows matching regex
                             match filter_by_regex(&df, &col_name, &re) {
                                 Ok(filtered_df) => {
-                                    let row_count = filtered_df.height();
                                     let id = app.next_id();
-                                    let new_view = state::ViewState::new(
+                                    app.msg(format!("Regex filter: {} rows", filtered_df.height()));
+                                    app.stack.push(state::ViewState::new(
                                         id,
                                         format!("{}~/{}/", col_name, pattern),
                                         filtered_df,
                                         filename,
-                                    );
-                                    app.stack.push(new_view);
-                                    app.set_message(format!("Regex filter: {} rows", row_count));
+                                    ));
                                 }
-                                Err(e) => app.set_error(e),
+                                Err(e) => app.err(e),
                             }
                         }
-                        Err(e) => app.set_message(format!("Invalid regex: {}", e)),
+                        Err(e) => app.msg(format!("Invalid regex: {}", e)),
                     }
                 }
             } else {
@@ -809,33 +755,33 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
             // :: Jump to row number
             if let Some(input) = prompt_input(app, "Go to row: ")? {
                 if let Ok(row) = input.parse::<usize>() {
-                    if let Some(view) = app.current_view_mut() {
-                        let max_rows = view.row_count();
+                    if let Some(view) = app.view_mut() {
+                        let max_rows = view.rows();
                         if row < max_rows {
                             view.state.cr = row;
-                            view.state.ensure_visible();
-                            app.set_message(format!("Row {}", row));
+                            view.state.visible();
+                            app.msg(format!("Row {}", row));
                         } else {
-                            app.set_message(format!("Row {} out of range (max {})", row, max_rows - 1));
+                            app.msg(format!("Row {} out of range (max {})", row, max_rows - 1));
                         }
                     }
                 } else {
-                    app.set_message("Invalid row number".to_string());
+                    app.msg("Invalid row number".to_string());
                 }
             }
         }
         KeyCode::Char('@') => {
             // @: Jump to column by name
-            if let Some(view) = app.current_view() {
+            if let Some(view) = app.view() {
                 let col_names: Vec<String> = view.dataframe.get_column_names()
                     .iter()
                     .map(|s| s.to_string())
                     .collect();
                 if let Ok(Some(selected)) = picker::pick(col_names.clone(), "Column: ") {
                     if let Some(idx) = col_names.iter().position(|c| c == &selected) {
-                        if let Some(view) = app.current_view_mut() {
+                        if let Some(view) = app.view_mut() {
                             view.state.cc = idx;
-                            app.set_message(format!("Column: {}", selected));
+                            app.msg(format!("Column: {}", selected));
                         }
                     }
                 }
@@ -843,39 +789,36 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
         }
         KeyCode::Char('m') => {
             // m: Toggle bookmark on current row
-            if let Some(view) = app.current_view() {
+            if let Some(view) = app.view() {
                 let cr = view.state.cr;
                 if let Some(pos) = app.bookmarks.iter().position(|&r| r == cr) {
                     app.bookmarks.remove(pos);
-                    app.set_message(format!("Removed bookmark at row {}", cr));
+                    app.msg(format!("Removed bookmark at row {}", cr));
                 } else {
                     app.bookmarks.push(cr);
                     app.bookmarks.sort();
-                    app.set_message(format!("Bookmarked row {} ({} total)", cr, app.bookmarks.len()));
+                    app.msg(format!("Bookmarked row {} ({} total)", cr, app.bookmarks.len()));
                 }
             }
         }
         KeyCode::Char('\'') => {
             // ': Jump to next bookmark
             if app.bookmarks.is_empty() {
-                app.set_message("No bookmarks".to_string());
-            } else {
-                let cr = app.current_view().map(|v| v.state.cr).unwrap_or(0);
-                // Find next bookmark after current row
-                let next = app.bookmarks.iter().find(|&&r| r > cr).copied()
-                    .or_else(|| app.bookmarks.first().copied());
-                if let Some(row) = next {
-                    if let Some(view) = app.current_view_mut() {
-                        view.state.cr = row;
-                        view.state.ensure_visible();
-                    }
-                    app.set_message(format!("Bookmark: row {}", row));
+                app.msg("No bookmarks".to_string());
+            } else if let Some(row) = app.bookmarks.iter()
+                .find(|&&r| r > app.view().map(|v| v.state.cr).unwrap_or(0)).copied()
+                .or_else(|| app.bookmarks.first().copied())
+            {
+                if let Some(view) = app.view_mut() {
+                    view.state.cr = row;
+                    view.state.visible();
                 }
+                app.msg(format!("Bookmark: row {}", row));
             }
         }
         KeyCode::Char(' ') => {
             // Space: Toggle selection (rows in Meta/Freq views, columns otherwise)
-            let msg: Option<String> = if let Some(view) = app.current_view_mut() {
+            let msg: Option<String> = if let Some(view) = app.view_mut() {
                 let is_meta = view.name == "metadata";
                 let is_freq = view.name.starts_with("Freq:");
 
@@ -902,23 +845,23 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                 None
             };
             if let Some(m) = msg {
-                app.set_message(m);
+                app.msg(m);
             }
         }
         KeyCode::Esc => {
             // Esc: Clear selection
-            if let Some(view) = app.current_view_mut() {
+            if let Some(view) = app.view_mut() {
                 if !view.selected_cols.is_empty() || !view.selected_rows.is_empty() {
                     view.selected_cols.clear();
                     view.selected_rows.clear();
-                    app.set_message("Selection cleared".to_string());
+                    app.msg("Selection cleared".to_string());
                 }
             }
         }
         KeyCode::Char('0') => {
             // 0: In Meta view, select rows with 100% null; otherwise select all-null columns
             // First pass: collect indices
-            let selection: Option<(bool, Vec<usize>)> = app.current_view().map(|view| {
+            let selection: Option<(bool, Vec<usize>)> = app.view().map(|view| {
                 let is_meta = view.name == "metadata";
                 if is_meta {
                     let df = &view.dataframe;
@@ -949,26 +892,26 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
 
             if let Some((is_rows, indices)) = selection {
                 if indices.is_empty() {
-                    app.set_message("No all-null columns found".to_string());
-                } else if let Some(view) = app.current_view_mut() {
+                    app.msg("No all-null columns found".to_string());
+                } else if let Some(view) = app.view_mut() {
                     let count = indices.len();
                     if is_rows {
                         for idx in indices {
                             view.selected_rows.insert(idx);
                         }
-                        app.set_message(format!("Selected {} row(s) with 100% null", count));
+                        app.msg(format!("Selected {} row(s) with 100% null", count));
                     } else {
                         for idx in indices {
                             view.selected_cols.insert(idx);
                         }
-                        app.set_message(format!("Selected {} all-null column(s)", count));
+                        app.msg(format!("Selected {} all-null column(s)", count));
                     }
                 }
             }
         }
         KeyCode::Char('1') => {
             // 1: In Meta view, select rows with 1 distinct value; otherwise select single-value columns
-            let selection: Option<(bool, Vec<usize>)> = app.current_view().map(|view| {
+            let selection: Option<(bool, Vec<usize>)> = app.view().map(|view| {
                 let is_meta = view.name == "metadata";
                 if is_meta {
                     let df = &view.dataframe;
@@ -1005,19 +948,19 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
 
             if let Some((is_rows, indices)) = selection {
                 if indices.is_empty() {
-                    app.set_message("No single-value columns found".to_string());
-                } else if let Some(view) = app.current_view_mut() {
+                    app.msg("No single-value columns found".to_string());
+                } else if let Some(view) = app.view_mut() {
                     let count = indices.len();
                     if is_rows {
                         for idx in indices {
                             view.selected_rows.insert(idx);
                         }
-                        app.set_message(format!("Selected {} row(s) with 1 distinct value", count));
+                        app.msg(format!("Selected {} row(s) with 1 distinct value", count));
                     } else {
                         for idx in indices {
                             view.selected_cols.insert(idx);
                         }
-                        app.set_message(format!("Selected {} single-value column(s)", count));
+                        app.msg(format!("Selected {} single-value column(s)", count));
                     }
                 }
             }
@@ -1047,10 +990,8 @@ fn get_column_hints(df: &polars::prelude::DataFrame, col_name: &str, row: usize,
             if let Ok(val) = col.get(row) {
                 let cell_val = strip_quotes(&val.to_string());
                 if cell_val.len() >= 2 {
-                    let prefix = &cell_val[..2];
-                    let suffix = &cell_val[cell_val.len()-2..];
-                    items.push(format!("{}{}*", prefix_fmt, prefix));
-                    items.push(format!("{}*{}", prefix_fmt, suffix));
+                    items.push(format!("{}{}*", prefix_fmt, &cell_val[..2]));
+                    items.push(format!("{}*{}", prefix_fmt, &cell_val[cell_val.len()-2..]));
                 }
             }
         }
@@ -1059,8 +1000,7 @@ fn get_column_hints(df: &polars::prelude::DataFrame, col_name: &str, row: usize,
         if let Ok(uniq) = col.unique() {
             for i in 0..uniq.len() {
                 if let Ok(v) = uniq.get(i) {
-                    let val = strip_quotes(&v.to_string());
-                    items.push(format!("{}{}", prefix_fmt, val));
+                    items.push(format!("{}{}", prefix_fmt, strip_quotes(&v.to_string())));
                 }
             }
         }
@@ -1140,12 +1080,9 @@ fn filter_by_regex(df: &polars::prelude::DataFrame, col_name: &str, re: &regex::
     use polars::prelude::*;
 
     let col = df.column(col_name)?;
-    let mask: Vec<bool> = (0..col.len())
+    Ok(df.filter(&BooleanChunked::from_slice("mask".into(), &(0..col.len())
         .map(|i| col.get(i).map(|v| re.is_match(&strip_quotes(&v.to_string()))).unwrap_or(false))
-        .collect();
-
-    let bool_mask = BooleanChunked::from_slice("mask".into(), &mask);
-    Ok(df.filter(&bool_mask)?)
+        .collect::<Vec<bool>>()))?)
 }
 
 /// Filter DataFrame by matching any of the given values in a column
@@ -1155,20 +1092,16 @@ fn filter_by_values(df: &polars::prelude::DataFrame, col_name: &str, values: &[S
 
     let value_set: HashSet<&str> = values.iter().map(|s| s.as_str()).collect();
     let col = df.column(col_name)?;
-    let mask: Vec<bool> = (0..col.len())
+    Ok(df.filter(&BooleanChunked::from_slice("mask".into(), &(0..col.len())
         .map(|i| col.get(i).map(|v| value_set.contains(strip_quotes(&v.to_string()).as_str())).unwrap_or(false))
-        .collect();
-
-    let bool_mask = BooleanChunked::from_slice("mask".into(), &mask);
-    Ok(df.filter(&bool_mask)?)
+        .collect::<Vec<bool>>()))?)
 }
 
 /// Aggregate dataframe by column
 fn aggregate_by(df: &polars::prelude::DataFrame, col_name: &str, agg_fn: &str) -> anyhow::Result<polars::prelude::DataFrame> {
     use polars::prelude::*;
 
-    let lazy = df.clone().lazy();
-    let grouped = lazy.group_by([col(col_name)]);
+    let grouped = df.clone().lazy().group_by([col(col_name)]);
 
     let result = match agg_fn {
         "count" => grouped.agg([col("*").count().alias("count")]),
@@ -1203,11 +1136,9 @@ fn list_directory(dir: &std::path::Path) -> anyhow::Result<polars::prelude::Data
         is_dir.push(meta.is_dir());
 
         // Format modification time
-        let mtime = meta.mtime();
-        let datetime = chrono::DateTime::from_timestamp(mtime, 0)
+        modified.push(chrono::DateTime::from_timestamp(meta.mtime(), 0)
             .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
-            .unwrap_or_default();
-        modified.push(datetime);
+            .unwrap_or_default());
     }
 
     let df = DataFrame::new(vec![
