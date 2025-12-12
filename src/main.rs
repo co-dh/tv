@@ -322,10 +322,10 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
             }
         }
         KeyCode::Char('\\') => {
-            // \: Filter rows with expression
+            // \: Filter rows with expression (using skim for input)
             if !app.has_view() {
                 app.set_message("No table loaded".to_string());
-            } else if let Some(expression) = prompt_input(app, "Filter (e.g., col>10): ")? {
+            } else if let Ok(Some(expression)) = picker::input("Filter> ") {
                 let cmd = Box::new(Filter { expression });
                 if let Err(e) = CommandExecutor::execute(app, cmd) {
                     app.set_message(format!("Error: {}", e));

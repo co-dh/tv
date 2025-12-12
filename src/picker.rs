@@ -40,34 +40,33 @@ pub fn pick(items: Vec<String>, prompt: &str) -> Result<Option<String>> {
     Ok(result)
 }
 
-/// Run skim with multi-select enabled
-pub fn pick_multi(items: Vec<String>, prompt: &str) -> Result<Vec<String>> {
+/// Run skim for free text input - returns the query text
+pub fn input(prompt: &str) -> Result<Option<String>> {
     execute!(io::stdout(), terminal::LeaveAlternateScreen, cursor::Show)?;
     terminal::disable_raw_mode()?;
 
     let options = SkimOptionsBuilder::default()
         .prompt(Some(prompt))
         .height(Some("50%"))
-        .multi(true)
         .build()
         .unwrap();
 
-    let input = items.join("\n");
-    let item_reader = SkimItemReader::default();
-    let items = item_reader.of_bufread(Cursor::new(input));
-
-    let result = Skim::run_with(&options, Some(items))
+    // Empty input - user just types query
+    let result = Skim::run_with(&options, None)
         .map(|out| {
             if out.is_abort {
-                Vec::new()
+                None
             } else {
-                out.selected_items
-                    .iter()
-                    .map(|item| item.output().to_string())
-                    .collect()
+                // Return the query text
+                let query = out.query.trim().to_string();
+                if query.is_empty() {
+                    None
+                } else {
+                    Some(query)
+                }
             }
         })
-        .unwrap_or_default();
+        .unwrap_or(None);
 
     terminal::enable_raw_mode()?;
     execute!(io::stdout(), terminal::EnterAlternateScreen, cursor::Hide)?;
