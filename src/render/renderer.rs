@@ -414,6 +414,7 @@ impl Renderer {
             vec![
                 ("Enter", "filter parent"),
                 ("Space", "select row"),
+                ("Esc", "clear sel"),
                 ("g", "top"),
                 ("G", "bottom"),
                 ("^D", "page down"),
@@ -426,6 +427,7 @@ impl Renderer {
                 ("1", "sel single cols"),
                 ("D", "delete sel"),
                 ("Space", "select row"),
+                ("Esc", "clear sel"),
                 ("g", "top"),
                 ("G", "bottom"),
                 ("q", "back"),
@@ -449,6 +451,7 @@ impl Renderer {
                 ("C", "correlation"),
                 ("Space", "select col"),
                 ("D", "delete col"),
+                ("Esc", "clear sel"),
                 ("g", "top"),
                 ("G", "bottom"),
                 ("^D", "page down"),

@@ -108,7 +108,6 @@ impl StateStack {
     pub fn cur_mut(&mut self) -> Option<&mut ViewState> { self.stack.last_mut() }
     pub fn len(&self) -> usize { self.stack.len() }
     pub fn has_view(&self) -> bool { !self.stack.is_empty() }
-    pub fn find(&self, id: usize) -> Option<&ViewState> { self.stack.iter().find(|v| v.id == id) }
     pub fn find_mut(&mut self, id: usize) -> Option<&mut ViewState> { self.stack.iter_mut().find(|v| v.id == id) }
 
     pub fn swap(&mut self) {

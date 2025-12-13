@@ -328,3 +328,40 @@ fn test_delcol_removes_specific_column() {
     // Should only have column 'a' now
     assert!(output.contains("a"), "Should have column a");
 }
+
+#[test]
+fn test_filter_in_single_value() {
+    let id = unique_id();
+    let csv = setup_test_csv(id);
+
+    // Filter using IN clause (what freq Enter does)
+    let output = run_script(&format!("load {} | filter b IN ('x')\n", csv), id);
+    assert!(output.contains("(3 rows)"), "b IN ('x') should match 3 rows");
+}
+
+#[test]
+fn test_filter_in_multiple_values() {
+    let id = unique_id();
+    let csv = setup_test_csv(id);
+
+    // Filter with multiple values (freq multi-select)
+    let output = run_script(&format!("load {} | filter b IN ('x','y')\n", csv), id);
+    assert!(output.contains("(4 rows)"), "b IN ('x','y') should match 4 rows");
+}
+
+#[test]
+fn test_freq_then_filter_workflow() {
+    let id = unique_id();
+    let csv = setup_test_csv(id);
+
+    // Simulate freq->Enter workflow: freq shows counts, filter applies to parent
+    // First verify freq works
+    let freq_output = run_script(&format!("load {} | freq b\n", csv), id);
+    assert!(freq_output.contains("Freq:b"), "Should create freq view");
+    assert!(freq_output.contains("x"), "Should show value x");
+
+    // Then verify filtering works on parent data
+    let filter_output = run_script(&format!("load {} | filter b IN ('x')\n", csv), id);
+    assert!(filter_output.contains("(3 rows)"), "Should filter to 3 rows where b='x'");
+    assert!(filter_output.contains("b"), "Filtered view should have column b");
+}

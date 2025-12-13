@@ -118,13 +118,13 @@ impl Command for Metadata {
             );
 
             if is_numeric {
-                let median = series.median().map(|v| format!("{:.2}", v)).unwrap_or("-".to_string());
-                let sigma = series.std(1).map(|v| format!("{:.2}", v)).unwrap_or("-".to_string());
+                let median = series.median().map(|v| format!("{:.2}", v)).unwrap_or_default();
+                let sigma = series.std(1).map(|v| format!("{:.2}", v)).unwrap_or_default();
                 medians.push(median);
                 sigmas.push(sigma);
             } else {
-                medians.push("-".to_string());
-                sigmas.push("-".to_string());
+                medians.push(String::new());
+                sigmas.push(String::new());
             }
         }
 
@@ -162,7 +162,7 @@ fn format_scalar_value(scalar: Option<polars::prelude::Scalar>) -> String {
         Some(s) => {
             let av = s.value();
             match av {
-                AnyValue::Null => "-".to_string(),
+                AnyValue::Null => String::new(),
                 AnyValue::Int8(v) => v.to_string(),
                 AnyValue::Int16(v) => v.to_string(),
                 AnyValue::Int32(v) => v.to_string(),
@@ -178,7 +178,7 @@ fn format_scalar_value(scalar: Option<polars::prelude::Scalar>) -> String {
                 _ => format!("{:?}", av),
             }
         }
-        None => "-".to_string(),
+        None => String::new(),
     }
 }
 

@@ -162,6 +162,8 @@ fn parse(line: &str, _app: &AppContext) -> Option<Box<dyn command::Command>> {
     match parts[0].to_lowercase().as_str() {
         "load" => Some(Box::new(Load { file_path: arg.to_string() })),
         "save" => Some(Box::new(Save { file_path: arg.to_string() })),
+        "ls" => Some(Box::new(Ls { dir: std::path::PathBuf::from(if arg.is_empty() { "." } else { arg }) })),
+        "lr" => Some(Box::new(Lr { dir: std::path::PathBuf::from(if arg.is_empty() { "." } else { arg }) })),
         "freq" | "frequency" => Some(Box::new(Frequency { col_name: arg.to_string() })),
         "meta" | "metadata" => Some(Box::new(Metadata)),
         "corr" | "correlation" => Some(Box::new(Correlation { selected_cols: vec![] })),
@@ -448,40 +450,27 @@ fn on_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
             }
         }
         KeyCode::Enter => {
-            // Enter: Filter parent table from frequency view (supports multiple selections)
-            // Extract needed info first
-            let filter_info: Option<(usize, String, Vec<String>, Option<String>)> = app.view().and_then(|view| {
-                if let (Some(parent_id), Some(freq_col)) = (view.parent_id, view.freq_col.clone()) {
-                    let rows_to_use: Vec<usize> = if view.selected_rows.is_empty() {
-                        vec![view.state.cr]
-                    } else {
-                        view.selected_rows.iter().copied().collect()
-                    };
-
-                    let values: Vec<String> = rows_to_use.iter()
-                        .filter_map(|&row| {
-                            view.dataframe.get_columns()[0]
-                                .get(row)
-                                .ok()
-                                .map(|v| unquote(&v.to_string()))
-                        })
+            // Enter: Pop freq view, filter parent with selected value(s)
+            let filter_info: Option<(String, Vec<String>, Option<String>)> = app.view().and_then(|view| {
+                if let (Some(_), Some(freq_col)) = (view.parent_id, view.freq_col.clone()) {
+                    let rows: Vec<usize> = if view.selected_rows.is_empty() { vec![view.state.cr] }
+                                           else { view.selected_rows.iter().copied().collect() };
+                    let values: Vec<String> = rows.iter()
+                        .filter_map(|&r| view.dataframe.get_columns()[0].get(r).ok().map(|v| unquote(&v.to_string())))
                         .collect();
-
-                    if let Some(parent) = app.stack.find(parent_id) {
-                        Some((parent_id, freq_col, values, parent.filename.clone()))
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
+                    Some((freq_col, values, view.filename.clone()))
+                } else { None }
             });
-
-            if let Some((_parent_id, freq_col, values, parent_filename)) = filter_info {
-                if values.is_empty() {
-                    app.msg("No values to filter".to_string());
-                } else {
-                    let _ = CommandExecutor::exec(app, Box::new(FilterIn { col: freq_col, values, filename: parent_filename }));
+            if let Some((freq_col, values, filename)) = filter_info {
+                let _ = CommandExecutor::exec(app, Box::new(Pop));  // Pop freq view first
+                if !values.is_empty() {
+                    let _ = CommandExecutor::exec(app, Box::new(FilterIn { col: freq_col.clone(), values, filename }));
+                    // Focus on the freq column in filtered view
+                    if let Some(v) = app.view_mut() {
+                        if let Some(idx) = v.dataframe.get_column_names().iter().position(|c| c.as_str() == freq_col) {
+                            v.state.cc = idx;
+                        }
+                    }
                 }
             }
         }

@@ -144,4 +144,13 @@ mod tests {
 
     #[test]
     fn test_str_starts() { assert_eq!(filt("name LIKE 'b%'"), 2); }  // banana, blueberry
+
+    #[test]
+    fn test_in_single() { assert_eq!(filt("name IN ('apple')"), 1); }
+
+    #[test]
+    fn test_in_multiple() { assert_eq!(filt("name IN ('apple','banana')"), 2); }
+
+    #[test]
+    fn test_in_multi_match() { assert_eq!(filt("name IN ('apple','banana','cherry')"), 3); }
 }

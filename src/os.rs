@@ -7,14 +7,14 @@ pub fn ls(dir: &Path) -> anyhow::Result<DataFrame> {
     let mut names: Vec<String> = Vec::new();
     let mut sizes: Vec<u64> = Vec::new();
     let mut modified: Vec<String> = Vec::new();
-    let mut is_dir: Vec<bool> = Vec::new();
+    let mut is_dir: Vec<&str> = Vec::new();
 
     for entry in std::fs::read_dir(dir)? {
         let e = entry?;
         let m = e.metadata()?;
         names.push(e.file_name().to_string_lossy().into());
         sizes.push(m.size());
-        is_dir.push(m.is_dir());
+        is_dir.push(if m.is_dir() { "x" } else { "" });
         modified.push(chrono::DateTime::from_timestamp(m.mtime(), 0)
             .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
             .unwrap_or_default());
@@ -33,17 +33,16 @@ pub fn lr(dir: &Path) -> anyhow::Result<DataFrame> {
     let mut paths: Vec<String> = Vec::new();
     let mut sizes: Vec<u64> = Vec::new();
     let mut modified: Vec<String> = Vec::new();
-    let mut is_dir: Vec<bool> = Vec::new();
+    let mut is_dir: Vec<&'static str> = Vec::new();
 
-    fn walk(dir: &Path, base: &Path, paths: &mut Vec<String>, sizes: &mut Vec<u64>, modified: &mut Vec<String>, is_dir: &mut Vec<bool>) {
+    fn walk(dir: &Path, base: &Path, paths: &mut Vec<String>, sizes: &mut Vec<u64>, modified: &mut Vec<String>, is_dir: &mut Vec<&'static str>) {
         if let Ok(entries) = std::fs::read_dir(dir) {
             for entry in entries.flatten() {
                 if let Ok(m) = entry.metadata() {
                     let p = entry.path();
-                    let rel = p.strip_prefix(base).unwrap_or(&p).to_string_lossy().into();
-                    paths.push(rel);
+                    paths.push(p.strip_prefix(base).unwrap_or(&p).to_string_lossy().into());
                     sizes.push(m.size());
-                    is_dir.push(m.is_dir());
+                    is_dir.push(if m.is_dir() { "x" } else { "" });
                     modified.push(chrono::DateTime::from_timestamp(m.mtime(), 0)
                         .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
                         .unwrap_or_default());
