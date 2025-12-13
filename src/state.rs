@@ -122,6 +122,8 @@ impl ViewState {
     pub fn add_hist(&mut self, cmd: String) { self.history.push(cmd); }
     pub fn rows(&self) -> usize { self.dataframe.height() }
     pub fn cols(&self) -> usize { self.dataframe.width() }
+    /// Check if view uses row selection (meta/freq) vs column selection (table)
+    pub fn is_row_sel(&self) -> bool { self.name == "metadata" || self.name.starts_with("Freq:") }
 }
 
 /// View stack

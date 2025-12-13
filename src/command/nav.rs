@@ -76,31 +76,17 @@ impl Command for Decimals {
 pub struct ToggleSel;
 impl Command for ToggleSel {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
-        let msg = if let Some(view) = app.view_mut() {
-            let is_meta = view.name == "metadata";
-            let is_freq = view.name.starts_with("Freq:");
-            if is_meta || is_freq {
-                let cr = view.state.cr;
-                if view.selected_rows.contains(&cr) {
-                    view.selected_rows.remove(&cr);
-                    format!("Deselected row ({} selected)", view.selected_rows.len())
-                } else {
-                    view.selected_rows.insert(cr);
-                    format!("Selected row ({} selected)", view.selected_rows.len())
-                }
+        let msg = if let Some(v) = app.view_mut() {
+            if v.is_row_sel() {
+                let cr = v.state.cr;
+                if v.selected_rows.contains(&cr) { v.selected_rows.remove(&cr); } else { v.selected_rows.insert(cr); }
+                format!("{} row(s) selected", v.selected_rows.len())
             } else {
-                let cc = view.state.cc;
-                if view.selected_cols.contains(&cc) {
-                    view.selected_cols.remove(&cc);
-                    format!("Deselected column ({} selected)", view.selected_cols.len())
-                } else {
-                    view.selected_cols.insert(cc);
-                    format!("Selected column ({} selected)", view.selected_cols.len())
-                }
+                let cc = v.state.cc;
+                if v.selected_cols.contains(&cc) { v.selected_cols.remove(&cc); } else { v.selected_cols.insert(cc); }
+                format!("{} column(s) selected", v.selected_cols.len())
             }
-        } else {
-            "No view".into()
-        };
+        } else { "No view".into() };
         app.msg(msg);
         Ok(())
     }
@@ -126,19 +112,15 @@ impl Command for ClearSel {
 pub struct SelAll;
 impl Command for SelAll {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
-        let msg = if let Some(view) = app.view_mut() {
-            let is_meta = view.name == "metadata";
-            let is_freq = view.name.starts_with("Freq:");
-            if is_meta || is_freq {
-                for i in 0..view.dataframe.height() { view.selected_rows.insert(i); }
-                format!("Selected all {} row(s)", view.selected_rows.len())
+        let msg = if let Some(v) = app.view_mut() {
+            if v.is_row_sel() {
+                for i in 0..v.rows() { v.selected_rows.insert(i); }
+                format!("Selected all {} row(s)", v.selected_rows.len())
             } else {
-                for i in 0..view.dataframe.width() { view.selected_cols.insert(i); }
-                format!("Selected all {} column(s)", view.selected_cols.len())
+                for i in 0..v.cols() { v.selected_cols.insert(i); }
+                format!("Selected all {} column(s)", v.selected_cols.len())
             }
-        } else {
-            "No view".into()
-        };
+        } else { "No view".into() };
         app.msg(msg);
         Ok(())
     }

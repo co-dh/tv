@@ -1,6 +1,6 @@
 {
-  "total_length": 29855.0,
-  "total_bugs": 46.58330053529203,
+  "total_length": 29821.0,
+  "total_bugs": 46.425844618136004,
   "files": [
     {
       "file": "./src/app.rs",
@@ -28,9 +28,9 @@
     },
     {
       "file": "./src/command/nav.rs",
-      "length": 955.0,
-      "bugs": 1.5856880405270246,
-      "volume": 6438.100972013096
+      "length": 903.0,
+      "bugs": 1.4304309325987687,
+      "volume": 5986.309027931888
     },
     {
       "file": "./src/command/transform.rs",
@@ -130,9 +130,9 @@
     },
     {
       "file": "./src/state.rs",
-      "length": 905.0,
-      "bugs": 1.6955730094517145,
-      "volume": 5785.047267614778
+      "length": 923.0,
+      "bugs": 1.693374200223942,
+      "volume": 5946.836846668376
     },
     {
       "file": "./src/theme.rs",
