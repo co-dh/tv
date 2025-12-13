@@ -479,6 +479,18 @@ fn stream_gz_impl(gz_path: &str, out_path: &Path, raw: bool, tx: &Sender<String>
             .finish(&mut df.clone())
             .map_err(|e| anyhow!("Failed to write {}: {}", chunk_path.display(), e))?;
 
+        // Verify saved schema matches expected (not raw mode)
+        if !raw {
+            if let Some(ref expected) = final_schema {
+                let arrow_schema = ParquetReader::new(std::fs::File::open(&chunk_path)?)
+                    .schema()
+                    .map_err(|e| anyhow!("Failed to read schema from {}: {}", chunk_path.display(), e))?;
+                if let Some(mismatch) = schema_mismatch_arrow(expected, &arrow_schema) {
+                    return Err(anyhow!("Schema mismatch in {}: {}", chunk_path.display(), mismatch));
+                }
+            }
+        }
+
         total_rows += df.height();
         let _ = tx.send(format!("Saved {} rows to {}", total_rows, chunk_path.display()));
         file_idx += 1;
@@ -487,6 +499,21 @@ fn stream_gz_impl(gz_path: &str, out_path: &Path, raw: bool, tx: &Sender<String>
     let _ = child.wait();
     let _ = tx.send(format!("Done: {} files, {} rows", file_idx - 1, total_rows));
     Ok(())
+}
+
+/// Compare polars Schema with ArrowSchema, return mismatch description if different
+fn schema_mismatch_arrow(expected: &Schema, actual: &ArrowSchema) -> Option<String> {
+    for (name, fld) in actual.iter() {
+        let n = name.as_str();
+        if let Some(exp_dtype) = expected.get(n) {
+            // Convert ArrowDataType to polars DataType for comparison
+            let actual_dtype = DataType::from_arrow_dtype(fld.dtype());
+            if *exp_dtype != actual_dtype {
+                return Some(format!("column '{}' expected {:?}, got {:?}", n, exp_dtype, actual_dtype));
+            }
+        }
+    }
+    None
 }
 
 /// Apply a fixed schema to dataframe (cast columns to match)
