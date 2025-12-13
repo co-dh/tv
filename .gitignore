@@ -4,5 +4,6 @@ commands.txt
 !cfg/key.csv
 !cfg/config.csv
 !cfg/themes.csv
+!cfg/plugins.csv
 *.parquet
 tests/data/

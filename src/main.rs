@@ -4,6 +4,7 @@ mod funcs;
 mod keymap;
 mod os;
 mod picker;
+mod plugin;
 mod prql;
 mod render;
 mod state;
@@ -16,7 +17,10 @@ use command::executor::CommandExecutor;
 use command::io::{From, Save};
 use command::nav::{Goto, GotoCol, ToggleInfo, Decimals, ToggleSel, ClearSel, SelAll, SelRows};
 use command::transform::{Agg, DelCol, Filter, RenameCol, Select, Sort, Take, Xkey};
-use command::view::{Correlation, Df, Dup, Env, Frequency, Lr, Ls, Lsblk, Lsof, Metadata, Mounts, Pop, Ps, Swap, Tcp, Udp, Who};
+use command::view::{Correlation, Dup, Pop, Swap};
+use plugin::freq::Frequency;
+use plugin::meta::Metadata;
+use plugin::folder::{Ls, Lr};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use crossterm::{cursor, execute, style::Print, terminal};
 use render::Renderer;
@@ -190,62 +194,51 @@ fn print(app: &AppContext) {
 }
 
 /// Parse a text command into a Command object
-fn parse(line: &str, _app: &AppContext) -> Option<Box<dyn command::Command>> {
+fn parse(line: &str, app: &AppContext) -> Option<Box<dyn command::Command>> {
     let parts: Vec<&str> = line.splitn(2, ' ').collect();
+    let cmd = parts[0].to_lowercase();
     let arg = parts.get(1).map(|s| s.trim()).unwrap_or("");
 
-    match parts[0].to_lowercase().as_str() {
-        "load" | "from" => Some(Box::new(From { file_path: arg.to_string() })),
-        "save" => Some(Box::new(Save { file_path: arg.to_string() })),
-        "ls" => Some(Box::new(Ls { dir: std::path::PathBuf::from(if arg.is_empty() { "." } else { arg }) })),
-        "lr" => Some(Box::new(Lr { dir: std::path::PathBuf::from(if arg.is_empty() { "." } else { arg }) })),
-        "ps" => Some(Box::new(Ps)),
-        "df" => Some(Box::new(Df)),
-        "mounts" => Some(Box::new(Mounts)),
-        "tcp" => Some(Box::new(Tcp)),
-        "udp" => Some(Box::new(Udp)),
-        "lsblk" => Some(Box::new(Lsblk)),
-        "who" => Some(Box::new(Who)),
-        "lsof" => Some(Box::new(Lsof { pid: if arg.is_empty() { None } else { arg.parse().ok() } })),
-        "env" => Some(Box::new(Env)),
-        "freq" | "frequency" => Some(Box::new(Frequency { col_name: arg.to_string() })),
-        "meta" | "metadata" => Some(Box::new(Metadata)),
-        "corr" | "correlation" => Some(Box::new(Correlation { selected_cols: vec![] })),
-        "del_col" | "delcol" => Some(Box::new(DelCol { col_names: arg.split(',').map(|s| s.trim().to_string()).collect() })),
-        "filter" => Some(Box::new(Filter { expr: arg.to_string() })),
-        "select" | "sel" => Some(Box::new(Select {
+    // Core commands (not in plugins)
+    match cmd.as_str() {
+        "load" | "from" => return Some(Box::new(From { file_path: arg.to_string() })),
+        "save" => return Some(Box::new(Save { file_path: arg.to_string() })),
+        "corr" | "correlation" => return Some(Box::new(Correlation { selected_cols: vec![] })),
+        "del_col" | "delcol" => return Some(Box::new(DelCol { col_names: arg.split(',').map(|s| s.trim().to_string()).collect() })),
+        "filter" => return Some(Box::new(Filter { expr: arg.to_string() })),
+        "select" | "sel" => return Some(Box::new(Select {
             col_names: arg.split(',').map(|s| s.trim().to_string()).collect()
         })),
         "sort" => {
-            // PRQL style: "sort col" (asc) or "sort -col" (desc)
             let (col, desc) = prql::parse_sort(arg);
-            Some(Box::new(Sort { col_name: col, descending: desc }))
+            return Some(Box::new(Sort { col_name: col, descending: desc }));
         }
-        "sort_desc" | "sortdesc" => Some(Box::new(Sort { col_name: arg.to_string(), descending: true })),
-        "take" => arg.parse().ok().map(|n| Box::new(Take { n }) as Box<dyn command::Command>),
-        "xkey" => Some(Box::new(Xkey { col_names: arg.split(',').map(|s| s.trim().to_string()).collect() })),
+        "sort_desc" | "sortdesc" => return Some(Box::new(Sort { col_name: arg.to_string(), descending: true })),
+        "take" => return arg.parse().ok().map(|n| Box::new(Take { n }) as Box<dyn command::Command>),
+        "xkey" => return Some(Box::new(Xkey { col_names: arg.split(',').map(|s| s.trim().to_string()).collect() })),
         "rename" => {
             let rename_parts: Vec<&str> = arg.splitn(2, ' ').collect();
             if rename_parts.len() == 2 {
-                Some(Box::new(RenameCol {
+                return Some(Box::new(RenameCol {
                     old_name: rename_parts[0].to_string(),
                     new_name: rename_parts[1].to_string(),
-                }))
-            } else {
-                None
+                }));
             }
+            return None;
         }
-        // Navigation commands (unified: goto +1/-1/0/max/page/-page, gotocol +1/-1/0/max)
-        "goto" => Some(Box::new(Goto { arg: arg.to_string() })),
-        "goto_col" | "gotocol" => Some(Box::new(GotoCol { arg: arg.to_string() })),
-        "toggle_info" => Some(Box::new(ToggleInfo)),
-        "decimals" => arg.parse().ok().map(|d| Box::new(Decimals { delta: d }) as Box<dyn command::Command>),
-        "toggle_sel" => Some(Box::new(ToggleSel)),
-        "clear_sel" => Some(Box::new(ClearSel)),
-        "sel_all" => Some(Box::new(SelAll)),
-        "sel_rows" => Some(Box::new(SelRows { expr: arg.to_string() })),
-        _ => None,
+        "goto" => return Some(Box::new(Goto { arg: arg.to_string() })),
+        "goto_col" | "gotocol" => return Some(Box::new(GotoCol { arg: arg.to_string() })),
+        "toggle_info" => return Some(Box::new(ToggleInfo)),
+        "decimals" => return arg.parse().ok().map(|d| Box::new(Decimals { delta: d }) as Box<dyn command::Command>),
+        "toggle_sel" => return Some(Box::new(ToggleSel)),
+        "clear_sel" => return Some(Box::new(ClearSel)),
+        "sel_all" => return Some(Box::new(SelAll)),
+        "sel_rows" => return Some(Box::new(SelRows { expr: arg.to_string() })),
+        _ => {}
     }
+
+    // Try plugin commands
+    app.plugins.parse(&cmd, arg)
 }
 
 /// Execute a command string with function expansion
@@ -336,9 +329,13 @@ fn on_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
         }
         KeyCode::Char('D') => {
             // D: Delete - dispatch to view-specific handler, fallback to table delete
-            let kind = app.view().map(|v| view::ViewKind::from_name(&v.name));
-            if let Some(k) = kind {
-                if let Some(cmd) = view::handler::dispatch(k, "delete", app) {
+            let name = app.view().map(|v| v.name.clone());
+            if let Some(name) = name {
+                // Temporarily move registry to avoid borrow conflict
+                let plugins = std::mem::take(&mut app.plugins);
+                let cmd = plugins.handle(&name, "delete", app);
+                app.plugins = plugins;
+                if let Some(cmd) = cmd {
                     let _ = CommandExecutor::exec(app, cmd);
                 } else {
                     // Default table delete
@@ -534,9 +531,12 @@ fn on_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
         }
         KeyCode::Enter => {
             // Dispatch Enter to view-specific handler
-            let kind = app.view().map(|v| view::ViewKind::from_name(&v.name));
-            if let Some(k) = kind {
-                if let Some(cmd) = view::handler::dispatch(k, "enter", app) {
+            let name = app.view().map(|v| v.name.clone());
+            if let Some(name) = name {
+                let plugins = std::mem::take(&mut app.plugins);
+                let cmd = plugins.handle(&name, "enter", app);
+                app.plugins = plugins;
+                if let Some(cmd) = cmd {
                     let _ = CommandExecutor::exec(app, cmd);
                 }
             }

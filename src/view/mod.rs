@@ -1,9 +1,5 @@
-#![allow(dead_code)]
-pub mod handler;
-pub mod table;
-pub mod meta;
-pub mod freq;
-pub mod folder;
+//! View type definitions
+//! Note: view handlers are now in the plugin module
 
 /// View type enum
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -32,7 +28,7 @@ impl ViewKind {
         if name == "metadata" { ViewKind::Meta }
         else if name.starts_with("Freq:") { ViewKind::Freq }
         else if name == "correlation" { ViewKind::Corr }
-        else if name == "ls" || name == "lr" { ViewKind::Folder }
+        else if name == "ls" || name == "lr" || name.starts_with("ls:") || name.starts_with("lr:") { ViewKind::Folder }
         else { ViewKind::Table }
     }
 }
@@ -49,6 +45,7 @@ mod tests {
         assert_eq!(ViewKind::from_name("correlation"), ViewKind::Corr);
         assert_eq!(ViewKind::from_name("ls"), ViewKind::Folder);
         assert_eq!(ViewKind::from_name("lr"), ViewKind::Folder);
+        assert_eq!(ViewKind::from_name("ls:/tmp"), ViewKind::Folder);
         assert_eq!(ViewKind::from_name("data.csv"), ViewKind::Table);
         assert_eq!(ViewKind::from_name("my_table"), ViewKind::Table);
     }

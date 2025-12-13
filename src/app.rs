@@ -1,5 +1,6 @@
 use crate::funcs::Funcs;
 use crate::keymap::KeyMap;
+use crate::plugin::Registry;
 use crate::state::{StateStack, ViewState};
 use crate::theme::Theme;
 use anyhow::{anyhow, Result};
@@ -29,6 +30,7 @@ pub struct AppContext {
     pub keymap: KeyMap,            // key bindings
     pub theme: Theme,              // color theme
     pub funcs: Funcs,              // user-defined functions
+    pub plugins: Registry,         // plugin registry
     pub bg_loader: Option<Receiver<DataFrame>>,  // background gz loader
     pub bg_saver: Option<Receiver<String>>,      // background save status
     pub raw_save: bool,            // --raw: skip type detection on save
@@ -40,6 +42,7 @@ impl AppContext {
         let keymap = KeyMap::load(std::path::Path::new("cfg/key.csv")).unwrap_or_default();
         let theme = Theme::load_active();
         let funcs = Funcs::load(std::path::Path::new("cfg/funcs.4th"));
+        let plugins = Registry::new(std::path::Path::new("cfg/plugins.csv"));
         // History file: ~/.tv/history.4th
         let history_file = dirs::home_dir()
             .map(|h| h.join(".tv").join("history.4th"))
@@ -57,6 +60,7 @@ impl AppContext {
             keymap,
             theme,
             funcs,
+            plugins,
             bg_loader: None,
             bg_saver: None,
             raw_save: false,

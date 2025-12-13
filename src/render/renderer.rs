@@ -18,12 +18,7 @@ impl Renderer {
         let decimals = app.float_decimals;
 
         // Get view name for keymap lookup
-        let tab = app.view().map(|v| {
-            if v.name.starts_with("Freq:") { "freq" }
-            else if v.name == "metadata" { "meta" }
-            else if v.name == "correlation" { "corr" }
-            else { "table" }
-        }).unwrap_or("table");
+        let tab = app.view().map(|v| app.plugins.tab(&v.name)).unwrap_or("table");
         let hints = app.keymap.get_hints(tab);
         let theme = app.theme.clone();
 

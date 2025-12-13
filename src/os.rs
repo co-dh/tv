@@ -6,14 +6,28 @@ use std::path::Path;
 /// List directory contents as DataFrame
 pub fn ls(dir: &Path) -> anyhow::Result<DataFrame> {
     let mut names: Vec<String> = Vec::new();
+    let mut paths: Vec<String> = Vec::new();
     let mut sizes: Vec<u64> = Vec::new();
     let mut modified: Vec<i64> = Vec::new();
     let mut is_dir: Vec<&str> = Vec::new();
 
+    // Add ".." to go to parent directory
+    let abs_dir = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+    if let Some(parent) = abs_dir.parent() {
+        names.push("..".into());
+        paths.push(parent.to_string_lossy().into());
+        let m = parent.metadata().ok();
+        sizes.push(m.as_ref().map(|m| m.size()).unwrap_or(0));
+        is_dir.push("x");
+        modified.push(m.map(|m| m.mtime() * 1_000_000).unwrap_or(0));
+    }
+
     for entry in std::fs::read_dir(dir)? {
         let e = entry?;
         let m = e.metadata()?;
+        let full_path = e.path().canonicalize().unwrap_or_else(|_| e.path());
         names.push(e.file_name().to_string_lossy().into());
+        paths.push(full_path.to_string_lossy().into());
         sizes.push(m.size());
         is_dir.push(if m.is_dir() { "x" } else { "" });
         modified.push(m.mtime() * 1_000_000); // microseconds
@@ -24,6 +38,7 @@ pub fn ls(dir: &Path) -> anyhow::Result<DataFrame> {
 
     Ok(DataFrame::new(vec![
         Series::new("name".into(), names).into(),
+        Series::new("path".into(), paths).into(),
         Series::new("size".into(), sizes).into(),
         modified_series.into(),
         Series::new("dir".into(), is_dir).into(),

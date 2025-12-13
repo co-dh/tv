@@ -524,6 +524,18 @@ fn test_lr_recursive() {
     assert!(output.contains("nested.txt"), "lr should show nested file");
 }
 
+#[test]
+fn test_ls_parent_dir_entry() {
+    let id = unique_id();
+    let dir = format!("/tmp/tv_test_parent_{}", id);
+    fs::create_dir_all(&dir).unwrap();
+
+    let output = run_script(&format!("ls {}\n", dir), id);
+    // First row should be ".." with parent path
+    assert!(output.contains(".."), "ls should show .. entry for parent");
+    assert!(output.contains("/tmp"), ".. should point to parent directory");
+}
+
 // === meta tests (from test_meta.sh) ===
 
 #[test]
@@ -769,6 +781,28 @@ fn test_gz_taq_save_parquet() {
     let output = run_script(&format!("from {}\n", chunk_path), id);
     assert!(output.contains("time"), "Parquet should have time type");
     assert!(output.contains("03:59:00"), "Should preserve TAQ time in parquet");
+}
+
+#[test]
+fn test_parquet_load_int_to_time() {
+    use polars::prelude::*;
+    let id = unique_id();
+    // Create parquet with integer columns having time-like names
+    let pq_path = format!("/tmp/tv_pq_int_time_{}.parquet", id);
+    let df = df! {
+        "event_time" => &[035900085993578i64, 143000000000000, 120000000000000],  // TAQ format
+        "created_at" => &[1702483200i64, 1702483260, 1702483320],  // epoch seconds
+        "value" => &[100i64, 200, 300],
+    }.unwrap();
+    ParquetWriter::new(std::fs::File::create(&pq_path).unwrap())
+        .finish(&mut df.clone()).unwrap();
+
+    // Load parquet - should convert int columns with time-like names
+    let output = run_script(&format!("from {}\nmeta\n", pq_path), id);
+    // event_time should be Time type (TAQ format)
+    assert!(output.contains("Time"), "event_time should be converted to Time type");
+    // created_at should be Datetime (epoch seconds)
+    assert!(output.contains("Datetime"), "created_at should be converted to Datetime type");
 }
 
 // =============================================================================

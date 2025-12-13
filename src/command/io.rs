@@ -48,7 +48,7 @@ impl Command for From {
         } else {
             let df = match path.extension().and_then(|s| s.to_str()) {
                 Some("csv") => convert_epoch_cols(self.load_csv(path)?),
-                Some("parquet") => self.load_parquet(path)?,  // parquet keeps types
+                Some("parquet") => convert_epoch_cols(self.load_parquet(path)?),
                 Some(ext) => return Err(anyhow!("Unsupported file format: {}", ext)),
                 None => return Err(anyhow!("Could not determine file type")),
             };
