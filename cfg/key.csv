@@ -37,7 +37,7 @@ table,T,dup,Duplicate current view
 table,W,swap,Swap top two views on stack
 table,l,ls,List current directory
 table,r,lr,List directory recursively
-table,:,goto_row,Jump to row number
+table,:,command,Command picker
 table,@,goto_col,Jump to column by name
 table,m,bookmark,Toggle bookmark on current row
 table,',next_bookmark,Jump to next bookmark

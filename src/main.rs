@@ -604,21 +604,23 @@ fn on_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
             }
         }
         KeyCode::Char(':') => {
-            // :: Jump to row number
-            if let Some(input) = prompt(app, "Go to row: ")? {
-                if let Ok(row) = input.parse::<usize>() {
-                    if let Some(view) = app.view_mut() {
-                        let max_rows = view.rows();
-                        if row < max_rows {
-                            view.state.cr = row;
-                            view.state.visible();
-                            app.msg(format!("Row {}", row));
-                        } else {
-                            app.msg(format!("Row {} out of range (max {})", row, max_rows - 1));
-                        }
+            // :: Command picker
+            let commands = vec![
+                "load <file>", "save <file>",
+                "ls [dir]", "lr [dir]",
+                "ps", "df", "mounts", "tcp", "udp", "lsblk", "who", "lsof [pid]", "env",
+                "filter <expr>", "freq <col>", "meta", "corr",
+                "select <cols>", "delcol <cols>", "sort <col>", "sortdesc <col>", "rename <old> <new>",
+            ];
+            let cmd_list: Vec<String> = commands.iter().map(|s| s.to_string()).collect();
+            if let Ok(Some(selected)) = picker::input(cmd_list, ": ") {
+                let cmd_str = selected.split_whitespace().next().unwrap_or(&selected);
+                if let Some(cmd) = parse(cmd_str, app).or_else(|| parse(&selected, app)) {
+                    if let Err(e) = CommandExecutor::exec(app, cmd) {
+                        app.err(e);
                     }
                 } else {
-                    app.msg("Invalid row number".to_string());
+                    app.msg(format!("Unknown command: {}", selected));
                 }
             }
         }

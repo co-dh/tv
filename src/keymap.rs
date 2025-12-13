@@ -99,6 +99,7 @@ impl KeyMap {
             "filter_parent" => Some("filter parent"),
             "sel_null" => Some("sel null"),
             "sel_single" => Some("sel single"),
+            "command" => Some("command"),
             _ => None,
         }
     }
