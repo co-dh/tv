@@ -486,7 +486,8 @@ impl Renderer {
                 ("^U", "page up"),
                 ("L", "load file"),
                 ("S", "save file"),
-                (",/.", "decimals"),
+                (",", "decimals--"),
+                (".", "decimals++"),
                 ("q", "quit"),
             ]
         };
