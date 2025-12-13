@@ -81,21 +81,15 @@ impl From {
 
     /// Load parquet files matching glob pattern using lazy scan (preview only)
     fn load_glob(&self, app: &mut AppContext, pattern: &str) -> Result<()> {
-        // Use polars scan_parquet with glob pattern (lazy load)
         let args = ScanArgsParquet::default();
         let lf = LazyFrame::scan_parquet(pattern, args)
             .map_err(|e| anyhow!("Failed to scan parquet: {}", e))?;
-
-        // Only load first 1000 rows for preview
         let df = lf.limit(MAX_PREVIEW_ROWS as u32).collect()
-            .map_err(|e| anyhow!("Failed to collect: {}", e))?;
-
+            .map_err(|e| anyhow!("Schema mismatch in parquet files: {}", e))?;
         if df.height() == 0 { return Err(anyhow!("No data found matching pattern")); }
-
+        let df = convert_epoch_cols(df);
         app.msg(format!("Preview: {} rows, {} cols from {}", df.height(), df.width(), pattern));
-        app.stack = crate::state::StateStack::init(ViewState::new(
-            app.next_id(), pattern.to_string(), df, None,
-        ));
+        app.stack = crate::state::StateStack::init(ViewState::new(app.next_id(), pattern.to_string(), df, None));
         Ok(())
     }
 
