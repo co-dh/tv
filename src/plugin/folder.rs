@@ -120,12 +120,13 @@ pub struct BatView { pub path: String }
 
 impl Command for BatView {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
-        use crossterm::{execute, terminal::{LeaveAlternateScreen, EnterAlternateScreen}};
+        use crossterm::{execute, terminal::{LeaveAlternateScreen, EnterAlternateScreen, disable_raw_mode, enable_raw_mode}};
         use std::io::stdout;
         use std::process::Command as Cmd;
 
-        // Leave alternate screen so bat displays normally
+        // Leave alternate screen and disable raw mode so bat receives input
         execute!(stdout(), LeaveAlternateScreen)?;
+        disable_raw_mode()?;
 
         // Run bat (or cat as fallback)
         let status = Cmd::new("bat")
@@ -134,7 +135,8 @@ impl Command for BatView {
             .or_else(|_| Cmd::new("less").arg(&self.path).status())
             .or_else(|_| Cmd::new("cat").arg(&self.path).status());
 
-        // Re-enter alternate screen and mark for redraw
+        // Re-enable raw mode and re-enter alternate screen
+        enable_raw_mode()?;
         execute!(stdout(), EnterAlternateScreen)?;
         app.needs_redraw = true;  // force ratatui to redraw
 

@@ -89,10 +89,20 @@ fn main() -> Result<()> {
         app.check_bg_saver();
         app.check_bg_meta();
 
-        // Force full redraw if needed (after bat/less return)
+        // Force full redraw if needed (after bat/less/fzf return)
         if app.needs_redraw {
             tui.clear()?;
+            // Update viewport in case terminal size changed
+            let size = tui.size()?;
+            app.viewport(size.height, size.width);
             app.needs_redraw = false;
+        }
+        // Center cursor if needed (after search, with fresh viewport)
+        if app.needs_center {
+            if let Some(view) = app.view_mut() {
+                view.state.center_if_needed();
+            }
+            app.needs_center = false;
         }
         // Render with ratatui diff-based update
         tui.draw(|frame| Renderer::render(frame, &mut app))?;
@@ -379,7 +389,7 @@ fn on_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                     if let Some(view) = app.view_mut() {
                         if let Some(&pos) = matches.first() {
                             view.state.cr = pos;
-                            view.state.visible();
+                            app.needs_center = true;  // defer scroll until after viewport update
                             app.msg(format!("Found {} match(es)", matches.len()));
                         } else {
                             app.msg(format!("Not found: {}", expr));

@@ -36,6 +36,7 @@ pub struct AppContext {
     pub raw_save: bool,            // --raw: skip type detection on save
     pub bg_meta: Option<(usize, Receiver<DataFrame>)>,  // (parent_id, meta stats receiver)
     pub needs_redraw: bool,  // force full redraw (after leaving alternate screen)
+    pub needs_center: bool,  // center cursor after viewport update (for search)
 }
 
 impl AppContext {
@@ -67,6 +68,7 @@ impl AppContext {
             raw_save: false,
             bg_meta: None,
             needs_redraw: false,
+            needs_center: false,
         }
     }
 
