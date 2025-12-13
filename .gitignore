@@ -1,4 +1,5 @@
 /target
 commands.txt
 *.csv
+!cfg/key.csv
 *.parquet
