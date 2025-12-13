@@ -99,7 +99,7 @@ impl Renderer {
             Self::render_row_xs(frame, df, row_idx, state, &xs, screen_width, row_num_width, is_correlation, selected_cols, selected_rows, col_sep, decimals, theme, area, screen_row);
         }
 
-        // Draw separator bar if set
+        // Draw separator bar if set (stop before tabs/status)
         if let Some(sep_col) = col_sep {
             if sep_col < df.width() {
                 let sep_x = xs.get(sep_col).copied().unwrap_or(0);
@@ -107,16 +107,18 @@ impl Renderer {
                     let px = (sep_x - 1) as u16 + row_num_width + if row_num_width > 0 { 1 } else { 0 };
                     let buf = frame.buffer_mut();
                     let sep_style = Style::default().fg(to_rcolor(theme.info_border_fg));
-                    for y in 0..(area.height - 1) {
+                    let sep_end = area.height.saturating_sub(bottom_reserve as u16);
+                    for y in 0..sep_end {
                         if px < area.width { buf[(px, y)].set_char('│').set_style(sep_style); }
                     }
                 }
             }
         }
 
-        // Clear empty rows
+        // Clear empty rows (stop before tabs/status)
+        let clear_end = area.height.saturating_sub(bottom_reserve as u16);
         let buf = frame.buffer_mut();
-        for screen_row in ((end_row - state.r0 + 1) as u16)..(area.height - 1) {
+        for screen_row in ((end_row - state.r0 + 1) as u16)..clear_end {
             for x in 0..area.width {
                 buf[(x, screen_row)].reset();
             }
@@ -437,11 +439,22 @@ impl Renderer {
     fn render_tabs(frame: &mut Frame, names: &[String], area: Rect, theme: &Theme) {
         let row = area.height - 2;
         let tab_area = Rect::new(0, row, area.width, 1);
-        let selected = names.len().saturating_sub(1);  // last is current
-        let tabs = Tabs::new(names.iter().map(|s| s.as_str()))
+        // Shorten names: extract filename, truncate to 20 chars
+        let short: Vec<String> = names.iter().map(|s| {
+            let n = s.rsplit('/').next().unwrap_or(s);  // get filename
+            let n = n.split(':').next().unwrap_or(n);   // remove :suffix
+            if n.len() > 20 { format!("{}…", &n[..19]) } else { n.to_string() }
+        }).collect();
+        // Fill background (use header_bg for contrast)
+        let buf = frame.buffer_mut();
+        let bg = to_rcolor(theme.header_bg);
+        for x in 0..area.width { buf[(x, row)].set_style(Style::default().bg(bg)).set_char(' '); }
+        // Render tabs
+        let selected = names.len().saturating_sub(1);
+        let tabs = Tabs::new(short.iter().map(|s| s.as_str()))
             .select(selected)
-            .style(Style::default().fg(to_rcolor(theme.status_fg)))
-            .highlight_style(Style::default().fg(to_rcolor(theme.header_fg)).add_modifier(Modifier::BOLD))
+            .style(Style::default().fg(to_rcolor(theme.status_fg)).bg(bg))
+            .highlight_style(Style::default().fg(to_rcolor(theme.header_fg)).bg(bg).add_modifier(Modifier::BOLD))
             .divider("│");
         frame.render_widget(tabs, tab_area);
     }

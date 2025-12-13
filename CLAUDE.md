@@ -11,14 +11,14 @@
 - Currently: select in fzf, return to folder, then Enter again
 - Should: select in fzf, immediately open the file
 
-## Tab Bar Not Visible
-- Tab bar showing view stack is not visible to user
-- Investigate why tabs are not rendering
-
 ## Plugin Architecture
 - Investigate nushell plugin architecture - modularize view functionality into single files for dynamic add/remove
 
 # Done
+
+## Tab Bar Visibility Fix
+- Clear empty rows loop was overwriting tab row
+- Fixed by using bottom_reserve to exclude tabs/status from clear range
 
 ## Meta with Key Columns
 - For table with keyed columns, Meta shows stats grouped by key columns
