@@ -240,46 +240,19 @@ impl Command for Correlation {
             return Err(anyhow!("Need at least 2 numeric columns for correlation"));
         }
 
-        // Build correlation matrix
+        // Build correlation matrix using polars
         let n = numeric_cols.len();
-        let mut corr_data: Vec<Vec<f64>> = vec![vec![0.0; n]; n];
+        let chunks: Vec<Float64Chunked> = numeric_cols.iter()
+            .map(|c| df.column(c).unwrap().as_materialized_series().cast(&DataType::Float64).unwrap().f64().unwrap().clone())
+            .collect();
 
-        // Convert columns to f64 for correlation calculation
-        let mut float_cols: Vec<Vec<f64>> = Vec::new();
-        for col_name in &numeric_cols {
-            let col = df.column(col_name)?;
-            let series = col.as_materialized_series();
-            let f64_series = series.cast(&DataType::Float64)?;
-            let values: Vec<f64> = f64_series.f64()?
-                .into_iter()
-                .map(|v| v.unwrap_or(f64::NAN))
-                .collect();
-            float_cols.push(values);
-        }
-
-        // Calculate correlations
-        for i in 0..n {
-            for j in 0..n {
-                if i == j {
-                    corr_data[i][j] = 1.0;
-                } else if j > i {
-                    let corr = pearson_correlation(&float_cols[i], &float_cols[j]);
-                    corr_data[i][j] = corr;
-                    corr_data[j][i] = corr;
-                }
-            }
-        }
-
-        // Build DataFrame with column names as first column
-        let mut columns: Vec<Column> = vec![
-            Series::new("column".into(), numeric_cols.clone()).into()
-        ];
-
+        let mut columns: Vec<Column> = vec![Series::new("column".into(), numeric_cols.clone()).into()];
         for (i, col_name) in numeric_cols.iter().enumerate() {
-            let values: Vec<f64> = corr_data.iter().map(|row| row[i]).collect();
-            columns.push(Series::new(col_name.clone().into(), values).into());
+            let corrs: Vec<f64> = (0..n).map(|j| {
+                if i == j { 1.0 } else { polars_ops::chunked_array::cov::pearson_corr(&chunks[i], &chunks[j]).unwrap_or(f64::NAN) }
+            }).collect();
+            columns.push(Series::new(col_name.clone().into(), corrs).into());
         }
-
         let corr_df = DataFrame::new(columns)?;
 
         let id = app.next_id();
@@ -298,44 +271,3 @@ impl Command for Correlation {
     fn record(&self) -> bool { false }
 }
 
-/// Calculate Pearson correlation coefficient
-fn pearson_correlation(x: &[f64], y: &[f64]) -> f64 {
-    let n = x.len();
-    if n == 0 || n != y.len() {
-        return f64::NAN;
-    }
-
-    let mut sum_x = 0.0;
-    let mut sum_y = 0.0;
-    let mut sum_xy = 0.0;
-    let mut sum_x2 = 0.0;
-    let mut sum_y2 = 0.0;
-    let mut count = 0.0;
-
-    for i in 0..n {
-        let xi = x[i];
-        let yi = y[i];
-        if xi.is_nan() || yi.is_nan() {
-            continue;
-        }
-        sum_x += xi;
-        sum_y += yi;
-        sum_xy += xi * yi;
-        sum_x2 += xi * xi;
-        sum_y2 += yi * yi;
-        count += 1.0;
-    }
-
-    if count < 2.0 {
-        return f64::NAN;
-    }
-
-    let numerator = count * sum_xy - sum_x * sum_y;
-    let denominator = ((count * sum_x2 - sum_x * sum_x) * (count * sum_y2 - sum_y * sum_y)).sqrt();
-
-    if denominator == 0.0 {
-        f64::NAN
-    } else {
-        numerator / denominator
-    }
-}

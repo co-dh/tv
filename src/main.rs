@@ -306,7 +306,6 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                         let matches = find_sql(&view.dataframe, &expr);
                         app.search.col_name = None;
                         app.search.value = Some(expr.clone());
-                        app.search.regex = None;
 
                         if let Some(view) = app.view_mut() {
                             if let Some(&pos) = matches.first() {
@@ -338,22 +337,8 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
             }
         }
         KeyCode::Char('n') => {
-            // n: Find next occurrence (SQL or regex)
-            if let (Some(col_name), Some(pattern)) = (app.search.col_name.clone(), app.search.regex.clone()) {
-                // Regex search
-                if let Ok(re) = regex::Regex::new(&pattern) {
-                    if let Some(view) = app.view_mut() {
-                        let start = view.state.cr + 1;
-                        if let Some(pos) = find_regex(&view.dataframe, &col_name, &re, start, true) {
-                            view.state.cr = pos;
-                            view.state.visible();
-                        } else {
-                            app.msg("No more matches".to_string());
-                        }
-                    }
-                }
-            } else if let Some(expr) = app.search.value.clone() {
-                // SQL search
+            // n: Find next match
+            if let Some(expr) = app.search.value.clone() {
                 if let Some(view) = app.view_mut() {
                     let matches = find_sql(&view.dataframe, &expr);
                     let cur = view.state.cr;
@@ -369,22 +354,8 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
             }
         }
         KeyCode::Char('N') => {
-            // N: Find previous occurrence (SQL or regex)
-            if let (Some(col_name), Some(pattern)) = (app.search.col_name.clone(), app.search.regex.clone()) {
-                // Regex search
-                if let Ok(re) = regex::Regex::new(&pattern) {
-                    if let Some(view) = app.view_mut() {
-                        let start = view.state.cr.saturating_sub(1);
-                        if let Some(pos) = find_regex(&view.dataframe, &col_name, &re, start, false) {
-                            view.state.cr = pos;
-                            view.state.visible();
-                        } else {
-                            app.msg("No more matches".to_string());
-                        }
-                    }
-                }
-            } else if let Some(expr) = app.search.value.clone() {
-                // SQL search
+            // N: Find previous match
+            if let Some(expr) = app.search.value.clone() {
                 if let Some(view) = app.view_mut() {
                     let matches = find_sql(&view.dataframe, &expr);
                     let cur = view.state.cr;
@@ -410,7 +381,6 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                         let expr = if is_str { format!("{} = '{}'", col_name, val) } else { format!("{} = {}", col_name, val) };
                         app.search.col_name = None;
                         app.search.value = Some(expr.clone());
-                        app.search.regex = None;
                         app.msg(format!("Search: {}", expr));
                     }
                 }
@@ -659,69 +629,6 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                 } else if let Some(view) = app.view_mut() {
                     view.selected_cols.clear();
                 }
-            }
-        }
-        KeyCode::Char('?') => {
-            // ?: Regex search in current column
-            if let Some(view) = app.view() {
-                if let Some(col_name) = view.state.cur_col(&view.dataframe) {
-                    if let Some(pattern) = prompt_input(app, "Regex: ")? {
-                        match regex::Regex::new(&pattern) {
-                            Ok(re) => {
-                                app.search.col_name = Some(col_name.clone());
-                                app.search.regex = Some(pattern.clone());
-                                app.search.value = None;
-
-                                // Find first match
-                                if let Some(view) = app.view_mut() {
-                                    if let Some(pos) = find_regex(&view.dataframe, &col_name, &re, 0, true) {
-                                        view.state.cr = pos;
-                                        view.state.visible();
-                                        app.msg(format!("Regex match: /{}/", pattern));
-                                    } else {
-                                        app.msg(format!("No match: /{}/", pattern));
-                                    }
-                                }
-                            }
-                            Err(e) => app.msg(format!("Invalid regex: {}", e)),
-                        }
-                    }
-                }
-            }
-        }
-        KeyCode::Char('|') => {
-            // |: Regex filter on current column
-            let col_info = app.view().map(|view| {
-                (
-                    view.state.cur_col(&view.dataframe),
-                    view.dataframe.clone(),
-                    view.filename.clone(),
-                )
-            });
-            if let Some((Some(col_name), df, filename)) = col_info {
-                if let Some(pattern) = prompt_input(app, "Regex filter: ")? {
-                    match regex::Regex::new(&pattern) {
-                        Ok(re) => {
-                            // Filter rows matching regex
-                            match filter_by_regex(&df, &col_name, &re) {
-                                Ok(filtered_df) => {
-                                    let id = app.next_id();
-                                    
-                                    app.stack.push(state::ViewState::new(
-                                        id,
-                                        format!("{}~/{}/", col_name, pattern),
-                                        filtered_df,
-                                        filename,
-                                    ));
-                                }
-                                Err(e) => app.err(e),
-                            }
-                        }
-                        Err(e) => app.msg(format!("Invalid regex: {}", e)),
-                    }
-                }
-            } else {
-                app.no_table();
             }
         }
         KeyCode::Char(':') => {
@@ -1000,51 +907,14 @@ fn find_sql(df: &polars::prelude::DataFrame, expr: &str) -> Vec<usize> {
         .unwrap_or_default()
 }
 
-/// Find a regex match in a column, returns row index
-fn find_regex(df: &polars::prelude::DataFrame, col_name: &str, re: &regex::Regex, start: usize, forward: bool) -> Option<usize> {
-    let col = df.column(col_name).ok()?;
-    let len = col.len();
-
-    if forward {
-        for i in start..len {
-            if let Ok(v) = col.get(i) {
-                if re.is_match(&strip_quotes(&v.to_string())) {
-                    return Some(i);
-                }
-            }
-        }
-    } else {
-        for i in (0..=start).rev() {
-            if let Ok(v) = col.get(i) {
-                if re.is_match(&strip_quotes(&v.to_string())) {
-                    return Some(i);
-                }
-            }
-        }
-    }
-    None
-}
-
-/// Filter DataFrame by regex match on a column
-fn filter_by_regex(df: &polars::prelude::DataFrame, col_name: &str, re: &regex::Regex) -> anyhow::Result<polars::prelude::DataFrame> {
+/// Filter DataFrame by matching any of the given values in a column (SQL IN)
+fn filter_by_values(df: &polars::prelude::DataFrame, c: &str, values: &[String]) -> anyhow::Result<polars::prelude::DataFrame> {
     use polars::prelude::*;
-
-    let col = df.column(col_name)?;
-    Ok(df.filter(&BooleanChunked::from_slice("mask".into(), &(0..col.len())
-        .map(|i| col.get(i).map(|v| re.is_match(&strip_quotes(&v.to_string()))).unwrap_or(false))
-        .collect::<Vec<bool>>()))?)
-}
-
-/// Filter DataFrame by matching any of the given values in a column
-fn filter_by_values(df: &polars::prelude::DataFrame, col_name: &str, values: &[String]) -> anyhow::Result<polars::prelude::DataFrame> {
-    use polars::prelude::*;
-    use std::collections::HashSet;
-
-    let value_set: HashSet<&str> = values.iter().map(|s| s.as_str()).collect();
-    let col = df.column(col_name)?;
-    Ok(df.filter(&BooleanChunked::from_slice("mask".into(), &(0..col.len())
-        .map(|i| col.get(i).map(|v| value_set.contains(strip_quotes(&v.to_string()).as_str())).unwrap_or(false))
-        .collect::<Vec<bool>>()))?)
+    let is_str = matches!(df.column(c)?.dtype(), DataType::String);
+    let vals = values.iter().map(|v| if is_str { format!("'{}'", v) } else { v.clone() }).collect::<Vec<_>>().join(",");
+    let mut ctx = polars::sql::SQLContext::new();
+    ctx.register("df", df.clone().lazy());
+    Ok(ctx.execute(&format!("SELECT * FROM df WHERE {} IN ({})", c, vals))?.collect()?)
 }
 
 /// Aggregate dataframe by column

@@ -52,7 +52,6 @@ Both search and filter use **SQL WHERE syntax**:
 |-----|--------|
 | `/` | Search (navigate to matching row) |
 | `\` | Filter (create new view with matching rows) |
-| `?` | Regex search in current column |
 | `n` | Find next match |
 | `N` | Find previous match |
 | `*` | Search for current cell value |

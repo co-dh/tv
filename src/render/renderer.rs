@@ -440,8 +440,6 @@ impl Renderer {
             vec![
                 ("/", "search"),
                 ("\\", "filter"),
-                ("?", "regex search"),
-                ("|", "regex filter"),
                 ("n", "next match"),
                 ("N", "prev match"),
                 ("[", "sort asc"),

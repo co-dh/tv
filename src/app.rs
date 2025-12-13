@@ -8,8 +8,7 @@ use std::path::PathBuf;
 #[derive(Clone, Default)]
 pub struct SearchState {
     pub col_name: Option<String>,  // column being searched
-    pub value: Option<String>,     // search value
-    pub regex: Option<String>,     // regex pattern
+    pub value: Option<String>,     // search value (SQL WHERE)
 }
 
 /// App context

@@ -51,10 +51,10 @@
 | `widths_calc_row` | `widths_row` |
 
 ### Halstead Metrics
-| Metric | Start | After Style | After Silent | After Polars | After SQL | Total Change |
-|--------|-------|-------------|--------------|--------------|-----------|--------------|
-| Length | 12,664 | 12,427 | 12,122 | 11,698 | 11,003 | -1,661 (-13.1%) |
-| Bugs | 20.808 | 20.525 | 19.950 | 19.054 | 17.897 | -2.911 (-14.0%) |
+| Metric | Start | After Style | After Silent | After Polars | After SQL | Unified | No Regex | Polars Corr | Total Change |
+|--------|-------|-------------|--------------|--------------|-----------|---------|----------|-------------|--------------|
+| Length | 12,664 | 12,427 | 12,122 | 11,698 | 11,003 | 10,638 | 9,904 | 9,622 | -3,042 (-24.0%) |
+| Bugs | 20.808 | 20.525 | 19.950 | 19.054 | 17.897 | 16.997 | 15.557 | 14.764 | -6.044 (-29.0%) |
 
 ### Line Count
 - 11 files changed
