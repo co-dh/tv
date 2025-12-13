@@ -1,5 +1,6 @@
 use crate::app::AppContext;
 use crate::state::{TableState, ViewState};
+use crate::theme::Theme;
 use anyhow::Result;
 use crossterm::{
     cursor,
@@ -35,16 +36,17 @@ impl Renderer {
         // Use buffered writer to reduce flickering
         let mut stdout = BufWriter::new(io::stdout());
 
+        let theme = app.theme.clone();
         if let Some(view) = app.view_mut() {
             // Get selection from view (clone to avoid borrow issues)
             let selected_cols = view.selected_cols.clone();
             let selected_rows = view.selected_rows.clone();
             let view_name = view.name.clone();
-            Self::render_table(view, rows, cols, &selected_cols, &selected_rows, decimals, &mut stdout)?;
+            Self::render_table(view, rows, cols, &selected_cols, &selected_rows, decimals, &theme, &mut stdout)?;
             if show_info {
-                Self::render_info_box(&view_name, stack_len, rows, cols, &hints, &mut stdout)?;
+                Self::render_info_box(&view_name, stack_len, rows, cols, &hints, &theme, &mut stdout)?;
             }
-            Self::render_status_bar(view, &message, rows, cols, &mut stdout)?;
+            Self::render_status_bar(view, &message, rows, cols, &theme, &mut stdout)?;
         } else {
             Self::render_empty_message(&message, rows, cols, &mut stdout)?;
         }
@@ -54,7 +56,7 @@ impl Renderer {
     }
 
     /// Render the table data
-    fn render_table<W: Write>(view: &mut ViewState, rows: u16, cols: u16, selected_cols: &HashSet<usize>, selected_rows: &HashSet<usize>, decimals: usize, writer: &mut W) -> Result<()> {
+    fn render_table<W: Write>(view: &mut ViewState, rows: u16, cols: u16, selected_cols: &HashSet<usize>, selected_rows: &HashSet<usize>, decimals: usize, theme: &Theme, writer: &mut W) -> Result<()> {
         let df = &view.dataframe;
         let is_correlation = view.name == "correlation";
 
@@ -108,14 +110,14 @@ impl Renderer {
         let end_row = (state.r0 + (rows as usize).saturating_sub(2)).min(df.height());
 
         // Render column headers
-        Self::render_headers_xs(df, state, &xs, screen_width, row_num_width, selected_cols, writer)?;
+        Self::render_headers_xs(df, state, &xs, screen_width, row_num_width, selected_cols, theme, writer)?;
 
         // Render data rows
         for row_idx in state.r0..end_row {
             let screen_row = (row_idx - state.r0 + 1) as u16;
             execute!(writer, cursor::MoveTo(0, screen_row))?;
 
-            Self::render_row_xs(df, row_idx, state, &xs, screen_width, row_num_width, is_correlation, selected_cols, selected_rows, decimals, writer)?;
+            Self::render_row_xs(df, row_idx, state, &xs, screen_width, row_num_width, is_correlation, selected_cols, selected_rows, decimals, theme, writer)?;
         }
 
         // Clear empty rows between data and status bar
@@ -131,12 +133,13 @@ impl Renderer {
     }
 
     /// Render column headers using xs positions (qtv style)
-    fn render_headers_xs<W: Write>(df: &DataFrame, state: &TableState, xs: &[i32], screen_width: i32, row_num_width: u16, selected_cols: &HashSet<usize>, writer: &mut W) -> Result<()> {
+    fn render_headers_xs<W: Write>(df: &DataFrame, state: &TableState, xs: &[i32], screen_width: i32, row_num_width: u16, selected_cols: &HashSet<usize>, theme: &Theme, writer: &mut W) -> Result<()> {
         execute!(
             writer,
             cursor::MoveTo(0, 0),
+            SetBackgroundColor(theme.header_bg),
+            SetForegroundColor(theme.header_fg),
             SetAttribute(Attribute::Bold),
-            SetAttribute(Attribute::Underlined)
         )?;
 
         // Render row number header (if showing row numbers)
@@ -149,139 +152,92 @@ impl Renderer {
             let next_x = xs.get(col_idx + 1).copied().unwrap_or(x);
 
             // Skip if column is completely off-screen left
-            if next_x <= 0 {
-                continue;
-            }
+            if next_x <= 0 { continue; }
             // Stop if column starts beyond screen
-            if x >= screen_width {
-                break;
-            }
+            if x >= screen_width { break; }
 
             let is_current = col_idx == state.cc;
             let is_selected = selected_cols.contains(&col_idx);
             let col_width = state.col_widths.get(col_idx).copied().unwrap_or(10);
 
-            // Current column: dark grey background
-            // Selected column: cyan foreground
-            if is_current {
-                execute!(writer, SetBackgroundColor(Color::DarkGrey))?;
-            }
-            if is_selected {
-                execute!(writer, SetForegroundColor(Color::Cyan))?;
-            }
+            // Current column: cursor background; Selected column: select foreground
+            if is_current { execute!(writer, SetBackgroundColor(theme.cursor_bg), SetForegroundColor(theme.cursor_fg))?; }
+            else if is_selected { execute!(writer, SetForegroundColor(theme.select_fg))?; }
 
             let display = format!("{:width$}", col_name, width = col_width as usize);
             execute!(writer, Print(&display[..display.len().min(col_width as usize)]))?;
 
             if is_current || is_selected {
                 execute!(writer, ResetColor)?;
-                // Re-apply bold/underline after reset
-                execute!(writer, SetAttribute(Attribute::Bold), SetAttribute(Attribute::Underlined))?;
+                // Re-apply header style after reset
+                execute!(writer, SetBackgroundColor(theme.header_bg), SetForegroundColor(theme.header_fg), SetAttribute(Attribute::Bold))?;
             }
 
             execute!(writer, Print(" "))?;
         }
 
         // Reset attributes and clear to end of line
-        execute!(
-            writer,
-            SetAttribute(Attribute::Reset),
-            terminal::Clear(terminal::ClearType::UntilNewLine)
-        )?;
+        execute!(writer, SetAttribute(Attribute::Reset), terminal::Clear(terminal::ClearType::UntilNewLine))?;
 
         Ok(())
     }
 
     /// Render a single data row using xs positions (qtv style)
-    fn render_row_xs<W: Write>(df: &DataFrame, row_idx: usize, state: &TableState, xs: &[i32], screen_width: i32, row_num_width: u16, is_correlation: bool, selected_cols: &HashSet<usize>, selected_rows: &HashSet<usize>, decimals: usize, writer: &mut W) -> Result<()> {
-        let is_current_row = row_idx == state.cr;
-        let is_selected_row = selected_rows.contains(&row_idx);
+    fn render_row_xs<W: Write>(df: &DataFrame, row_idx: usize, state: &TableState, xs: &[i32], screen_width: i32, row_num_width: u16, is_correlation: bool, selected_cols: &HashSet<usize>, selected_rows: &HashSet<usize>, decimals: usize, theme: &Theme, writer: &mut W) -> Result<()> {
+        let is_cur_row = row_idx == state.cr;
+        let is_sel_row = selected_rows.contains(&row_idx);
 
         // Render row number (if showing row numbers)
         if row_num_width > 0 {
-            if is_current_row {
-                execute!(writer, SetForegroundColor(Color::Yellow))?;
-            } else if is_selected_row {
-                execute!(writer, SetForegroundColor(Color::Magenta))?;
-            }
+            if is_cur_row { execute!(writer, SetForegroundColor(theme.row_cur_fg))?; }
+            else if is_sel_row { execute!(writer, SetForegroundColor(theme.row_num_fg))?; }
             execute!(writer, Print(format!("{:>width$} ", row_idx, width = row_num_width as usize)))?;
-            if is_current_row || is_selected_row {
-                execute!(writer, ResetColor)?;
-            }
+            if is_cur_row || is_sel_row { execute!(writer, ResetColor)?; }
         }
 
         for col_idx in 0..df.width() {
             let x = xs[col_idx];
             let next_x = xs.get(col_idx + 1).copied().unwrap_or(x);
+            if next_x <= 0 { continue; }  // off-screen left
+            if x >= screen_width { break; }  // beyond screen
 
-            // Skip if column is completely off-screen left
-            if next_x <= 0 {
-                continue;
-            }
-            // Stop if column starts beyond screen
-            if x >= screen_width {
-                break;
-            }
-
-            let is_current_col = col_idx == state.cc;
-            let is_current_cell = is_current_row && is_current_col;
-            let is_selected = selected_cols.contains(&col_idx);
+            let is_cur_col = col_idx == state.cc;
+            let is_cur_cell = is_cur_row && is_cur_col;
+            let is_sel = selected_cols.contains(&col_idx);
 
             let col_width = state.col_widths.get(col_idx).copied().unwrap_or(10);
             let value = Self::format_value(df, col_idx, row_idx, decimals);
 
-            // Get correlation color if applicable (skip first column which is row names)
-            let corr_color = if is_correlation && col_idx > 0 {
-                Self::correlation_color(&value)
-            } else {
-                None
-            };
+            // Correlation color (skip first column which is row names)
+            let corr_color = if is_correlation && col_idx > 0 { Self::correlation_color(&value) } else { None };
 
-            if is_current_cell {
-                // Current cell: yellow background, black text
-                execute!(
-                    writer,
-                    SetBackgroundColor(Color::Yellow),
-                    SetForegroundColor(Color::Black)
-                )?;
-            } else if is_current_col {
-                // Current column: light background
+            if is_cur_cell {
+                execute!(writer, SetBackgroundColor(theme.cursor_bg), SetForegroundColor(theme.cursor_fg))?;
+            } else if is_cur_col {
                 execute!(writer, SetBackgroundColor(Color::DarkGrey))?;
-                if let Some(fg) = corr_color {
-                    execute!(writer, SetForegroundColor(fg))?;
-                } else if is_selected {
-                    execute!(writer, SetForegroundColor(Color::Cyan))?;
-                } else if is_selected_row {
-                    execute!(writer, SetForegroundColor(Color::Magenta))?;
-                }
-            } else if is_selected_row {
-                // Selected row: magenta text
-                execute!(writer, SetForegroundColor(Color::Magenta))?;
-            } else if is_selected {
-                // Selected column: cyan text
-                execute!(writer, SetForegroundColor(Color::Cyan))?;
+                if let Some(fg) = corr_color { execute!(writer, SetForegroundColor(fg))?; }
+                else if is_sel { execute!(writer, SetForegroundColor(theme.select_fg))?; }
+                else if is_sel_row { execute!(writer, SetForegroundColor(theme.row_num_fg))?; }
+            } else if is_sel_row {
+                execute!(writer, SetForegroundColor(theme.row_num_fg))?;
+            } else if is_sel {
+                execute!(writer, SetForegroundColor(theme.select_fg))?;
             } else if let Some(fg) = corr_color {
-                // Correlation coloring
                 execute!(writer, SetForegroundColor(fg))?;
-            } else if is_current_row {
-                // Current row: white text
-                execute!(writer, SetForegroundColor(Color::White))?;
+            } else if is_cur_row {
+                execute!(writer, SetForegroundColor(theme.row_cur_fg))?;
             }
 
             let display = format!("{:width$}", value, width = col_width as usize);
-
             execute!(writer, Print(&display[..display.len().min(col_width as usize)]))?;
 
-            if is_current_cell || is_current_col || is_current_row || corr_color.is_some() || is_selected || is_selected_row {
+            if is_cur_cell || is_cur_col || is_cur_row || corr_color.is_some() || is_sel || is_sel_row {
                 execute!(writer, ResetColor)?;
             }
-
             execute!(writer, Print(" "))?;
         }
 
-        // Clear to end of line
         execute!(writer, terminal::Clear(terminal::ClearType::UntilNewLine))?;
-
         Ok(())
     }
 
@@ -446,19 +402,16 @@ impl Renderer {
     }
 
     /// Render info box at bottom right corner (like Kakoune)
-    fn render_info_box<W: Write>(_view_name: &str, stack_len: usize, rows: u16, cols: u16, keys: &[(String, &'static str)], writer: &mut W) -> Result<()> {
-
-        // Calculate box dimensions
+    fn render_info_box<W: Write>(_view_name: &str, stack_len: usize, rows: u16, cols: u16, keys: &[(String, &'static str)], theme: &Theme, writer: &mut W) -> Result<()> {
         let max_desc_len = keys.iter().map(|(_, d)| d.len()).max().unwrap_or(10);
-        let box_width = max_desc_len + 11; // key(5) + spaces(4) + borders(2)
-        let box_height = keys.len() + 2; // border top/bottom
+        let box_width = max_desc_len + 11;  // key(5) + spaces(4) + borders(2)
+        let box_height = keys.len() + 2;    // border top/bottom
 
         // Position: bottom right, above status bar
         let box_x = cols.saturating_sub(box_width as u16 + 1);
         let box_y = rows.saturating_sub(box_height as u16 + 1);
 
-        // Draw box with brighter colors
-        execute!(writer, SetForegroundColor(Color::Cyan))?;
+        execute!(writer, SetForegroundColor(theme.info_border_fg))?;
 
         // Top border with view info
         let title = format!(" [{}] ", if stack_len > 1 { format!("#{}", stack_len) } else { "tv".to_string() });
@@ -469,14 +422,14 @@ impl Renderer {
         for (i, (key, desc)) in keys.iter().enumerate() {
             let row = box_y + 1 + i as u16;
             execute!(writer, cursor::MoveTo(box_x, row))?;
-            execute!(writer, SetForegroundColor(Color::Cyan), Print("│ "))?;
-            execute!(writer, SetForegroundColor(Color::Yellow), Print(format!("{:>5}", key)))?;
+            execute!(writer, SetForegroundColor(theme.info_border_fg), Print("│ "))?;
+            execute!(writer, SetForegroundColor(theme.info_key_fg), Print(format!("{:>5}", key)))?;
             execute!(writer, SetForegroundColor(Color::White), Print(format!(" {:width$}", desc, width = box_width - 9)))?;
-            execute!(writer, SetForegroundColor(Color::Cyan), Print(" │"))?;
+            execute!(writer, SetForegroundColor(theme.info_border_fg), Print(" │"))?;
         }
 
         // Bottom border
-        execute!(writer, SetForegroundColor(Color::Cyan))?;
+        execute!(writer, SetForegroundColor(theme.info_border_fg))?;
         let bottom_border = format!("└{}┘", "─".repeat(box_width - 2));
         execute!(writer, cursor::MoveTo(box_x, box_y + box_height as u16 - 1), Print(&bottom_border))?;
 
@@ -485,51 +438,30 @@ impl Renderer {
     }
 
     /// Render status bar at the bottom (left: msg/file, middle: col stats, right: row/total)
-    fn render_status_bar<W: Write>(view: &ViewState, message: &str, rows: u16, cols: u16, writer: &mut W) -> Result<()> {
-        let status_row = rows - 1;
-        execute!(writer, cursor::MoveTo(0, status_row))?;
+    fn render_status_bar<W: Write>(view: &ViewState, message: &str, rows: u16, cols: u16, theme: &Theme, writer: &mut W) -> Result<()> {
+        execute!(writer, cursor::MoveTo(0, rows - 1))?;
 
-        // Format total with commas
-        let total = view.rows();
-        let total_str = Self::commify(total);
+        let total_str = Self::commify(view.rows());
 
-        // Left side: message or filename (for special views like Freq:*, show the name)
-        let left = if !message.is_empty() {
-            message.to_string()
-        } else if view.name.starts_with("Freq:") || view.name == "metadata" {
-            view.name.clone()
-        } else {
-            view.filename.as_deref().unwrap_or("(no file)").to_string()
-        };
+        // Left side: message or filename
+        let left = if !message.is_empty() { message.to_string() }
+        else if view.name.starts_with("Freq:") || view.name == "metadata" { view.name.clone() }
+        else { view.filename.as_deref().unwrap_or("(no file)").to_string() };
 
-        // Column statistics (for right side)
-        let col_stats = if view.cols() > 0 {
-            Self::column_stats(&view.dataframe, view.state.cc)
-        } else {
-            String::new()
-        };
+        // Column statistics
+        let col_stats = if view.cols() > 0 { Self::column_stats(&view.dataframe, view.state.cc) } else { String::new() };
 
         // Right side: stats + row/total
-        let right = if col_stats.is_empty() {
-            format!("{}/{}", view.state.cr, total_str)
-        } else {
-            format!("{} {}/{}", col_stats, view.state.cr, total_str)
-        };
+        let right = if col_stats.is_empty() { format!("{}/{}", view.state.cr, total_str) }
+        else { format!("{} {}/{}", col_stats, view.state.cr, total_str) };
 
-        // Calculate padding between left and right
-        let total_len = left.len() + right.len();
-        let padding = if (cols as usize) > total_len {
-            cols as usize - total_len
-        } else {
-            1
-        };
-
+        let padding = (cols as usize).saturating_sub(left.len() + right.len()).max(1);
         let status = format!("{}{:width$}{}", left, "", right, width = padding);
 
         execute!(
             writer,
-            SetBackgroundColor(Color::DarkGrey),
-            SetForegroundColor(Color::White),
+            SetBackgroundColor(theme.status_bg),
+            SetForegroundColor(theme.status_fg),
             Print(&status[..status.len().min(cols as usize)]),
             ResetColor
         )?;

@@ -72,6 +72,7 @@ pub struct ViewState {
     pub freq_col: Option<String>,   // freq column name
     pub selected_cols: HashSet<usize>,
     pub selected_rows: HashSet<usize>,
+    pub gz_source: Option<String>,  // original .csv.gz path for streaming save
 }
 
 impl ViewState {
@@ -79,7 +80,15 @@ impl ViewState {
         Self {
             id, name, dataframe: df, state: TableState::new(), history: Vec::new(),
             filename, show_row_numbers: false, parent_id: None, freq_col: None,
-            selected_cols: HashSet::new(), selected_rows: HashSet::new(),
+            selected_cols: HashSet::new(), selected_rows: HashSet::new(), gz_source: None,
+        }
+    }
+
+    pub fn new_gz(id: usize, name: String, df: DataFrame, filename: Option<String>, gz: String) -> Self {
+        Self {
+            id, name, dataframe: df, state: TableState::new(), history: Vec::new(),
+            filename, show_row_numbers: false, parent_id: None, freq_col: None,
+            selected_cols: HashSet::new(), selected_rows: HashSet::new(), gz_source: Some(gz),
         }
     }
 
@@ -87,7 +96,7 @@ impl ViewState {
         Self {
             id, name, dataframe: df, state: TableState::new(), history: Vec::new(),
             filename: None, show_row_numbers: false, parent_id: Some(pid), freq_col: Some(col),
-            selected_cols: HashSet::new(), selected_rows: HashSet::new(),
+            selected_cols: HashSet::new(), selected_rows: HashSet::new(), gz_source: None,
         }
     }
 

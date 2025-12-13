@@ -16,23 +16,23 @@ common,.,decimals_inc,Increase float decimal places
 common,",",decimals_dec,Decrease float decimal places
 common,Space,select,Toggle selection on current item
 common,Esc,clear_sel,Clear all selections
-table,L,load,Load file from disk
+table,L,from,Load file (from path)
 table,S,save,Save current view to file
 table,/,search,Search for value in current column
-table,\,filter,Filter rows using SQL WHERE syntax
+table,\,filter,Filter rows (col > 10 | col == @2008-01-10 | col > 180days)
 table,n,next_match,Go to next search match
 table,N,prev_match,Go to previous search match
 table,*,search_cell,Search for current cell value
-table,s,select_cols,Select columns by name
+table,s,select,Select columns {col1, col2}
 table,F,freq,Show frequency table for current column
 table,M,meta,Show metadata/data profile
 table,C,corr,Show correlation matrix
-table,[,sort_asc,Sort ascending by current column
-table,],sort_desc,Sort descending by current column
+table,[,sort,Sort ascending by current column
+table,],sort-,Sort descending by current column
 table,^,rename,Rename current column
-table,c,copy_col,Copy current column
+table,c,derive,Derive new column (copy)
 table,$,convert,Convert column type
-table,b,aggregate,Aggregate by current column
+table,b,aggregate,Aggregate {sum col | count | mean}
 table,T,dup,Duplicate current view
 table,W,swap,Swap top two views on stack
 table,l,ls,List current directory

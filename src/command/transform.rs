@@ -16,7 +16,7 @@ impl Command for DelCol {
     fn to_str(&self) -> String { format!("delcol {}", self.col_names.join(",")) }
 }
 
-/// Filter rows using SQL WHERE syntax
+/// Filter rows using PRQL filter syntax
 pub struct Filter { pub expr: String }
 
 impl Command for Filter {
@@ -25,7 +25,9 @@ impl Command for Filter {
             let v = app.req()?;
             let mut ctx = polars::sql::SQLContext::new();
             ctx.register("df", v.dataframe.clone().lazy());
-            let sql = format!("SELECT * FROM df WHERE {}", self.expr);
+            // Compile PRQL filter expr to SQL WHERE clause
+            let where_clause = crate::prql::filter_to_sql(&self.expr)?;
+            let sql = format!("SELECT * FROM df WHERE {}", where_clause);
             (ctx.execute(&sql)?.collect()?, v.filename.clone())
         };
         let id = app.next_id();
@@ -119,6 +121,18 @@ impl Command for FilterIn {
     }
     fn to_str(&self) -> String { format!("filter_in {} {:?}", self.col, self.values) }
     fn record(&self) -> bool { false }
+}
+
+/// Take first n rows (PRQL take)
+pub struct Take { pub n: usize }
+
+impl Command for Take {
+    fn exec(&mut self, app: &mut AppContext) -> Result<()> {
+        let v = app.req_mut()?;
+        v.dataframe = v.dataframe.head(Some(self.n));
+        Ok(())
+    }
+    fn to_str(&self) -> String { format!("take {}", self.n) }
 }
 
 #[cfg(test)]

@@ -1,5 +1,6 @@
 use crate::keymap::KeyMap;
 use crate::state::{StateStack, ViewState};
+use crate::theme::Theme;
 use anyhow::{anyhow, Result};
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -23,11 +24,13 @@ pub struct AppContext {
     pub show_info: bool,           // toggle info box
     pub float_decimals: usize,     // decimal places for floats
     pub keymap: KeyMap,            // key bindings
+    pub theme: Theme,              // color theme
 }
 
 impl AppContext {
     pub fn new() -> Self {
         let keymap = KeyMap::load(std::path::Path::new("cfg/key.csv")).unwrap_or_default();
+        let theme = Theme::load_active();
         Self {
             stack: StateStack::new(),
             history_file: PathBuf::from("commands.txt"),
@@ -38,6 +41,7 @@ impl AppContext {
             show_info: true,
             float_decimals: 3,
             keymap,
+            theme,
         }
     }
 

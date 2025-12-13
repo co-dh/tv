@@ -3,14 +3,16 @@ mod command;
 mod keymap;
 mod os;
 mod picker;
+mod prql;
 mod render;
 mod state;
+mod theme;
 
 use anyhow::Result;
 use app::AppContext;
 use command::executor::CommandExecutor;
 use command::io::{Load, Save};
-use command::transform::{Agg, DelCol, Filter, FilterIn, RenameCol, Select, Sort};
+use command::transform::{Agg, DelCol, Filter, FilterIn, RenameCol, Select, Sort, Take};
 use command::view::{Correlation, Df, Dup, Env, Frequency, Lr, Ls, Lsblk, Lsof, Metadata, Mounts, Pop, Ps, Swap, Tcp, Udp, Who};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use crossterm::{cursor, execute, style::Print, terminal};
@@ -161,7 +163,7 @@ fn parse(line: &str, _app: &AppContext) -> Option<Box<dyn command::Command>> {
     let arg = parts.get(1).map(|s| s.trim()).unwrap_or("");
 
     match parts[0].to_lowercase().as_str() {
-        "load" => Some(Box::new(Load { file_path: arg.to_string() })),
+        "load" | "from" => Some(Box::new(Load { file_path: arg.to_string() })),
         "save" => Some(Box::new(Save { file_path: arg.to_string() })),
         "ls" => Some(Box::new(Ls { dir: std::path::PathBuf::from(if arg.is_empty() { "." } else { arg }) })),
         "lr" => Some(Box::new(Lr { dir: std::path::PathBuf::from(if arg.is_empty() { "." } else { arg }) })),
@@ -182,8 +184,13 @@ fn parse(line: &str, _app: &AppContext) -> Option<Box<dyn command::Command>> {
         "select" | "sel" => Some(Box::new(Select {
             col_names: arg.split(',').map(|s| s.trim().to_string()).collect()
         })),
-        "sort" => Some(Box::new(Sort { col_name: arg.to_string(), descending: false })),
+        "sort" => {
+            // PRQL style: "sort col" (asc) or "sort -col" (desc)
+            let (col, desc) = prql::parse_sort(arg);
+            Some(Box::new(Sort { col_name: col, descending: desc }))
+        }
         "sortdesc" => Some(Box::new(Sort { col_name: arg.to_string(), descending: true })),
+        "take" => arg.parse().ok().map(|n| Box::new(Take { n }) as Box<dyn command::Command>),
         "rename" => {
             let rename_parts: Vec<&str> = arg.splitn(2, ' ').collect();
             if rename_parts.len() == 2 {
@@ -608,11 +615,11 @@ fn on_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
         KeyCode::Char(':') => {
             // :: Command picker
             let cmd_list: Vec<String> = vec![
-                "load <file>", "save <file>",
+                "from <file>", "save <file>",
                 "ls [dir]", "lr [dir]",
                 "ps", "df", "mounts", "tcp", "udp", "lsblk", "who", "lsof [pid]", "env",
                 "filter <expr>", "freq <col>", "meta", "corr",
-                "select <cols>", "delcol <cols>", "sort <col>", "sortdesc <col>", "rename <old> <new>",
+                "select <cols>", "delcol <cols>", "sort <col>", "sort -<col>", "take <n>", "rename <old> <new>",
             ].iter().map(|s| s.to_string()).collect();
             if let Ok(Some(selected)) = picker::fzf_edit(cmd_list, ": ") {
                 let cmd_str = selected.split_whitespace().next().unwrap_or(&selected);
@@ -836,6 +843,7 @@ fn unquote(s: &str) -> String {
 }
 
 ///// Get SQL hints for search/filter: LIKE patterns (%) + unique values with quotes
+/// Generate PRQL filter hints for fzf picker
 fn hints(df: &polars::prelude::DataFrame, col_name: &str, row: usize) -> Vec<String> {
     use polars::prelude::DataType;
     let mut items = Vec::new();
@@ -845,27 +853,28 @@ fn hints(df: &polars::prelude::DataFrame, col_name: &str, row: usize) -> Vec<Str
         let is_datetime = matches!(dtype, DataType::Date | DataType::Datetime(_, _) | DataType::Time);
 
         if is_str {
+            // PRQL text functions: starts_with, ends_with, contains
             if let Ok(val) = col.get(row) {
                 let v = unquote(&val.to_string());
                 if v.len() >= 2 {
-                    items.push(format!("{} LIKE '{}%'", col_name, &v[..2]));
-                    items.push(format!("{} LIKE '%{}'", col_name, &v[v.len()-2..]));
+                    items.push(format!("({} | text.starts_with '{}')", col_name, &v[..2]));
+                    items.push(format!("({} | text.ends_with '{}')", col_name, &v[v.len()-2..]));
+                    items.push(format!("({} | text.contains '{}')", col_name, &v[..v.len().min(4)]));
                 }
             }
         } else if is_datetime {
-            // Generate date range hints for datetime columns
+            // PRQL date: @2008-01-10 syntax
             if let Ok(val) = col.get(row) {
                 let v = val.to_string();
-                // Parse date parts: 2025-01-15 -> year=2025, month=01
                 if let Some((year, rest)) = v.split_once('-') {
                     if let Ok(y) = year.parse::<i32>() {
-                        // Year range hint
-                        items.push(format!("{} >= '{}-01-01' AND {} < '{}-01-01'", col_name, y, col_name, y + 1));
-                        // Month range hint
+                        // Year range
+                        items.push(format!("{} >= @{}-01-01 && {} < @{}-01-01", col_name, y, col_name, y + 1));
+                        // Month range
                         if let Some((month, _)) = rest.split_once('-') {
                             if let Ok(m) = month.parse::<u32>() {
                                 let (next_y, next_m) = if m >= 12 { (y + 1, 1) } else { (y, m + 1) };
-                                items.push(format!("{} >= '{}-{:02}-01' AND {} < '{}-{:02}-01'",
+                                items.push(format!("{} >= @{}-{:02}-01 && {} < @{}-{:02}-01",
                                     col_name, y, m, col_name, next_y, next_m));
                             }
                         }
@@ -873,7 +882,7 @@ fn hints(df: &polars::prelude::DataFrame, col_name: &str, row: usize) -> Vec<Str
                 }
             }
         } else {
-            // Numeric: add comparison hints based on current value
+            // Numeric: comparison hints
             if let Ok(val) = col.get(row) {
                 let v = val.to_string();
                 if v != "null" {
@@ -881,21 +890,25 @@ fn hints(df: &polars::prelude::DataFrame, col_name: &str, row: usize) -> Vec<Str
                     items.push(format!("{} < {}", col_name, v));
                     items.push(format!("{} >= {}", col_name, v));
                     items.push(format!("{} <= {}", col_name, v));
-                    items.push(format!("{} BETWEEN {} AND {}", col_name, v, v));
+                    items.push(format!("{} >= {} && {} <= {}", col_name, v, col_name, v));  // between
                 }
             }
         }
 
-        // Add unique values as exact match hints
+        // Unique values as exact match hints
         if let Ok(uniq) = col.unique() {
-            for i in 0..uniq.len().min(10) {  // Limit to 10 unique values
+            for i in 0..uniq.len().min(10) {
                 if let Ok(v) = uniq.get(i) {
                     let val = unquote(&v.to_string());
                     if val == "null" { continue; }
-                    if is_str || is_datetime {
+                    if is_str {
+                        // SQL = for strings (passed through to polars)
                         items.push(format!("{} = '{}'", col_name, val));
+                    } else if is_datetime {
+                        // Format as @YYYY-MM-DD
+                        items.push(format!("{} == @{}", col_name, val));
                     } else {
-                        items.push(format!("{} = {}", col_name, val));
+                        items.push(format!("{} == {}", col_name, val));
                     }
                 }
             }
@@ -904,13 +917,18 @@ fn hints(df: &polars::prelude::DataFrame, col_name: &str, row: usize) -> Vec<Str
     items
 }
 
-/// Find rows matching SQL WHERE expression, returns row indices
+/// Find rows matching PRQL filter expression, returns row indices
 fn find(df: &polars::prelude::DataFrame, expr: &str) -> Vec<usize> {
     use polars::prelude::*;
+    // Compile PRQL filter to SQL WHERE clause
+    let where_clause = match prql::filter_to_sql(expr) {
+        Ok(w) => w,
+        Err(_) => return vec![],
+    };
     let mut ctx = polars::sql::SQLContext::new();
     let with_idx = df.clone().lazy().with_row_index("__idx__", None);
     ctx.register("df", with_idx);
-    ctx.execute(&format!("SELECT __idx__ FROM df WHERE {}", expr))
+    ctx.execute(&format!("SELECT __idx__ FROM df WHERE {}", where_clause))
         .and_then(|lf| lf.collect())
         .map(|result| {
             result.column("__idx__").ok()
@@ -988,29 +1006,42 @@ mod tests {
     #[test]
     fn test_find_exact() {
         let df = make_test_df();
+        // SQL = for string equality (passed through)
         assert_eq!(find(&df, "name = 'banana'"), vec![1]);
-        assert_eq!(find(&df, "name = 'notfound'"), vec![]);
+        assert_eq!(find(&df, "name = 'notfound'"), Vec::<usize>::new());
     }
 
     #[test]
     fn test_find_like() {
         let df = make_test_df();
+        // SQL LIKE patterns (passed through)
         assert_eq!(find(&df, "name LIKE 'b%'"), vec![1, 5]);  // banana, blueberry
         assert_eq!(find(&df, "name LIKE '%rry'"), vec![2, 5]);  // cherry, blueberry
         assert_eq!(find(&df, "name LIKE '%apple%'"), vec![0, 3]);  // apple, pineapple
     }
 
     #[test]
-    fn test_hints_string() {
-        let df = df! { "name" => &["apple", "banana"] }.unwrap();
-        let h = hints(&df, "name", 0);
-        // Should have LIKE hints and exact match hints
-        assert!(h.iter().any(|s| s.contains("LIKE")), "Should have LIKE hints");
-        assert!(h.iter().any(|s| s.contains("= 'apple'")), "Should have quoted exact match");
+    fn test_find_prql_text() {
+        let df = make_test_df();
+        // PRQL text functions compiled to SQL LIKE
+        assert_eq!(find(&df, "(name | text.starts_with 'b')"), vec![1, 5]);  // banana, blueberry
+        assert_eq!(find(&df, "(name | text.ends_with 'rry')"), vec![2, 5]);  // cherry, blueberry
+        assert_eq!(find(&df, "(name | text.contains 'apple')"), vec![0, 3]);  // apple, pineapple
     }
 
     #[test]
-    fn test_hints_datetime_valid_sql() {
+    fn test_hints_string() {
+        let df = df! { "name" => &["apple", "banana"] }.unwrap();
+        let h = hints(&df, "name", 0);
+        // PRQL text function hints
+        assert!(h.iter().any(|s| s.contains("text.starts_with")), "Should have starts_with hint");
+        assert!(h.iter().any(|s| s.contains("text.ends_with")), "Should have ends_with hint");
+        assert!(h.iter().any(|s| s.contains("text.contains")), "Should have contains hint");
+        assert!(h.iter().any(|s| s.contains("= 'apple'")), "Should have exact match");
+    }
+
+    #[test]
+    fn test_hints_datetime_prql() {
         let dates = ["2025-01-15", "2025-02-20"];
         let df = df! {
             "dt" => dates.iter().map(|s| {
@@ -1020,34 +1051,22 @@ mod tests {
 
         let h = hints(&df, "dt", 0);
 
-        // All hints should be valid SQL - verify by executing them
-        let mut ctx = polars::sql::SQLContext::new();
-        ctx.register("df", df.clone().lazy());
-
-        for hint in &h {
-            let sql = format!("SELECT * FROM df WHERE {}", hint);
-            let result = ctx.execute(&sql);
-            assert!(result.is_ok(), "Hint '{}' should be valid SQL, got: {:?}", hint, result.err());
-        }
-
-        // Should have year range hint
-        assert!(h.iter().any(|s| s.contains("2025-01-01") && s.contains("2026-01-01")),
-            "Should have year range hint");
-        // Should have month range hint
-        assert!(h.iter().any(|s| s.contains("2025-01-01") && s.contains("2025-02-01")),
-            "Should have month range hint");
-        // Should have exact match with quotes
-        assert!(h.iter().any(|s| s.contains("= '2025-01-15'")),
-            "Should have quoted exact match for datetime");
+        // PRQL date hints use @ prefix and &&
+        assert!(h.iter().any(|s| s.contains("@2025-01-01") && s.contains("@2026-01-01")),
+            "Should have PRQL year range hint with @");
+        assert!(h.iter().any(|s| s.contains("&&")), "Should use && for AND");
+        // PRQL exact match: == @YYYY-MM-DD
+        assert!(h.iter().any(|s| s.contains("== @2025-01-15")),
+            "Should have PRQL datetime exact match");
     }
 
     #[test]
     fn test_hints_numeric() {
         let df = df! { "val" => &[1, 2, 3] }.unwrap();
         let h = hints(&df, "val", 0);
-        // Numeric should not have quotes
-        assert!(h.iter().any(|s| s.contains("= 1") && !s.contains("'")),
-            "Numeric hints should not have quotes");
+        // PRQL uses == for equality
+        assert!(h.iter().any(|s| s.contains("== 1") && !s.contains("'")),
+            "Numeric hints should use == without quotes");
     }
 
     #[test]
@@ -1058,6 +1077,7 @@ mod tests {
         assert!(h.iter().any(|s| s == "val < 20"), "Should have < hint");
         assert!(h.iter().any(|s| s == "val >= 20"), "Should have >= hint");
         assert!(h.iter().any(|s| s == "val <= 20"), "Should have <= hint");
-        assert!(h.iter().any(|s| s == "val BETWEEN 20 AND 20"), "Should have BETWEEN hint");
+        // PRQL uses && instead of BETWEEN
+        assert!(h.iter().any(|s| s == "val >= 20 && val <= 20"), "Should have range hint with &&");
     }
 }

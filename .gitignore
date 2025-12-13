@@ -2,4 +2,6 @@
 commands.txt
 *.csv
 !cfg/key.csv
+!cfg/config.csv
+!cfg/themes.csv
 *.parquet

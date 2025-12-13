@@ -16,10 +16,11 @@ The binary will be at `./target/release/tv`.
 # Open a file
 tv data.csv
 tv data.parquet
+tv large.csv.gz  # streams first 1GB for preview
 
-# Run inline commands (SQL WHERE syntax)
-tv -c "load data.csv | filter age > 30 | save filtered.csv"
-tv -c "load data.csv | filter name LIKE 'A%' | sel name,age"
+# Run inline commands (PRQL/SQL syntax)
+tv -c "from data.csv | filter age > 30 | save filtered.parquet"
+tv -c "from data.csv | filter (name | text.starts_with 'A') | select name,age"
 
 # Run script file
 tv --script commands.txt
@@ -46,7 +47,7 @@ tv --script commands.txt
 
 ### Search & Filter
 
-Both search and filter use **SQL WHERE syntax**:
+Both search and filter use **PRQL/SQL syntax**:
 
 | Key | Action |
 |-----|--------|
@@ -56,15 +57,20 @@ Both search and filter use **SQL WHERE syntax**:
 | `N` | Find previous match |
 | `*` | Search for current cell value |
 
-SQL WHERE syntax:
-- `col = 100` - Numeric equality
-- `col = 'NYC'` - String equality (use quotes)
+PRQL syntax:
+- `col == 100` - Numeric equality
+- `col == 'NYC'` - String equality
 - `col > 100`, `col <= 50` - Comparisons
+- `(col | text.starts_with 'abc')` - Starts with
+- `(col | text.ends_with 'abc')` - Ends with
+- `(col | text.contains 'abc')` - Contains
+- `col >= @2020-01-01 && col < @2021-01-01` - Date range
+- `col > 10 && col < 100` - Combined conditions (use `&&` for AND, `||` for OR)
+
+SQL syntax also supported:
 - `col LIKE 'abc%'` - Starts with
-- `col LIKE '%abc'` - Ends with
-- `col LIKE '%abc%'` - Contains
 - `col BETWEEN 10 AND 100` - Range
-- `col > 10 AND col < 100` - Combined conditions
+- `col IN ('a', 'b', 'c')` - In list
 
 Filtering pushes a new view onto the stack. Press `q` to return.
 
@@ -167,16 +173,16 @@ tv --script myscript.txt
 
 | Command | Description |
 |---------|-------------|
-| `load <path>` | Load CSV or Parquet file |
+| `from <path>` | Load CSV, Parquet, or gzipped CSV file |
 | `save <path>` | Save to CSV or Parquet file |
-| `filter <sql>` | Filter rows (SQL WHERE syntax) |
+| `filter <expr>` | Filter rows (PRQL/SQL syntax) |
+| `take <n>` | Limit to first n rows |
+| `sort <col>` | Sort ascending (use `-col` for descending) |
 | `freq <col>` | Frequency table |
 | `meta` | Metadata view |
 | `corr` | Correlation matrix (all numeric columns) |
 | `delcol <col1,col2>` | Delete column(s) |
-| `sel <col1,col2>` | Select columns |
-| `sort <col>` | Sort ascending |
-| `sortdesc <col>` | Sort descending |
+| `select <col1,col2>` | Select columns |
 | `rename <old> <new>` | Rename column |
 | `quit` | Exit script |
 
@@ -204,5 +210,43 @@ tv --script myscript.txt
 1. Load file: `tv input.csv`
 2. Delete unwanted columns: navigate + `D`
 3. Rename columns: `^`
-4. Filter rows: `\` then type `status = 'active'`
+4. Filter rows: `\` then type `status == 'active'`
 5. Save result: `S` then enter filename
+
+## Large Gzipped CSV Files
+
+tv supports streaming large `.csv.gz` files:
+
+```bash
+# Load gzipped CSV (streams first 1GB for preview)
+tv large_data.csv.gz
+
+# Save to parquet (streams entire file, creates sequential chunks)
+# Creates: output_001.parquet, output_002.parquet, ...
+tv -c "from large.csv.gz | save output.parquet"
+```
+
+When saving a gzipped CSV to parquet:
+- Streams through the entire file using `zcat`
+- Writes ~1GB chunks as sequential parquet files
+- Schema is inferred from the preview data
+
+## Themes
+
+tv supports color themes via `cfg/themes.csv` and `cfg/config.csv`.
+
+To change theme, edit `cfg/config.csv`:
+```csv
+key,value
+theme,light
+```
+
+Available themes: `default`, `light`
+
+Theme colors are defined in `cfg/themes.csv` (long format):
+```csv
+theme,name,color
+default,header_bg,#282832
+default,header_fg,#ffffff
+...
+```
