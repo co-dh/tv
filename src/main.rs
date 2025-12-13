@@ -11,7 +11,7 @@ use app::AppContext;
 use command::executor::CommandExecutor;
 use command::io::{Load, Save};
 use command::transform::{Agg, DelCol, Filter, FilterIn, RenameCol, Select, Sort};
-use command::view::{Correlation, Dup, Frequency, Lr, Ls, Metadata, Pop, Swap};
+use command::view::{Correlation, Df, Dup, Env, Frequency, Lr, Ls, Lsblk, Lsof, Metadata, Mounts, Pop, Ps, Swap, Tcp, Udp, Who};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use crossterm::{cursor, execute, style::Print, terminal};
 use render::{Renderer, Terminal};
@@ -165,6 +165,15 @@ fn parse(line: &str, _app: &AppContext) -> Option<Box<dyn command::Command>> {
         "save" => Some(Box::new(Save { file_path: arg.to_string() })),
         "ls" => Some(Box::new(Ls { dir: std::path::PathBuf::from(if arg.is_empty() { "." } else { arg }) })),
         "lr" => Some(Box::new(Lr { dir: std::path::PathBuf::from(if arg.is_empty() { "." } else { arg }) })),
+        "ps" => Some(Box::new(Ps)),
+        "df" => Some(Box::new(Df)),
+        "mounts" => Some(Box::new(Mounts)),
+        "tcp" => Some(Box::new(Tcp)),
+        "udp" => Some(Box::new(Udp)),
+        "lsblk" => Some(Box::new(Lsblk)),
+        "who" => Some(Box::new(Who)),
+        "lsof" => Some(Box::new(Lsof { pid: if arg.is_empty() { None } else { arg.parse().ok() } })),
+        "env" => Some(Box::new(Env)),
         "freq" | "frequency" => Some(Box::new(Frequency { col_name: arg.to_string() })),
         "meta" | "metadata" => Some(Box::new(Metadata)),
         "corr" | "correlation" => Some(Box::new(Correlation { selected_cols: vec![] })),

@@ -346,6 +346,133 @@ impl Command for Lr {
     fn record(&self) -> bool { false }
 }
 
+/// Process list
+pub struct Ps;
+
+impl Command for Ps {
+    fn exec(&mut self, app: &mut AppContext) -> Result<()> {
+        let df = crate::os::ps()?;
+        let id = app.next_id();
+        app.stack.push(ViewState::new(id, "ps".into(), df, None));
+        Ok(())
+    }
+    fn to_str(&self) -> String { "ps".into() }
+    fn record(&self) -> bool { false }
+}
+
+/// Disk usage
+pub struct Df;
+
+impl Command for Df {
+    fn exec(&mut self, app: &mut AppContext) -> Result<()> {
+        let df = crate::os::df()?;
+        let id = app.next_id();
+        app.stack.push(ViewState::new(id, "df".into(), df, None));
+        Ok(())
+    }
+    fn to_str(&self) -> String { "df".into() }
+    fn record(&self) -> bool { false }
+}
+
+/// Mount points
+pub struct Mounts;
+
+impl Command for Mounts {
+    fn exec(&mut self, app: &mut AppContext) -> Result<()> {
+        let df = crate::os::mounts()?;
+        let id = app.next_id();
+        app.stack.push(ViewState::new(id, "mounts".into(), df, None));
+        Ok(())
+    }
+    fn to_str(&self) -> String { "mounts".into() }
+    fn record(&self) -> bool { false }
+}
+
+/// TCP connections
+pub struct Tcp;
+
+impl Command for Tcp {
+    fn exec(&mut self, app: &mut AppContext) -> Result<()> {
+        let df = crate::os::tcp()?;
+        let id = app.next_id();
+        app.stack.push(ViewState::new(id, "tcp".into(), df, None));
+        Ok(())
+    }
+    fn to_str(&self) -> String { "tcp".into() }
+    fn record(&self) -> bool { false }
+}
+
+/// UDP connections
+pub struct Udp;
+
+impl Command for Udp {
+    fn exec(&mut self, app: &mut AppContext) -> Result<()> {
+        let df = crate::os::udp()?;
+        let id = app.next_id();
+        app.stack.push(ViewState::new(id, "udp".into(), df, None));
+        Ok(())
+    }
+    fn to_str(&self) -> String { "udp".into() }
+    fn record(&self) -> bool { false }
+}
+
+/// Block devices
+pub struct Lsblk;
+
+impl Command for Lsblk {
+    fn exec(&mut self, app: &mut AppContext) -> Result<()> {
+        let df = crate::os::lsblk()?;
+        let id = app.next_id();
+        app.stack.push(ViewState::new(id, "lsblk".into(), df, None));
+        Ok(())
+    }
+    fn to_str(&self) -> String { "lsblk".into() }
+    fn record(&self) -> bool { false }
+}
+
+/// Logged in users
+pub struct Who;
+
+impl Command for Who {
+    fn exec(&mut self, app: &mut AppContext) -> Result<()> {
+        let df = crate::os::who()?;
+        let id = app.next_id();
+        app.stack.push(ViewState::new(id, "who".into(), df, None));
+        Ok(())
+    }
+    fn to_str(&self) -> String { "who".into() }
+    fn record(&self) -> bool { false }
+}
+
+/// Open files
+pub struct Lsof { pub pid: Option<i32> }
+
+impl Command for Lsof {
+    fn exec(&mut self, app: &mut AppContext) -> Result<()> {
+        let df = crate::os::lsof(self.pid)?;
+        let id = app.next_id();
+        let name = self.pid.map(|p| format!("lsof:{}", p)).unwrap_or("lsof".into());
+        app.stack.push(ViewState::new(id, name, df, None));
+        Ok(())
+    }
+    fn to_str(&self) -> String { self.pid.map(|p| format!("lsof {}", p)).unwrap_or("lsof".into()) }
+    fn record(&self) -> bool { false }
+}
+
+/// Environment variables
+pub struct Env;
+
+impl Command for Env {
+    fn exec(&mut self, app: &mut AppContext) -> Result<()> {
+        let df = crate::os::env()?;
+        let id = app.next_id();
+        app.stack.push(ViewState::new(id, "env".into(), df, None));
+        Ok(())
+    }
+    fn to_str(&self) -> String { "env".into() }
+    fn record(&self) -> bool { false }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,4 +1,5 @@
 use polars::prelude::*;
+use std::fs;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 
@@ -61,5 +62,337 @@ pub fn lr(dir: &Path) -> anyhow::Result<DataFrame> {
         Series::new("size".into(), sizes).into(),
         modified_series.into(),
         Series::new("dir".into(), is_dir).into(),
+    ])?)
+}
+
+/// Process list from /proc (like ps)
+pub fn ps() -> anyhow::Result<DataFrame> {
+    let mut pids: Vec<i32> = Vec::new();
+    let mut names: Vec<String> = Vec::new();
+    let mut states: Vec<String> = Vec::new();
+    let mut ppids: Vec<i32> = Vec::new();
+    let mut vmrss: Vec<u64> = Vec::new();  // memory in KB
+    let mut threads: Vec<u32> = Vec::new();
+
+    for entry in fs::read_dir("/proc")? {
+        let e = entry?;
+        let name = e.file_name();
+        if let Ok(pid) = name.to_string_lossy().parse::<i32>() {
+            let stat_path = format!("/proc/{}/stat", pid);
+            let status_path = format!("/proc/{}/status", pid);
+
+            if let (Ok(stat), Ok(status)) = (fs::read_to_string(&stat_path), fs::read_to_string(&status_path)) {
+                // Parse /proc/[pid]/stat: pid (comm) state ppid ...
+                if let Some(comm_start) = stat.find('(') {
+                    if let Some(comm_end) = stat.rfind(')') {
+                        let comm = &stat[comm_start + 1..comm_end];
+                        let rest: Vec<&str> = stat[comm_end + 2..].split_whitespace().collect();
+                        if rest.len() >= 2 {
+                            pids.push(pid);
+                            names.push(comm.to_string());
+                            states.push(rest[0].to_string());
+                            ppids.push(rest[1].parse().unwrap_or(0));
+                            threads.push(rest.get(17).and_then(|s| s.parse().ok()).unwrap_or(1));
+                        }
+
+                        // Parse VmRSS from status
+                        let rss = status.lines()
+                            .find(|l| l.starts_with("VmRSS:"))
+                            .and_then(|l| l.split_whitespace().nth(1))
+                            .and_then(|s| s.parse().ok())
+                            .unwrap_or(0u64);
+                        vmrss.push(rss);
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(DataFrame::new(vec![
+        Series::new("pid".into(), pids).into(),
+        Series::new("name".into(), names).into(),
+        Series::new("state".into(), states).into(),
+        Series::new("ppid".into(), ppids).into(),
+        Series::new("rss_kb".into(), vmrss).into(),
+        Series::new("threads".into(), threads).into(),
+    ])?)
+}
+
+/// Disk usage from statvfs (like df)
+pub fn df() -> anyhow::Result<DataFrame> {
+    let mut filesystems: Vec<String> = Vec::new();
+    let mut mount_points: Vec<String> = Vec::new();
+    let mut total: Vec<u64> = Vec::new();
+    let mut used: Vec<u64> = Vec::new();
+    let mut avail: Vec<u64> = Vec::new();
+
+    let mounts = fs::read_to_string("/proc/mounts")?;
+    for line in mounts.lines() {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() >= 2 {
+            let fs = parts[0];
+            let mp = parts[1];
+
+            // Skip virtual filesystems
+            if fs.starts_with('/') || mp == "/" {
+                if let Ok(stat) = nix::sys::statvfs::statvfs(mp) {
+                    let block_size = stat.block_size() as u64;
+                    let total_bytes = stat.blocks() * block_size;
+                    let avail_bytes = stat.blocks_available() * block_size;
+                    let free_bytes = stat.blocks_free() * block_size;
+                    let used_bytes = total_bytes - free_bytes;
+
+                    filesystems.push(fs.to_string());
+                    mount_points.push(mp.to_string());
+                    total.push(total_bytes);
+                    used.push(used_bytes);
+                    avail.push(avail_bytes);
+                }
+            }
+        }
+    }
+
+    Ok(DataFrame::new(vec![
+        Series::new("filesystem".into(), filesystems).into(),
+        Series::new("mount".into(), mount_points).into(),
+        Series::new("total".into(), total).into(),
+        Series::new("used".into(), used).into(),
+        Series::new("avail".into(), avail).into(),
+    ])?)
+}
+
+/// Mount points from /proc/mounts
+pub fn mounts() -> anyhow::Result<DataFrame> {
+    let mut devices: Vec<String> = Vec::new();
+    let mut mount_points: Vec<String> = Vec::new();
+    let mut fs_types: Vec<String> = Vec::new();
+    let mut options: Vec<String> = Vec::new();
+
+    let content = fs::read_to_string("/proc/mounts")?;
+    for line in content.lines() {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() >= 4 {
+            devices.push(parts[0].to_string());
+            mount_points.push(parts[1].to_string());
+            fs_types.push(parts[2].to_string());
+            options.push(parts[3].to_string());
+        }
+    }
+
+    Ok(DataFrame::new(vec![
+        Series::new("device".into(), devices).into(),
+        Series::new("mount".into(), mount_points).into(),
+        Series::new("type".into(), fs_types).into(),
+        Series::new("options".into(), options).into(),
+    ])?)
+}
+
+/// TCP connections from /proc/net/tcp
+pub fn tcp() -> anyhow::Result<DataFrame> {
+    parse_net_file("/proc/net/tcp")
+}
+
+/// UDP connections from /proc/net/udp
+pub fn udp() -> anyhow::Result<DataFrame> {
+    parse_net_file("/proc/net/udp")
+}
+
+fn parse_net_file(path: &str) -> anyhow::Result<DataFrame> {
+    let mut local_addrs: Vec<String> = Vec::new();
+    let mut local_ports: Vec<u32> = Vec::new();
+    let mut remote_addrs: Vec<String> = Vec::new();
+    let mut remote_ports: Vec<u32> = Vec::new();
+    let mut states: Vec<String> = Vec::new();
+    let mut inodes: Vec<u64> = Vec::new();
+
+    let content = fs::read_to_string(path)?;
+    for line in content.lines().skip(1) {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() >= 10 {
+            let (local_addr, local_port) = parse_addr(parts[1]);
+            let (remote_addr, remote_port) = parse_addr(parts[2]);
+            let state = parse_tcp_state(parts[3]);
+            let inode: u64 = parts[9].parse().unwrap_or(0);
+
+            local_addrs.push(local_addr);
+            local_ports.push(local_port);
+            remote_addrs.push(remote_addr);
+            remote_ports.push(remote_port);
+            states.push(state);
+            inodes.push(inode);
+        }
+    }
+
+    Ok(DataFrame::new(vec![
+        Series::new("local_addr".into(), local_addrs).into(),
+        Series::new("local_port".into(), local_ports).into(),
+        Series::new("remote_addr".into(), remote_addrs).into(),
+        Series::new("remote_port".into(), remote_ports).into(),
+        Series::new("state".into(), states).into(),
+        Series::new("inode".into(), inodes).into(),
+    ])?)
+}
+
+fn parse_addr(s: &str) -> (String, u32) {
+    let parts: Vec<&str> = s.split(':').collect();
+    if parts.len() == 2 {
+        let addr = u32::from_str_radix(parts[0], 16).unwrap_or(0);
+        let port = u32::from_str_radix(parts[1], 16).unwrap_or(0);
+        let ip = format!("{}.{}.{}.{}", addr & 0xff, (addr >> 8) & 0xff, (addr >> 16) & 0xff, (addr >> 24) & 0xff);
+        (ip, port)
+    } else {
+        (String::new(), 0)
+    }
+}
+
+fn parse_tcp_state(s: &str) -> String {
+    match s {
+        "01" => "ESTABLISHED",
+        "02" => "SYN_SENT",
+        "03" => "SYN_RECV",
+        "04" => "FIN_WAIT1",
+        "05" => "FIN_WAIT2",
+        "06" => "TIME_WAIT",
+        "07" => "CLOSE",
+        "08" => "CLOSE_WAIT",
+        "09" => "LAST_ACK",
+        "0A" => "LISTEN",
+        "0B" => "CLOSING",
+        _ => "UNKNOWN",
+    }.to_string()
+}
+
+/// Block devices from /sys/block
+pub fn lsblk() -> anyhow::Result<DataFrame> {
+    let mut names: Vec<String> = Vec::new();
+    let mut sizes: Vec<u64> = Vec::new();
+    let mut removable: Vec<String> = Vec::new();
+    let mut ro: Vec<String> = Vec::new();
+
+    for entry in fs::read_dir("/sys/block")? {
+        let e = entry?;
+        let name = e.file_name().to_string_lossy().to_string();
+        let base = format!("/sys/block/{}", name);
+
+        let size: u64 = fs::read_to_string(format!("{}/size", base))
+            .ok()
+            .and_then(|s| s.trim().parse().ok())
+            .map(|sectors: u64| sectors * 512)  // sectors to bytes
+            .unwrap_or(0);
+
+        let is_removable = fs::read_to_string(format!("{}/removable", base))
+            .map(|s| if s.trim() == "1" { "x" } else { "" })
+            .unwrap_or("");
+
+        let is_ro = fs::read_to_string(format!("{}/ro", base))
+            .map(|s| if s.trim() == "1" { "x" } else { "" })
+            .unwrap_or("");
+
+        names.push(name);
+        sizes.push(size);
+        removable.push(is_removable.to_string());
+        ro.push(is_ro.to_string());
+    }
+
+    Ok(DataFrame::new(vec![
+        Series::new("name".into(), names).into(),
+        Series::new("size".into(), sizes).into(),
+        Series::new("removable".into(), removable).into(),
+        Series::new("ro".into(), ro).into(),
+    ])?)
+}
+
+/// Logged in users from /var/run/utmp
+pub fn who() -> anyhow::Result<DataFrame> {
+    let mut users: Vec<String> = Vec::new();
+    let mut ttys: Vec<String> = Vec::new();
+    let mut hosts: Vec<String> = Vec::new();
+    let mut times: Vec<i64> = Vec::new();
+
+    let data = fs::read("/var/run/utmp")?;
+    // utmp entry is 384 bytes on x86_64 Linux
+    const UTMP_SIZE: usize = 384;
+
+    for chunk in data.chunks(UTMP_SIZE) {
+        if chunk.len() < UTMP_SIZE { break; }
+
+        let ut_type = i32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+        if ut_type == 7 {  // USER_PROCESS
+            let user = String::from_utf8_lossy(&chunk[8..40]).trim_matches('\0').to_string();
+            let tty = String::from_utf8_lossy(&chunk[44..76]).trim_matches('\0').to_string();
+            let host = String::from_utf8_lossy(&chunk[76..332]).trim_matches('\0').to_string();
+            let tv_sec = i32::from_ne_bytes([chunk[332], chunk[333], chunk[334], chunk[335]]) as i64;
+
+            if !user.is_empty() {
+                users.push(user);
+                ttys.push(tty);
+                hosts.push(host);
+                times.push(tv_sec * 1_000_000);
+            }
+        }
+    }
+
+    let time_series = Series::new("login".into(), times)
+        .cast(&DataType::Datetime(TimeUnit::Microseconds, None))?;
+
+    Ok(DataFrame::new(vec![
+        Series::new("user".into(), users).into(),
+        Series::new("tty".into(), ttys).into(),
+        Series::new("host".into(), hosts).into(),
+        time_series.into(),
+    ])?)
+}
+
+/// Open file descriptors for a process from /proc/[pid]/fd
+pub fn lsof(pid: Option<i32>) -> anyhow::Result<DataFrame> {
+    let mut pids: Vec<i32> = Vec::new();
+    let mut fds: Vec<i32> = Vec::new();
+    let mut paths: Vec<String> = Vec::new();
+
+    let proc_dirs: Vec<i32> = if let Some(p) = pid {
+        vec![p]
+    } else {
+        fs::read_dir("/proc")?
+            .filter_map(|e| e.ok())
+            .filter_map(|e| e.file_name().to_string_lossy().parse().ok())
+            .collect()
+    };
+
+    for p in proc_dirs {
+        let fd_dir = format!("/proc/{}/fd", p);
+        if let Ok(entries) = fs::read_dir(&fd_dir) {
+            for entry in entries.flatten() {
+                if let Ok(fd) = entry.file_name().to_string_lossy().parse::<i32>() {
+                    let link = fs::read_link(entry.path())
+                        .map(|p| p.to_string_lossy().to_string())
+                        .unwrap_or_default();
+                    pids.push(p);
+                    fds.push(fd);
+                    paths.push(link);
+                }
+            }
+        }
+    }
+
+    Ok(DataFrame::new(vec![
+        Series::new("pid".into(), pids).into(),
+        Series::new("fd".into(), fds).into(),
+        Series::new("path".into(), paths).into(),
+    ])?)
+}
+
+/// Environment variables as DataFrame
+pub fn env() -> anyhow::Result<DataFrame> {
+    let mut names: Vec<String> = Vec::new();
+    let mut values: Vec<String> = Vec::new();
+
+    for (key, value) in std::env::vars() {
+        names.push(key);
+        values.push(value);
+    }
+
+    Ok(DataFrame::new(vec![
+        Series::new("name".into(), names).into(),
+        Series::new("value".into(), values).into(),
     ])?)
 }
