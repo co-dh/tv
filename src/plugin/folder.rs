@@ -5,10 +5,24 @@ use crate::command::Command;
 use crate::command::io::From;
 use crate::plugin::Plugin;
 use crate::state::ViewState;
-use anyhow::Result;
-use std::path::PathBuf;
+use anyhow::{anyhow, Result};
+use std::path::{Path, PathBuf};
 
 pub struct FolderPlugin;
+
+/// Check if file is viewable with bat (text-like extension or no extension)
+fn is_text_file(path: &Path) -> bool {
+    match path.extension().and_then(|s| s.to_str()) {
+        None => true,  // no extension = likely text
+        Some(ext) => matches!(ext.to_lowercase().as_str(),
+            "txt" | "md" | "rs" | "py" | "js" | "ts" | "json" | "yaml" | "yml" |
+            "toml" | "sh" | "bash" | "zsh" | "fish" | "c" | "h" | "cpp" | "hpp" |
+            "java" | "go" | "rb" | "pl" | "lua" | "sql" | "html" | "css" | "xml" |
+            "log" | "conf" | "cfg" | "ini" | "env" | "gitignore" | "dockerfile" |
+            "makefile" | "cmake" | "4th" | "forth" | "prql"
+        ),
+    }
+}
 
 impl Plugin for FolderPlugin {
     fn name(&self) -> &str { "folder" }
@@ -27,8 +41,13 @@ impl Plugin for FolderPlugin {
                 .unwrap_or(false);
             Some((path, is_dir))
         })?;
-        if is_dir { Some(Box::new(Ls { dir: PathBuf::from(path), recursive: false })) }
-        else { Some(Box::new(From { file_path: path })) }
+        if is_dir {
+            Some(Box::new(Ls { dir: PathBuf::from(path), recursive: false }))
+        } else if is_text_file(Path::new(&path)) {
+            Some(Box::new(BatView { path }))
+        } else {
+            Some(Box::new(From { file_path: path }))
+        }
     }
 
     fn parse(&self, cmd: &str, arg: &str) -> Option<Box<dyn Command>> {
@@ -56,4 +75,35 @@ impl Command for Ls {
     fn to_str(&self) -> String {
         if self.recursive { format!("ls -r {}", self.dir.display()) } else { format!("ls {}", self.dir.display()) }
     }
+}
+
+/// View text file with bat (leaves alternate screen, restores on exit)
+pub struct BatView { pub path: String }
+
+impl Command for BatView {
+    fn exec(&mut self, app: &mut AppContext) -> Result<()> {
+        use crossterm::{execute, terminal::{LeaveAlternateScreen, EnterAlternateScreen}};
+        use std::io::stdout;
+        use std::process::Command as Cmd;
+
+        // Leave alternate screen so bat displays normally
+        execute!(stdout(), LeaveAlternateScreen)?;
+
+        // Run bat (or cat as fallback)
+        let status = Cmd::new("bat")
+            .args(["--paging=always", "--style=numbers", &self.path])
+            .status()
+            .or_else(|_| Cmd::new("less").arg(&self.path).status())
+            .or_else(|_| Cmd::new("cat").arg(&self.path).status());
+
+        // Re-enter alternate screen
+        execute!(stdout(), EnterAlternateScreen)?;
+
+        match status {
+            Ok(s) if s.success() => { app.msg(format!("Viewed: {}", self.path)); Ok(()) }
+            Ok(s) => Err(anyhow!("bat exited with: {}", s)),
+            Err(e) => Err(anyhow!("Failed to view file: {}", e)),
+        }
+    }
+    fn to_str(&self) -> String { format!("bat {}", self.path) }
 }

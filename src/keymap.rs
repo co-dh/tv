@@ -97,7 +97,6 @@ impl KeyMap {
             "delete" => Some(("del", 3)),
             "delete_sel" => Some(("del sel", 3)),
             "filter_parent" => Some(("filter↑", 0)),
-            "goto_col" => Some(("goto", 0)),
             // File ops
             "from" => Some(("load", 4)),
             "save" => Some(("save", 4)),

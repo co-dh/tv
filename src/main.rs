@@ -16,7 +16,8 @@ use command::executor::CommandExecutor;
 use command::io::{From, Save};
 use command::nav::{Goto, GotoCol, ToggleInfo, Decimals, ToggleSel, ClearSel, SelAll, SelRows};
 use command::transform::{Agg, DelCol, Filter, RenameCol, Select, Sort, Take, Xkey};
-use command::view::{Correlation, Dup, Pop, Swap};
+use command::view::{Dup, Pop, Swap};
+use plugin::corr::Correlation;
 use plugin::freq::Frequency;
 use plugin::meta::Metadata;
 use plugin::folder::Ls;
@@ -358,6 +359,11 @@ fn on_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                         hints(&view.dataframe, &col_name, view.state.cr), "Search> ");
 
                     if let Ok(Some(expr)) = expr_opt {
+                        // If prql_hints disabled (default) and plain value, convert to substring match
+                        let prql_mode = theme::load_config_value("prql_hints").map(|v| v == "true").unwrap_or(false);
+                        let expr = if !prql_mode && is_plain_value(&expr) {
+                            format!("{} ~ \"{}\"", col_name, expr)
+                        } else { expr };
                         let matches = find(&view.dataframe, &expr);
                         app.search.col_name = None;
                         app.search.value = Some(expr.clone());
@@ -708,6 +714,14 @@ fn prql_hints(col: &polars::prelude::Column, col_name: &str, row: usize, is_str:
         }
     }
     items
+}
+
+/// Check if expression is a plain value (no operators)
+fn is_plain_value(expr: &str) -> bool {
+    let e = expr.trim();
+    !e.contains('=') && !e.contains('>') && !e.contains('<') && !e.contains('~')
+        && !e.contains("&&") && !e.contains("||") && !e.contains(" AND ")
+        && !e.contains(" OR ") && !e.contains(" LIKE ")
 }
 
 /// Find rows matching PRQL filter expression, returns row indices

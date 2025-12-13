@@ -491,8 +491,10 @@ fn stream_gz_impl(gz_path: &str, out_path: &Path, raw: bool, tx: &Sender<String>
             }
         }
 
-        total_rows += df.height();
-        let _ = tx.send(format!("Saved {} rows to {}", total_rows, chunk_path.display()));
+        let chunk_rows = df.height();
+        let start_row = total_rows + 1;
+        total_rows += chunk_rows;
+        let _ = tx.send(format!("Saved rows {}-{} to {}", start_row, total_rows, chunk_path.display()));
         file_idx += 1;
     }
 
@@ -530,15 +532,15 @@ fn apply_schema(df: DataFrame, schema: &Schema) -> DataFrame {
                         if let Ok(i64_ca) = s.i64() {
                             let v = i64_ca.iter().flatten().next();
                             if let Some(v) = v {
-                                // TAQ time format
-                                if is_taq_time(v) {
+                                // TAQ time format (always try for Time target)
+                                if *target_dtype == DataType::Time {
                                     let ns_ca: Int64Chunked = i64_ca.apply(|v| v.map(taq_to_ns));
                                     if let Ok(t) = ns_ca.into_series().cast(&DataType::Time) {
                                         cols.push(t.into_column());
                                         continue;
                                     }
                                 }
-                                // Epoch conversion
+                                // Epoch conversion for Datetime
                                 if let Some(unit) = epoch_unit(v) {
                                     let mult = if v.abs() < 10_000_000_000 { 1000i64 } else { 1 };
                                     let scaled = i64_ca.clone() * mult;
