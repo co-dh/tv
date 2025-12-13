@@ -540,3 +540,92 @@ fn test_meta_empty_not_dash() {
         assert!(!line.contains(" - "), "str row should not contain '-' for empty values");
     }
 }
+
+// === System command tests ===
+
+#[test]
+fn test_ps_command() {
+    let id = unique_id();
+    let output = run_script("ps\n", id);
+    assert!(output.contains("=== ps"), "ps should show view name");
+    assert!(output.contains("pid"), "ps should have pid column");
+    assert!(output.contains("name"), "ps should have name column");
+    assert!(output.contains("state"), "ps should have state column");
+}
+
+#[test]
+fn test_df_command() {
+    let id = unique_id();
+    let output = run_script("df\n", id);
+    assert!(output.contains("=== df"), "df should show view name");
+    assert!(output.contains("filesystem"), "df should have filesystem column");
+    assert!(output.contains("mount"), "df should have mount column");
+    assert!(output.contains("total"), "df should have total column");
+}
+
+#[test]
+fn test_mounts_command() {
+    let id = unique_id();
+    let output = run_script("mounts\n", id);
+    assert!(output.contains("=== mounts"), "mounts should show view name");
+    assert!(output.contains("device"), "mounts should have device column");
+    assert!(output.contains("type"), "mounts should have type column");
+}
+
+#[test]
+fn test_tcp_command() {
+    let id = unique_id();
+    let output = run_script("tcp\n", id);
+    assert!(output.contains("=== tcp"), "tcp should show view name");
+    assert!(output.contains("local_addr"), "tcp should have local_addr column");
+    assert!(output.contains("local_port"), "tcp should have local_port column");
+    assert!(output.contains("state"), "tcp should have state column");
+}
+
+#[test]
+fn test_udp_command() {
+    let id = unique_id();
+    let output = run_script("udp\n", id);
+    assert!(output.contains("=== udp"), "udp should show view name");
+    assert!(output.contains("local_addr"), "udp should have local_addr column");
+    assert!(output.contains("local_port"), "udp should have local_port column");
+}
+
+#[test]
+fn test_lsblk_command() {
+    let id = unique_id();
+    let output = run_script("lsblk\n", id);
+    assert!(output.contains("=== lsblk"), "lsblk should show view name");
+    assert!(output.contains("name"), "lsblk should have name column");
+    assert!(output.contains("size"), "lsblk should have size column");
+}
+
+#[test]
+fn test_who_command() {
+    let id = unique_id();
+    let output = run_script("who\n", id);
+    assert!(output.contains("=== who"), "who should show view name");
+    assert!(output.contains("user"), "who should have user column");
+    assert!(output.contains("tty"), "who should have tty column");
+}
+
+#[test]
+fn test_lsof_command() {
+    let id = unique_id();
+    // lsof for current process (pid 1 always exists)
+    let output = run_script("lsof 1\n", id);
+    assert!(output.contains("=== lsof:1"), "lsof should show view name with pid");
+    assert!(output.contains("pid"), "lsof should have pid column");
+    assert!(output.contains("fd"), "lsof should have fd column");
+    assert!(output.contains("path"), "lsof should have path column");
+}
+
+#[test]
+fn test_env_command() {
+    let id = unique_id();
+    let output = run_script("env\n", id);
+    assert!(output.contains("=== env"), "env should show view name");
+    assert!(output.contains("name"), "env should have name column");
+    assert!(output.contains("value"), "env should have value column");
+    assert!(output.contains("PATH"), "env should contain PATH variable");
+}
