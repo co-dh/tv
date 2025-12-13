@@ -306,16 +306,17 @@ impl Renderer {
             DataType::String => col.str().ok().and_then(|s| s.get(row_idx)).unwrap_or("null").to_string(),
             DataType::Int8 | DataType::Int16 | DataType::Int32 | DataType::Int64 |
             DataType::UInt8 | DataType::UInt16 | DataType::UInt32 | DataType::UInt64 => {
-                col.get(row_idx).map(|v| Self::commify_str(&v.to_string())).unwrap_or_else(|_| "null".to_string())
+                col.get(row_idx).map(|v| match v {
+                    AnyValue::Null => "null".to_string(),
+                    _ => Self::commify_str(&v.to_string()),
+                }).unwrap_or_else(|_| "null".to_string())
             }
             DataType::Float32 | DataType::Float64 => {
-                col.get(row_idx).map(|v| {
-                    let s = match v {
-                        AnyValue::Float32(f) => format!("{:.prec$}", f, prec = decimals),
-                        AnyValue::Float64(f) => format!("{:.prec$}", f, prec = decimals),
-                        _ => v.to_string(),
-                    };
-                    Self::commify_float(&s)
+                col.get(row_idx).map(|v| match v {
+                    AnyValue::Null => "null".to_string(),
+                    AnyValue::Float32(f) => Self::commify_float(&format!("{:.prec$}", f, prec = decimals)),
+                    AnyValue::Float64(f) => Self::commify_float(&format!("{:.prec$}", f, prec = decimals)),
+                    _ => v.to_string(),
                 }).unwrap_or_else(|_| "null".to_string())
             }
             DataType::Datetime(_, _) => {
@@ -589,5 +590,39 @@ impl Renderer {
             Print(message)
         )?;
         Ok(())
+    }
+
+    #[cfg(test)]
+    pub fn test_format_value(df: &DataFrame, col_idx: usize, row_idx: usize, decimals: usize) -> String {
+        Self::format_value(df, col_idx, row_idx, decimals)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_null_not_commified() {
+        // Create DataFrame with null values in integer and float columns
+        let df = df! {
+            "int_col" => &[Some(1000000i64), None, Some(2000000i64)],
+            "float_col" => &[Some(1234.567f64), None, Some(9876.543f64)],
+        }.unwrap();
+
+        // Test integer null
+        let int_null = Renderer::test_format_value(&df, 0, 1, 3);
+        assert_eq!(int_null, "null", "Integer null should be 'null', not 'n,ull'");
+
+        // Test float null
+        let float_null = Renderer::test_format_value(&df, 1, 1, 3);
+        assert_eq!(float_null, "null", "Float null should be 'null', not 'n,ull'");
+
+        // Verify non-null values are still commified
+        let int_val = Renderer::test_format_value(&df, 0, 0, 3);
+        assert_eq!(int_val, "1,000,000", "Integer should be commified");
+
+        let float_val = Renderer::test_format_value(&df, 1, 0, 3);
+        assert_eq!(float_val, "1,234.567", "Float should be commified");
     }
 }
