@@ -652,3 +652,54 @@ fn test_datetime_year_filter() {
     let output = run_script(&format!("load {}\nfilter date >= '2025-01-01' AND date < '2026-01-01'\n", csv), id);
     assert!(output.contains("(4 rows)"), "Datetime year range should return all 4 rows");
 }
+
+// Gzip tests with delimiter detection
+
+fn setup_gz_pipe(id: usize) -> String {
+    let path = format!("/tmp/tv_test_{}.gz", id);
+    let data = "a|b|c\n1|2|3\n4|5|6\n";
+    Command::new("sh").arg("-c").arg(format!("echo -n '{}' | gzip > {}", data, path)).output().unwrap();
+    path
+}
+
+fn setup_gz_tab(id: usize) -> String {
+    let path = format!("/tmp/tv_test_tab_{}.gz", id);
+    let data = "a\tb\tc\n1\t2\t3\n4\t5\t6\n";
+    Command::new("sh").arg("-c").arg(format!("printf '{}' | gzip > {}", data, path)).output().unwrap();
+    path
+}
+
+fn setup_gz_comma(id: usize) -> String {
+    let path = format!("/tmp/tv_test_comma_{}.gz", id);
+    let data = "a,b,c\n1,2,3\n4,5,6\n";
+    Command::new("sh").arg("-c").arg(format!("echo -n '{}' | gzip > {}", data, path)).output().unwrap();
+    path
+}
+
+#[test]
+fn test_gz_pipe_separated() {
+    let id = unique_id();
+    let gz = setup_gz_pipe(id);
+    let output = run_script(&format!("from {}\n", gz), id);
+    assert!(output.contains("(2 rows)"), "Pipe-separated gz should have 2 rows");
+    assert!(output.contains("┆ b"), "Should detect pipe separator and have column b");
+    assert!(output.contains("┆ c"), "Should have column c");
+}
+
+#[test]
+fn test_gz_tab_separated() {
+    let id = unique_id();
+    let gz = setup_gz_tab(id);
+    let output = run_script(&format!("from {}\n", gz), id);
+    assert!(output.contains("(2 rows)"), "Tab-separated gz should have 2 rows");
+    assert!(output.contains("┆ b"), "Should detect tab separator");
+}
+
+#[test]
+fn test_gz_comma_separated() {
+    let id = unique_id();
+    let gz = setup_gz_comma(id);
+    let output = run_script(&format!("from {}\n", gz), id);
+    assert!(output.contains("(2 rows)"), "Comma-separated gz should have 2 rows");
+    assert!(output.contains("┆ b"), "Should detect comma separator");
+}
