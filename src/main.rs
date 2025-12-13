@@ -1,5 +1,6 @@
 mod app;
 mod command;
+mod keymap;
 mod os;
 mod picker;
 mod render;

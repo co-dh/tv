@@ -23,6 +23,15 @@ impl Renderer {
         let show_info = app.show_info;
         let decimals = app.float_decimals;
 
+        // Get view name for keymap lookup before mutable borrow
+        let tab = app.view().map(|v| {
+            if v.name.starts_with("Freq:") { "freq" }
+            else if v.name == "metadata" { "meta" }
+            else if v.name == "correlation" { "corr" }
+            else { "table" }
+        }).unwrap_or("table");
+        let hints = app.keymap.get_hints(tab);
+
         // Use buffered writer to reduce flickering
         let mut stdout = BufWriter::new(io::stdout());
 
@@ -33,7 +42,7 @@ impl Renderer {
             let view_name = view.name.clone();
             Self::render_table(view, rows, cols, &selected_cols, &selected_rows, decimals, &mut stdout)?;
             if show_info {
-                Self::render_info_box(&view_name, stack_len, rows, cols, &mut stdout)?;
+                Self::render_info_box(&view_name, stack_len, rows, cols, &hints, &mut stdout)?;
             }
             Self::render_status_bar(view, &message, rows, cols, &mut stdout)?;
         } else {
@@ -433,61 +442,7 @@ impl Renderer {
     }
 
     /// Render info box at bottom right corner (like Kakoune)
-    fn render_info_box<W: Write>(view_name: &str, stack_len: usize, rows: u16, cols: u16, writer: &mut W) -> Result<()> {
-        // Determine context-sensitive key hints
-        let keys: Vec<(&str, &str)> = if view_name.starts_with("Freq:") {
-            vec![
-                ("Enter", "filter parent"),
-                ("Space", "select row"),
-                ("Esc", "clear sel"),
-                ("g", "top"),
-                ("G", "bottom"),
-                ("^D", "page down"),
-                ("^U", "page up"),
-                ("q", "back"),
-            ]
-        } else if view_name == "metadata" {
-            vec![
-                ("0", "sel null cols"),
-                ("1", "sel single cols"),
-                ("D", "delete sel"),
-                ("Space", "select row"),
-                ("Esc", "clear sel"),
-                ("g", "top"),
-                ("G", "bottom"),
-                ("q", "back"),
-            ]
-        } else if view_name == "correlation" {
-            vec![
-                ("g", "top"),
-                ("G", "bottom"),
-                ("q", "back"),
-            ]
-        } else {
-            vec![
-                ("/", "search"),
-                ("\\", "filter"),
-                ("n", "next match"),
-                ("N", "prev match"),
-                ("[", "sort asc"),
-                ("]", "sort desc"),
-                ("F", "freq table"),
-                ("M", "metadata"),
-                ("C", "correlation"),
-                ("Space", "select col"),
-                ("D", "delete col"),
-                ("Esc", "clear sel"),
-                ("g", "top"),
-                ("G", "bottom"),
-                ("^D", "page down"),
-                ("^U", "page up"),
-                ("L", "load file"),
-                ("S", "save file"),
-                (",", "decimals--"),
-                (".", "decimals++"),
-                ("q", "quit"),
-            ]
-        };
+    fn render_info_box<W: Write>(_view_name: &str, stack_len: usize, rows: u16, cols: u16, keys: &[(String, &'static str)], writer: &mut W) -> Result<()> {
 
         // Calculate box dimensions
         let max_desc_len = keys.iter().map(|(_, d)| d.len()).max().unwrap_or(10);
