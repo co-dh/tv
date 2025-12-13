@@ -125,6 +125,11 @@ impl KeyMap {
             }
         }
 
+        // Add picker hint for table view
+        if tab == "table" {
+            hints.push(("Enter".to_string(), "sel+edit"));
+        }
+
         hints
     }
 }

@@ -65,6 +65,7 @@ impl Command for Frequency {
 }
 
 /// Metadata view command - shows column types and statistics (data profile)
+/// Uses polars lazy expressions for efficient computation on large datasets
 pub struct Metadata;
 
 impl Command for Metadata {
@@ -73,56 +74,88 @@ impl Command for Metadata {
         let parent_id = view.id;
         let parent_col = view.state.cc;
         let df = &view.dataframe;
+
+        let col_names: Vec<String> = df.get_column_names().iter().map(|s| s.to_string()).collect();
+        let dtypes = df.dtypes();
+        let col_types: Vec<String> = dtypes.iter().map(|dt| format!("{:?}", dt)).collect();
         let total_rows = df.height() as f64;
 
-        // Build metadata dataframe with data profiling
-        let col_names: Vec<String> = df.get_column_names()
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
+        // Check which columns are numeric
+        let is_numeric: Vec<bool> = dtypes.iter().map(|dt| matches!(dt,
+            DataType::Int8 | DataType::Int16 | DataType::Int32 | DataType::Int64 |
+            DataType::UInt8 | DataType::UInt16 | DataType::UInt32 | DataType::UInt64 |
+            DataType::Float32 | DataType::Float64
+        )).collect();
 
-        let col_types: Vec<String> = df.dtypes()
-            .iter()
-            .map(|dt| format!("{:?}", dt))
-            .collect();
+        // Use lazy expressions to compute stats efficiently
+        let lazy = df.clone().lazy();
 
-        let mut null_pcts: Vec<f64> = Vec::new();
-        let mut distincts: Vec<u32> = Vec::new();
-        let mut mins: Vec<String> = Vec::new();
-        let mut maxs: Vec<String> = Vec::new();
-        let mut medians: Vec<String> = Vec::new();
-        let mut sigmas: Vec<String> = Vec::new();
+        // Build expressions - only compute mean/std for numeric columns
+        let null_exprs: Vec<_> = col_names.iter().map(|c| col(c).null_count().alias(c)).collect();
+        let min_exprs: Vec<_> = col_names.iter().map(|c| col(c).min().alias(c)).collect();
+        let max_exprs: Vec<_> = col_names.iter().map(|c| col(c).max().alias(c)).collect();
+        let distinct_exprs: Vec<_> = col_names.iter().map(|c| col(c).n_unique().alias(c)).collect();
 
-        for col in df.get_columns() {
-            let series = col.as_materialized_series();
+        // Only compute mean/std for numeric columns
+        let numeric_cols: Vec<&String> = col_names.iter().zip(&is_numeric)
+            .filter(|(_, &is_num)| is_num).map(|(c, _)| c).collect();
+        let mean_exprs: Vec<_> = numeric_cols.iter().map(|c| col(*c).mean().alias(*c)).collect();
+        let std_exprs: Vec<_> = numeric_cols.iter().map(|c| col(*c).std(1).alias(*c)).collect();
 
+        // Execute
+        let null_df = lazy.clone().select(null_exprs).collect()?;
+        let min_df = lazy.clone().select(min_exprs).collect()?;
+        let max_df = lazy.clone().select(max_exprs).collect()?;
+        let distinct_df = lazy.clone().select(distinct_exprs).collect()?;
+        let mean_df = if !mean_exprs.is_empty() { Some(lazy.clone().select(mean_exprs).collect()?) } else { None };
+        let std_df = if !std_exprs.is_empty() { Some(lazy.select(std_exprs).collect()?) } else { None };
+
+        // Extract values from result DataFrames
+        let mut null_pcts = Vec::new();
+        let mut mins = Vec::new();
+        let mut maxs = Vec::new();
+        let mut medians = Vec::new();
+        let mut sigmas = Vec::new();
+        let mut distincts = Vec::new();
+
+        for (i, name) in col_names.iter().enumerate() {
             // Null percentage
-            let null_count = series.null_count() as f64;
+            let null_count = null_df.column(name).ok()
+                .and_then(|c| c.get(0).ok())
+                .map(|v| v.try_extract::<u32>().unwrap_or(0) as f64)
+                .unwrap_or(0.0);
             null_pcts.push(100.0 * null_count / total_rows);
 
-            // Distinct count
-            let unique_count = series.n_unique().unwrap_or(0) as u32;
-            distincts.push(unique_count);
+            // Min
+            mins.push(min_df.column(name).ok()
+                .and_then(|c| c.get(0).ok())
+                .map(|v| format_anyvalue(&v))
+                .unwrap_or_default());
 
-            // Min/Max - format value cleanly without type info
-            let min_str = format_scalar_value(series.min_reduce().ok());
-            let max_str = format_scalar_value(series.max_reduce().ok());
-            mins.push(min_str);
-            maxs.push(max_str);
+            // Max
+            maxs.push(max_df.column(name).ok()
+                .and_then(|c| c.get(0).ok())
+                .map(|v| format_anyvalue(&v))
+                .unwrap_or_default());
 
-            // Median and Sigma for numeric columns
-            let is_numeric = matches!(
-                series.dtype(),
-                DataType::Int8 | DataType::Int16 | DataType::Int32 | DataType::Int64 |
-                DataType::UInt8 | DataType::UInt16 | DataType::UInt32 | DataType::UInt64 |
-                DataType::Float32 | DataType::Float64
-            );
+            // Distinct
+            distincts.push(distinct_df.column(name).ok()
+                .and_then(|c| c.get(0).ok())
+                .map(|v| v.try_extract::<u32>().unwrap_or(0))
+                .unwrap_or(0));
 
-            if is_numeric {
-                let median = series.median().map(|v| format!("{:.2}", v)).unwrap_or_default();
-                let sigma = series.std(1).map(|v| format!("{:.2}", v)).unwrap_or_default();
-                medians.push(median);
-                sigmas.push(sigma);
+            // Mean and std only for numeric
+            if is_numeric[i] {
+                medians.push(mean_df.as_ref()
+                    .and_then(|df| df.column(name).ok())
+                    .and_then(|c| c.get(0).ok())
+                    .map(|v| format_anyvalue(&v))
+                    .unwrap_or_default());
+                sigmas.push(std_df.as_ref()
+                    .and_then(|df| df.column(name).ok())
+                    .and_then(|c| c.get(0).ok())
+                    .map(|v| format_anyvalue(&v))
+                    .unwrap_or_default());
             } else {
                 medians.push(String::new());
                 sigmas.push(String::new());
@@ -158,29 +191,16 @@ impl Command for Metadata {
     fn record(&self) -> bool { false }
 }
 
-/// Format a scalar value cleanly without type information
-fn format_scalar_value(scalar: Option<polars::prelude::Scalar>) -> String {
-    match scalar {
-        Some(s) => {
-            let av = s.value();
-            match av {
-                AnyValue::Null => String::new(),
-                AnyValue::Int8(v) => v.to_string(),
-                AnyValue::Int16(v) => v.to_string(),
-                AnyValue::Int32(v) => v.to_string(),
-                AnyValue::Int64(v) => v.to_string(),
-                AnyValue::UInt8(v) => v.to_string(),
-                AnyValue::UInt16(v) => v.to_string(),
-                AnyValue::UInt32(v) => v.to_string(),
-                AnyValue::UInt64(v) => v.to_string(),
-                AnyValue::Float32(v) => format!("{:.2}", v),
-                AnyValue::Float64(v) => format!("{:.2}", v),
-                AnyValue::String(v) => v.to_string(),
-                AnyValue::Boolean(v) => v.to_string(),
-                _ => format!("{:?}", av),
-            }
+/// Format AnyValue for display
+fn format_anyvalue(v: &AnyValue) -> String {
+    match v {
+        AnyValue::Null => String::new(),
+        AnyValue::Float64(f) => format!("{:.2}", f),
+        AnyValue::Float32(f) => format!("{:.2}", f),
+        _ => {
+            let s = v.to_string();
+            if s == "null" { String::new() } else { s.trim_matches('"').to_string() }
         }
-        None => String::new(),
     }
 }
 

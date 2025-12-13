@@ -629,3 +629,26 @@ fn test_env_command() {
     assert!(output.contains("value"), "env should have value column");
     assert!(output.contains("PATH"), "env should contain PATH variable");
 }
+
+// Datetime filter tests using SQL syntax
+fn setup_datetime_csv(id: usize) -> String {
+    let path = format!("/tmp/tv_datetime_test_{}.csv", id);
+    fs::write(&path, "date,value\n2025-01-15,100\n2025-02-20,200\n2025-02-28,300\n2025-03-10,400\n").unwrap();
+    path
+}
+
+#[test]
+fn test_datetime_range_filter() {
+    let id = unique_id();
+    let csv = setup_datetime_csv(id);
+    let output = run_script(&format!("load {}\nfilter date >= '2025-02-01' AND date < '2025-03-01'\n", csv), id);
+    assert!(output.contains("(2 rows)"), "Datetime range should return 2 rows");
+}
+
+#[test]
+fn test_datetime_year_filter() {
+    let id = unique_id();
+    let csv = setup_datetime_csv(id);
+    let output = run_script(&format!("load {}\nfilter date >= '2025-01-01' AND date < '2026-01-01'\n", csv), id);
+    assert!(output.contains("(4 rows)"), "Datetime year range should return all 4 rows");
+}

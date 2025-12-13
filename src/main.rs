@@ -321,9 +321,10 @@ fn on_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
             // /: Search with SQL WHERE expression
             if let Some(view) = app.view() {
                 if let Some(col_name) = view.state.cur_col(&view.dataframe) {
-                    let items = hints(&view.dataframe, &col_name, view.state.cr);
+                    let expr_opt = picker::fzf_edit(
+                        hints(&view.dataframe, &col_name, view.state.cr), "Search> ");
 
-                    if let Ok(Some(expr)) = picker::input(items, "Search> ") {
+                    if let Ok(Some(expr)) = expr_opt {
                         let matches = find(&view.dataframe, &expr);
                         app.search.col_name = None;
                         app.search.value = Some(expr.clone());
@@ -345,9 +346,10 @@ fn on_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
             // \: Filter rows with SQL WHERE expression
             if let Some(view) = app.view() {
                 if let Some(col_name) = view.state.cur_col(&view.dataframe) {
-                    let items = hints(&view.dataframe, &col_name, view.state.cr);
+                    let expr_opt = picker::fzf_edit(
+                        hints(&view.dataframe, &col_name, view.state.cr), "WHERE> ");
 
-                    if let Ok(Some(expr)) = picker::input(items, "WHERE> ") {
+                    if let Ok(Some(expr)) = expr_opt {
                         if let Err(e) = CommandExecutor::exec(app, Box::new(Filter { expr })) {
                             app.err(e);
                         }
@@ -523,7 +525,7 @@ fn on_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                         "Float64".to_string(),
                         "Boolean".to_string(),
                     ];
-                    if let Ok(Some(selected)) = picker::pick(types, "Convert to: ") {
+                    if let Ok(Some(selected)) = picker::fzf(types, "Convert to: ") {
                         if let Some(view) = app.view_mut() {
                             let result = match selected.as_str() {
                                 "String" => view.dataframe.column(&col_name)
@@ -555,7 +557,7 @@ fn on_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
             // b: Aggregate by current column
             if let Some(view) = app.view() {
                 if let Some(col) = view.state.cur_col(&view.dataframe) {
-                    if let Ok(Some(func)) = picker::pick(vec![
+                    if let Ok(Some(func)) = picker::fzf(vec![
                         "count".into(), "sum".into(), "mean".into(), "min".into(), "max".into(), "std".into(),
                     ], "Aggregate: ") {
                         if let Err(e) = CommandExecutor::exec(app, Box::new(Agg { col, func })) {
@@ -605,15 +607,14 @@ fn on_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
         }
         KeyCode::Char(':') => {
             // :: Command picker
-            let commands = vec![
+            let cmd_list: Vec<String> = vec![
                 "load <file>", "save <file>",
                 "ls [dir]", "lr [dir]",
                 "ps", "df", "mounts", "tcp", "udp", "lsblk", "who", "lsof [pid]", "env",
                 "filter <expr>", "freq <col>", "meta", "corr",
                 "select <cols>", "delcol <cols>", "sort <col>", "sortdesc <col>", "rename <old> <new>",
-            ];
-            let cmd_list: Vec<String> = commands.iter().map(|s| s.to_string()).collect();
-            if let Ok(Some(selected)) = picker::input(cmd_list, ": ") {
+            ].iter().map(|s| s.to_string()).collect();
+            if let Ok(Some(selected)) = picker::fzf_edit(cmd_list, ": ") {
                 let cmd_str = selected.split_whitespace().next().unwrap_or(&selected);
                 if let Some(cmd) = parse(cmd_str, app).or_else(|| parse(&selected, app)) {
                     if let Err(e) = CommandExecutor::exec(app, cmd) {
@@ -631,7 +632,7 @@ fn on_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                     .iter()
                     .map(|s| s.to_string())
                     .collect();
-                if let Ok(Some(selected)) = picker::pick(col_names.clone(), "Column: ") {
+                if let Ok(Some(selected)) = picker::fzf(col_names.clone(), "Column: ") {
                     if let Some(idx) = col_names.iter().position(|c| c == &selected) {
                         if let Some(view) = app.view_mut() {
                             view.state.cc = idx;
@@ -834,11 +835,15 @@ fn unquote(s: &str) -> String {
     }
 }
 
-/// Get SQL hints for search/filter: LIKE patterns (%) + unique values with quotes
+///// Get SQL hints for search/filter: LIKE patterns (%) + unique values with quotes
 fn hints(df: &polars::prelude::DataFrame, col_name: &str, row: usize) -> Vec<String> {
+    use polars::prelude::DataType;
     let mut items = Vec::new();
     if let Ok(col) = df.column(col_name) {
-        let is_str = matches!(col.dtype(), polars::prelude::DataType::String);
+        let dtype = col.dtype();
+        let is_str = matches!(dtype, DataType::String);
+        let is_datetime = matches!(dtype, DataType::Date | DataType::Datetime(_, _) | DataType::Time);
+
         if is_str {
             if let Ok(val) = col.get(row) {
                 let v = unquote(&val.to_string());
@@ -847,12 +852,47 @@ fn hints(df: &polars::prelude::DataFrame, col_name: &str, row: usize) -> Vec<Str
                     items.push(format!("{} LIKE '%{}'", col_name, &v[v.len()-2..]));
                 }
             }
+        } else if is_datetime {
+            // Generate date range hints for datetime columns
+            if let Ok(val) = col.get(row) {
+                let v = val.to_string();
+                // Parse date parts: 2025-01-15 -> year=2025, month=01
+                if let Some((year, rest)) = v.split_once('-') {
+                    if let Ok(y) = year.parse::<i32>() {
+                        // Year range hint
+                        items.push(format!("{} >= '{}-01-01' AND {} < '{}-01-01'", col_name, y, col_name, y + 1));
+                        // Month range hint
+                        if let Some((month, _)) = rest.split_once('-') {
+                            if let Ok(m) = month.parse::<u32>() {
+                                let (next_y, next_m) = if m >= 12 { (y + 1, 1) } else { (y, m + 1) };
+                                items.push(format!("{} >= '{}-{:02}-01' AND {} < '{}-{:02}-01'",
+                                    col_name, y, m, col_name, next_y, next_m));
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            // Numeric: add comparison hints based on current value
+            if let Ok(val) = col.get(row) {
+                let v = val.to_string();
+                if v != "null" {
+                    items.push(format!("{} > {}", col_name, v));
+                    items.push(format!("{} < {}", col_name, v));
+                    items.push(format!("{} >= {}", col_name, v));
+                    items.push(format!("{} <= {}", col_name, v));
+                    items.push(format!("{} BETWEEN {} AND {}", col_name, v, v));
+                }
+            }
         }
+
+        // Add unique values as exact match hints
         if let Ok(uniq) = col.unique() {
-            for i in 0..uniq.len() {
+            for i in 0..uniq.len().min(10) {  // Limit to 10 unique values
                 if let Ok(v) = uniq.get(i) {
                     let val = unquote(&v.to_string());
-                    if is_str {
+                    if val == "null" { continue; }
+                    if is_str || is_datetime {
                         items.push(format!("{} = '{}'", col_name, val));
                     } else {
                         items.push(format!("{} = {}", col_name, val));
@@ -958,5 +998,66 @@ mod tests {
         assert_eq!(find(&df, "name LIKE 'b%'"), vec![1, 5]);  // banana, blueberry
         assert_eq!(find(&df, "name LIKE '%rry'"), vec![2, 5]);  // cherry, blueberry
         assert_eq!(find(&df, "name LIKE '%apple%'"), vec![0, 3]);  // apple, pineapple
+    }
+
+    #[test]
+    fn test_hints_string() {
+        let df = df! { "name" => &["apple", "banana"] }.unwrap();
+        let h = hints(&df, "name", 0);
+        // Should have LIKE hints and exact match hints
+        assert!(h.iter().any(|s| s.contains("LIKE")), "Should have LIKE hints");
+        assert!(h.iter().any(|s| s.contains("= 'apple'")), "Should have quoted exact match");
+    }
+
+    #[test]
+    fn test_hints_datetime_valid_sql() {
+        let dates = ["2025-01-15", "2025-02-20"];
+        let df = df! {
+            "dt" => dates.iter().map(|s| {
+                chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap()
+            }).collect::<Vec<_>>()
+        }.unwrap();
+
+        let h = hints(&df, "dt", 0);
+
+        // All hints should be valid SQL - verify by executing them
+        let mut ctx = polars::sql::SQLContext::new();
+        ctx.register("df", df.clone().lazy());
+
+        for hint in &h {
+            let sql = format!("SELECT * FROM df WHERE {}", hint);
+            let result = ctx.execute(&sql);
+            assert!(result.is_ok(), "Hint '{}' should be valid SQL, got: {:?}", hint, result.err());
+        }
+
+        // Should have year range hint
+        assert!(h.iter().any(|s| s.contains("2025-01-01") && s.contains("2026-01-01")),
+            "Should have year range hint");
+        // Should have month range hint
+        assert!(h.iter().any(|s| s.contains("2025-01-01") && s.contains("2025-02-01")),
+            "Should have month range hint");
+        // Should have exact match with quotes
+        assert!(h.iter().any(|s| s.contains("= '2025-01-15'")),
+            "Should have quoted exact match for datetime");
+    }
+
+    #[test]
+    fn test_hints_numeric() {
+        let df = df! { "val" => &[1, 2, 3] }.unwrap();
+        let h = hints(&df, "val", 0);
+        // Numeric should not have quotes
+        assert!(h.iter().any(|s| s.contains("= 1") && !s.contains("'")),
+            "Numeric hints should not have quotes");
+    }
+
+    #[test]
+    fn test_hints_numeric_comparisons() {
+        let df = df! { "val" => &[10, 20, 30] }.unwrap();
+        let h = hints(&df, "val", 1);  // row 1 has value 20
+        assert!(h.iter().any(|s| s == "val > 20"), "Should have > hint");
+        assert!(h.iter().any(|s| s == "val < 20"), "Should have < hint");
+        assert!(h.iter().any(|s| s == "val >= 20"), "Should have >= hint");
+        assert!(h.iter().any(|s| s == "val <= 20"), "Should have <= hint");
+        assert!(h.iter().any(|s| s == "val BETWEEN 20 AND 20"), "Should have BETWEEN hint");
     }
 }

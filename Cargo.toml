@@ -8,6 +8,5 @@ polars = { version = "0.45", features = ["lazy", "csv", "parquet", "strings", "s
 polars-ops = { version = "0.45", features = ["cov"] }
 crossterm = "0.28"
 anyhow = "1.0"
-skim = "0.10"
 chrono = "0.4"
 nix = { version = "0.29", features = ["fs"] }

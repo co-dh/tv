@@ -155,4 +155,37 @@ mod tests {
 
     #[test]
     fn test_in_multi_match() { assert_eq!(filt("name IN ('apple','banana','cherry')"), 3); }
+
+    // Datetime filter tests using SQL syntax
+    #[test]
+    fn test_datetime_range() {
+        let dates = ["2025-01-15", "2025-02-20", "2025-02-28"];
+        let d = df! {
+            "dt" => dates.iter().map(|s| {
+                chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap()
+            }).collect::<Vec<_>>()
+        }.unwrap();
+
+        let mut ctx = polars::sql::SQLContext::new();
+        ctx.register("df", d.lazy());
+        let result = ctx.execute("SELECT * FROM df WHERE dt >= '2025-02-01' AND dt < '2025-03-01'")
+            .unwrap().collect().unwrap();
+        assert_eq!(result.height(), 2);  // 2025-02-20, 2025-02-28
+    }
+
+    #[test]
+    fn test_datetime_year_range() {
+        let dates = ["2024-12-31", "2025-01-15", "2025-06-20", "2026-01-01"];
+        let d = df! {
+            "dt" => dates.iter().map(|s| {
+                chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap()
+            }).collect::<Vec<_>>()
+        }.unwrap();
+
+        let mut ctx = polars::sql::SQLContext::new();
+        ctx.register("df", d.lazy());
+        let result = ctx.execute("SELECT * FROM df WHERE dt >= '2025-01-01' AND dt < '2026-01-01'")
+            .unwrap().collect().unwrap();
+        assert_eq!(result.height(), 2);  // 2025-01-15, 2025-06-20
+    }
 }

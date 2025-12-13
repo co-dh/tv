@@ -31,7 +31,7 @@ impl AppContext {
         Self {
             stack: StateStack::new(),
             history_file: PathBuf::from("commands.txt"),
-            message: "Press L to load a file, q to quit".into(),
+            message: String::new(),
             next_id: 0,
             search: SearchState::default(),
             bookmarks: Vec::new(),
