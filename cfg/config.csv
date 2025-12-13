@@ -1,3 +1,4 @@
 key,value
 theme,light
 gz_mem_pct,10
+prql_hints,false

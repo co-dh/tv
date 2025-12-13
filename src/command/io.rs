@@ -232,9 +232,12 @@ fn epoch_unit(v: i64) -> Option<TimeUnit> {
 
 /// Check if value looks like TAQ time format (HHMMSS + fractional ns)
 /// e.g., 035900085993578 = 03:59:00.085993578
+/// TAQ values are 13-15 digits (HHMMSSNNNNNNNNN with leading zeros)
 fn is_taq_time(v: i64) -> bool {
     if v < 0 { return false; }
-    let s = format!("{:015}", v);  // pad to 15 digits
+    // TAQ time: must be 13-15 digit range (roughly 1e12 to 1e15)
+    if v < 1_000_000_000_000 || v >= 1_000_000_000_000_000 { return false; }
+    let s = format!("{:015}", v);
     let hh: u32 = s[0..2].parse().unwrap_or(99);
     let mm: u32 = s[2..4].parse().unwrap_or(99);
     let ss: u32 = s[4..6].parse().unwrap_or(99);
@@ -251,12 +254,13 @@ fn taq_to_ns(v: i64) -> i64 {
     (hh * 3600 + mm * 60 + ss) * 1_000_000_000 + frac
 }
 
-/// Convert integer columns with datetime-like names to datetime
+/// Convert integer/float columns with datetime-like names to datetime/time
 fn convert_epoch_cols(df: DataFrame) -> DataFrame {
     let mut cols: Vec<Column> = Vec::with_capacity(df.width());
     for c in df.get_columns() {
         let name = c.name().as_str();
-        if !is_datetime_name(name) || !c.dtype().is_integer() {
+        let is_numeric = c.dtype().is_integer() || c.dtype().is_float();
+        if !is_datetime_name(name) || !is_numeric {
             cols.push(c.clone());
             continue;
         }
@@ -273,7 +277,7 @@ fn convert_epoch_cols(df: DataFrame) -> DataFrame {
         let sample = i64_ca.into_iter().flatten().next();
         let Some(v) = sample else { cols.push(c.clone()); continue; };
 
-        // Try epoch conversion first
+        // Try epoch conversion first (more common than TAQ)
         if let Some(unit) = epoch_unit(v) {
             let multiplier = if v.abs() < 10_000_000_000 { 1000i64 } else { 1 };
             let scaled = i64_ca.clone() * multiplier;

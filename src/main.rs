@@ -645,76 +645,66 @@ fn unquote(s: &str) -> String {
     }
 }
 
-///// Get SQL hints for search/filter: LIKE patterns (%) + unique values with quotes
-/// Generate PRQL filter hints for fzf picker
+/// Generate filter hints: distinct values first, PRQL hints if cfg prql_hints=true
 fn hints(df: &polars::prelude::DataFrame, col_name: &str, row: usize) -> Vec<String> {
     use polars::prelude::DataType;
     let mut items = Vec::new();
-    if let Ok(col) = df.column(col_name) {
-        let dtype = col.dtype();
-        let is_str = matches!(dtype, DataType::String);
-        let is_datetime = matches!(dtype, DataType::Date | DataType::Datetime(_, _) | DataType::Time);
+    let Ok(col) = df.column(col_name) else { return items };
+    let dtype = col.dtype();
+    let is_str = matches!(dtype, DataType::String);
+    let is_datetime = matches!(dtype, DataType::Date | DataType::Datetime(_, _) | DataType::Time);
 
-        if is_str {
-            // PRQL text functions: starts_with, ends_with, contains
-            if let Ok(val) = col.get(row) {
-                let v = unquote(&val.to_string());
-                if v.len() >= 2 {
-                    items.push(format!("({} | text.starts_with '{}')", col_name, &v[..2]));
-                    items.push(format!("({} | text.ends_with '{}')", col_name, &v[v.len()-2..]));
-                    items.push(format!("({} | text.contains '{}')", col_name, &v[..v.len().min(4)]));
-                }
+    // Distinct values first (default)
+    if let Ok(uniq) = col.unique() {
+        for i in 0..uniq.len().min(50) {
+            if let Ok(v) = uniq.get(i) {
+                let val = unquote(&v.to_string());
+                if val == "null" { continue; }
+                items.push(val);
             }
-        } else if is_datetime {
-            // PRQL date: @2008-01-10 syntax
-            if let Ok(val) = col.get(row) {
-                let v = val.to_string();
-                if let Some((year, rest)) = v.split_once('-') {
-                    if let Ok(y) = year.parse::<i32>() {
-                        // Year range
-                        items.push(format!("{} >= @{}-01-01 && {} < @{}-01-01", col_name, y, col_name, y + 1));
-                        // Month range
-                        if let Some((month, _)) = rest.split_once('-') {
-                            if let Ok(m) = month.parse::<u32>() {
-                                let (next_y, next_m) = if m >= 12 { (y + 1, 1) } else { (y, m + 1) };
-                                items.push(format!("{} >= @{}-{:02}-01 && {} < @{}-{:02}-01",
-                                    col_name, y, m, col_name, next_y, next_m));
-                            }
+        }
+    }
+
+    // PRQL hints only if enabled in cfg/config.csv
+    if theme::load_config_value("prql_hints").map(|v| v == "true").unwrap_or(false) {
+        items.extend(prql_hints(col, col_name, row, is_str, is_datetime));
+    }
+    items
+}
+
+/// Generate PRQL filter hints (text patterns, date ranges, comparisons)
+fn prql_hints(col: &polars::prelude::Column, col_name: &str, row: usize, is_str: bool, is_datetime: bool) -> Vec<String> {
+    let mut items = Vec::new();
+    if is_str {
+        if let Ok(val) = col.get(row) {
+            let v = unquote(&val.to_string());
+            if v.len() >= 2 {
+                items.push(format!("({} | text.starts_with '{}')", col_name, &v[..2]));
+                items.push(format!("({} | text.ends_with '{}')", col_name, &v[v.len()-2..]));
+                items.push(format!("({} | text.contains '{}')", col_name, &v[..v.len().min(4)]));
+            }
+        }
+    } else if is_datetime {
+        if let Ok(val) = col.get(row) {
+            let v = val.to_string();
+            if let Some((year, rest)) = v.split_once('-') {
+                if let Ok(y) = year.parse::<i32>() {
+                    items.push(format!("{} >= @{}-01-01 && {} < @{}-01-01", col_name, y, col_name, y + 1));
+                    if let Some((month, _)) = rest.split_once('-') {
+                        if let Ok(m) = month.parse::<u32>() {
+                            let (ny, nm) = if m >= 12 { (y + 1, 1) } else { (y, m + 1) };
+                            items.push(format!("{} >= @{}-{:02}-01 && {} < @{}-{:02}-01", col_name, y, m, col_name, ny, nm));
                         }
                     }
                 }
             }
-        } else {
-            // Numeric: comparison hints
-            if let Ok(val) = col.get(row) {
-                let v = val.to_string();
-                if v != "null" {
-                    items.push(format!("{} > {}", col_name, v));
-                    items.push(format!("{} < {}", col_name, v));
-                    items.push(format!("{} >= {}", col_name, v));
-                    items.push(format!("{} <= {}", col_name, v));
-                    items.push(format!("{} >= {} && {} <= {}", col_name, v, col_name, v));  // between
-                }
-            }
         }
-
-        // Unique values as exact match hints
-        if let Ok(uniq) = col.unique() {
-            for i in 0..uniq.len().min(10) {
-                if let Ok(v) = uniq.get(i) {
-                    let val = unquote(&v.to_string());
-                    if val == "null" { continue; }
-                    if is_str {
-                        // SQL = for strings (passed through to polars)
-                        items.push(format!("{} = '{}'", col_name, val));
-                    } else if is_datetime {
-                        // Format as @YYYY-MM-DD
-                        items.push(format!("{} == @{}", col_name, val));
-                    } else {
-                        items.push(format!("{} == {}", col_name, val));
-                    }
-                }
-            }
+    } else if let Ok(val) = col.get(row) {
+        let v = val.to_string();
+        if v != "null" {
+            items.push(format!("{} > {}", col_name, v));
+            items.push(format!("{} < {}", col_name, v));
+            items.push(format!("{} >= {} && {} <= {}", col_name, v, col_name, v));
         }
     }
     items
@@ -833,51 +823,38 @@ mod tests {
     fn test_hints_string() {
         let df = df! { "name" => &["apple", "banana"] }.unwrap();
         let h = hints(&df, "name", 0);
-        // PRQL text function hints
-        assert!(h.iter().any(|s| s.contains("text.starts_with")), "Should have starts_with hint");
-        assert!(h.iter().any(|s| s.contains("text.ends_with")), "Should have ends_with hint");
-        assert!(h.iter().any(|s| s.contains("text.contains")), "Should have contains hint");
-        assert!(h.iter().any(|s| s.contains("= 'apple'")), "Should have exact match");
+        // Default: distinct values only (no PRQL hints unless cfg enabled)
+        assert!(h.iter().any(|s| s == "apple"), "Should have distinct value apple");
+        assert!(h.iter().any(|s| s == "banana"), "Should have distinct value banana");
     }
 
     #[test]
-    fn test_hints_datetime_prql() {
+    fn test_hints_datetime() {
         let dates = ["2025-01-15", "2025-02-20"];
         let df = df! {
             "dt" => dates.iter().map(|s| {
                 chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap()
             }).collect::<Vec<_>>()
         }.unwrap();
-
         let h = hints(&df, "dt", 0);
-
-        // PRQL date hints use @ prefix and &&
-        assert!(h.iter().any(|s| s.contains("@2025-01-01") && s.contains("@2026-01-01")),
-            "Should have PRQL year range hint with @");
-        assert!(h.iter().any(|s| s.contains("&&")), "Should use && for AND");
-        // PRQL exact match: == @YYYY-MM-DD
-        assert!(h.iter().any(|s| s.contains("== @2025-01-15")),
-            "Should have PRQL datetime exact match");
+        // Default: distinct date values
+        assert!(h.iter().any(|s| s.contains("2025-01-15")), "Should have distinct date value");
     }
 
     #[test]
     fn test_hints_numeric() {
         let df = df! { "val" => &[1, 2, 3] }.unwrap();
         let h = hints(&df, "val", 0);
-        // PRQL uses == for equality
-        assert!(h.iter().any(|s| s.contains("== 1") && !s.contains("'")),
-            "Numeric hints should use == without quotes");
+        // Default: distinct values
+        assert!(h.iter().any(|s| s == "1"), "Should have distinct value 1");
+        assert!(h.iter().any(|s| s == "2"), "Should have distinct value 2");
     }
 
     #[test]
-    fn test_hints_numeric_comparisons() {
-        let df = df! { "val" => &[10, 20, 30] }.unwrap();
-        let h = hints(&df, "val", 1);  // row 1 has value 20
-        assert!(h.iter().any(|s| s == "val > 20"), "Should have > hint");
-        assert!(h.iter().any(|s| s == "val < 20"), "Should have < hint");
-        assert!(h.iter().any(|s| s == "val >= 20"), "Should have >= hint");
-        assert!(h.iter().any(|s| s == "val <= 20"), "Should have <= hint");
-        // PRQL uses && instead of BETWEEN
-        assert!(h.iter().any(|s| s == "val >= 20 && val <= 20"), "Should have range hint with &&");
+    fn test_hints_distinct_limit() {
+        let df = df! { "val" => (0..100).collect::<Vec<i32>>() }.unwrap();
+        let h = hints(&df, "val", 0);
+        // Should limit to 50 distinct values
+        assert!(h.len() <= 50, "Should limit distinct values to 50");
     }
 }
