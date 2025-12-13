@@ -11,7 +11,11 @@ pub fn ls(dir: &Path) -> anyhow::Result<DataFrame> {
     let mut modified: Vec<i64> = Vec::new();
     let mut is_dir: Vec<&str> = Vec::new();
 
-    // Add ".." to go to parent directory
+    // Collect entries and sort by name
+    let mut entries: Vec<_> = std::fs::read_dir(dir)?.filter_map(|e| e.ok()).collect();
+    entries.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
+
+    // Add ".." first to go to parent directory
     let abs_dir = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
     if let Some(parent) = abs_dir.parent() {
         names.push("..".into());
@@ -22,8 +26,7 @@ pub fn ls(dir: &Path) -> anyhow::Result<DataFrame> {
         modified.push(m.map(|m| m.mtime() * 1_000_000).unwrap_or(0));
     }
 
-    for entry in std::fs::read_dir(dir)? {
-        let e = entry?;
+    for e in entries {
         let m = e.metadata()?;
         let full_path = e.path().canonicalize().unwrap_or_else(|_| e.path());
         names.push(e.file_name().to_string_lossy().into());
@@ -54,7 +57,9 @@ pub fn lr(dir: &Path) -> anyhow::Result<DataFrame> {
 
     fn walk(dir: &Path, base: &Path, paths: &mut Vec<String>, sizes: &mut Vec<u64>, modified: &mut Vec<i64>, is_dir: &mut Vec<&'static str>) {
         if let Ok(entries) = std::fs::read_dir(dir) {
-            for entry in entries.flatten() {
+            let mut entries: Vec<_> = entries.flatten().collect();
+            entries.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
+            for entry in entries {
                 if let Ok(m) = entry.metadata() {
                     let p = entry.path();
                     paths.push(p.strip_prefix(base).unwrap_or(&p).to_string_lossy().into());

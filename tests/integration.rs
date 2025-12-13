@@ -536,6 +536,26 @@ fn test_ls_parent_dir_entry() {
     assert!(output.contains("/tmp"), ".. should point to parent directory");
 }
 
+#[test]
+fn test_ls_sorted_by_name() {
+    let id = unique_id();
+    let dir = format!("/tmp/tv_test_sort_{}", id);
+    fs::create_dir_all(&dir).unwrap();
+    // Create files in non-alphabetical order
+    fs::write(format!("{}/zebra.txt", dir), "z").unwrap();
+    fs::write(format!("{}/apple.txt", dir), "a").unwrap();
+    fs::write(format!("{}/mango.txt", dir), "m").unwrap();
+
+    let output = run_script(&format!("ls {}\n", dir), id);
+    // Find positions of each file in output
+    let apple_pos = output.find("apple.txt").unwrap();
+    let mango_pos = output.find("mango.txt").unwrap();
+    let zebra_pos = output.find("zebra.txt").unwrap();
+    // Should be sorted alphabetically
+    assert!(apple_pos < mango_pos, "apple should come before mango");
+    assert!(mango_pos < zebra_pos, "mango should come before zebra");
+}
+
 // === meta tests (from test_meta.sh) ===
 
 #[test]
