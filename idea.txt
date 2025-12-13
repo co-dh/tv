@@ -20,3 +20,4 @@ csv
 # embedded json in table
 
 # theme , config theme, in csv format.
+# bold header 

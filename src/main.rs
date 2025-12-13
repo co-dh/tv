@@ -222,10 +222,12 @@ fn on_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
         }
         KeyCode::Char('.') => {
             app.float_decimals = (app.float_decimals + 1).min(10);
+            if let Some(v) = app.view_mut() { v.state.col_widths.clear(); }
             app.msg(format!("Float decimals: {}", app.float_decimals));
         }
         KeyCode::Char(',') => {
             app.float_decimals = app.float_decimals.saturating_sub(1);
+            if let Some(v) = app.view_mut() { v.state.col_widths.clear(); }
             app.msg(format!("Float decimals: {}", app.float_decimals));
         }
         KeyCode::Char('L') => {

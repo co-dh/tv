@@ -71,6 +71,7 @@ impl Command for Metadata {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         let view = app.req()?;
         let parent_id = view.id;
+        let parent_col = view.state.cc;
         let df = &view.dataframe;
         let total_rows = df.height() as f64;
 
@@ -147,6 +148,7 @@ impl Command for Metadata {
             None,
         );
         new_view.parent_id = Some(parent_id);
+        new_view.state.cr = parent_col;
 
         app.stack.push(new_view);
         Ok(())
@@ -342,5 +344,35 @@ impl Command for Lr {
     }
     fn to_str(&self) -> String { format!("lr {}", self.dir.display()) }
     fn record(&self) -> bool { false }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_meta_focuses_parent_column() {
+        let mut app = AppContext::new();
+        let df = df! {
+            "a" => &[1, 2, 3],
+            "b" => &[4, 5, 6],
+            "c" => &[7, 8, 9],
+            "d" => &[10, 11, 12],
+        }.unwrap();
+
+        let id = app.next_id();
+        app.stack.push(ViewState::new(id, "test".into(), df, None));
+
+        // Set parent cursor to column 2 (column "c")
+        app.view_mut().unwrap().state.cc = 2;
+
+        // Execute Metadata command
+        Metadata.exec(&mut app).unwrap();
+
+        // Meta view should focus on row 2 (corresponding to column "c")
+        let meta_view = app.view().unwrap();
+        assert_eq!(meta_view.name, "metadata");
+        assert_eq!(meta_view.state.cr, 2);
+    }
 }
 
