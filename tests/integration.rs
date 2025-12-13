@@ -738,3 +738,14 @@ fn test_epoch_us_conversion() {
     assert!(output.contains("datetime[μs]"), "Should convert us epoch to datetime");
     assert!(output.contains("2023-12-13"), "Should show correct date");
 }
+
+#[test]
+fn test_taq_time_conversion() {
+    let id = unique_id();
+    let path = format!("/tmp/tv_taq_test_{}.csv", id);
+    // TAQ format: HHMMSSNNNNNNNN (03:59:00.085993578)
+    fs::write(&path, "Time,Value\n035900085993578,100\n143000000000000,200\n").unwrap();
+    let output = run_script(&format!("from {}\n", path), id);
+    assert!(output.contains("time"), "Should convert TAQ format to time type");
+    assert!(output.contains("03:59:00"), "Should show correct time");
+}

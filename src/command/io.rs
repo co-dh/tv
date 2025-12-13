@@ -132,6 +132,27 @@ fn epoch_unit(v: i64) -> Option<TimeUnit> {
     else { None }
 }
 
+/// Check if value looks like TAQ time format (HHMMSS + fractional ns)
+/// e.g., 035900085993578 = 03:59:00.085993578
+fn is_taq_time(v: i64) -> bool {
+    if v < 0 { return false; }
+    let s = format!("{:015}", v);  // pad to 15 digits
+    let hh: u32 = s[0..2].parse().unwrap_or(99);
+    let mm: u32 = s[2..4].parse().unwrap_or(99);
+    let ss: u32 = s[4..6].parse().unwrap_or(99);
+    hh < 24 && mm < 60 && ss < 60
+}
+
+/// Convert TAQ time format to nanoseconds since midnight
+fn taq_to_ns(v: i64) -> i64 {
+    let s = format!("{:015}", v);
+    let hh: i64 = s[0..2].parse().unwrap_or(0);
+    let mm: i64 = s[2..4].parse().unwrap_or(0);
+    let ss: i64 = s[4..6].parse().unwrap_or(0);
+    let frac: i64 = s[6..15].parse().unwrap_or(0);  // 9 digits of fractional ns
+    (hh * 3600 + mm * 60 + ss) * 1_000_000_000 + frac
+}
+
 /// Convert integer columns with datetime-like names to datetime
 fn convert_epoch_cols(df: DataFrame) -> DataFrame {
     let mut cols: Vec<Column> = Vec::with_capacity(df.width());
@@ -153,15 +174,27 @@ fn convert_epoch_cols(df: DataFrame) -> DataFrame {
         };
         let sample = i64_ca.into_iter().flatten().next();
         let Some(v) = sample else { cols.push(c.clone()); continue; };
-        let Some(unit) = epoch_unit(v) else { cols.push(c.clone()); continue; };
 
-        // Convert: if sec range, multiply by 1000 to get ms
-        let multiplier = if v.abs() < 10_000_000_000 { 1000i64 } else { 1 };
-        let scaled = i64_ca.clone() * multiplier;
-        match scaled.into_series().cast(&DataType::Datetime(unit, None)) {
-            Ok(dt) => cols.push(dt.into_column()),
-            Err(_) => cols.push(c.clone()),
+        // Try epoch conversion first
+        if let Some(unit) = epoch_unit(v) {
+            let multiplier = if v.abs() < 10_000_000_000 { 1000i64 } else { 1 };
+            let scaled = i64_ca.clone() * multiplier;
+            if let Ok(dt) = scaled.into_series().cast(&DataType::Datetime(unit, None)) {
+                cols.push(dt.into_column());
+                continue;
+            }
         }
+
+        // Try TAQ time format (HHMMSS + fractional ns)
+        if is_taq_time(v) {
+            let ns_ca: Int64Chunked = i64_ca.apply(|v| v.map(taq_to_ns));
+            if let Ok(t) = ns_ca.into_series().cast(&DataType::Time) {
+                cols.push(t.into_column());
+                continue;
+            }
+        }
+
+        cols.push(c.clone());
     }
     DataFrame::new(cols).unwrap_or(df)
 }
