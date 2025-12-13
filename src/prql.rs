@@ -137,6 +137,14 @@ mod tests {
     }
 
     #[test]
+    fn test_filter_like() {
+        // SQL LIKE pattern (passed through directly)
+        let sql = filter_to_sql("name LIKE '%tests%'").unwrap();
+        eprintln!("like SQL: {}", sql);
+        assert!(sql.contains("LIKE"));
+    }
+
+    #[test]
     fn test_sort_asc() {
         let (col, desc) = parse_sort("name");
         assert_eq!(col, "name");

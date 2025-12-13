@@ -80,56 +80,53 @@ pub fn lr(dir: &Path) -> anyhow::Result<DataFrame> {
     ])?)
 }
 
-/// Process list from /proc (like ps)
+/// Process list from ps aux (more columns than /proc parsing)
 pub fn ps() -> anyhow::Result<DataFrame> {
+    use std::process::Command;
+    let out = Command::new("ps").args(["aux"]).output()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+
+    let mut users: Vec<String> = Vec::new();
     let mut pids: Vec<i32> = Vec::new();
-    let mut names: Vec<String> = Vec::new();
-    let mut states: Vec<String> = Vec::new();
-    let mut ppids: Vec<i32> = Vec::new();
-    let mut vmrss: Vec<u64> = Vec::new();  // memory in KB
-    let mut threads: Vec<u32> = Vec::new();
+    let mut cpus: Vec<f64> = Vec::new();
+    let mut mems: Vec<f64> = Vec::new();
+    let mut vszs: Vec<u64> = Vec::new();
+    let mut rsss: Vec<u64> = Vec::new();
+    let mut ttys: Vec<String> = Vec::new();
+    let mut stats: Vec<String> = Vec::new();
+    let mut starts: Vec<String> = Vec::new();
+    let mut times: Vec<String> = Vec::new();
+    let mut cmds: Vec<String> = Vec::new();
 
-    for entry in fs::read_dir("/proc")? {
-        let e = entry?;
-        let name = e.file_name();
-        if let Ok(pid) = name.to_string_lossy().parse::<i32>() {
-            let stat_path = format!("/proc/{}/stat", pid);
-            let status_path = format!("/proc/{}/status", pid);
-
-            if let (Ok(stat), Ok(status)) = (fs::read_to_string(&stat_path), fs::read_to_string(&status_path)) {
-                // Parse /proc/[pid]/stat: pid (comm) state ppid ...
-                if let Some(comm_start) = stat.find('(') {
-                    if let Some(comm_end) = stat.rfind(')') {
-                        let comm = &stat[comm_start + 1..comm_end];
-                        let rest: Vec<&str> = stat[comm_end + 2..].split_whitespace().collect();
-                        if rest.len() >= 2 {
-                            pids.push(pid);
-                            names.push(comm.to_string());
-                            states.push(rest[0].to_string());
-                            ppids.push(rest[1].parse().unwrap_or(0));
-                            threads.push(rest.get(17).and_then(|s| s.parse().ok()).unwrap_or(1));
-                        }
-
-                        // Parse VmRSS from status
-                        let rss = status.lines()
-                            .find(|l| l.starts_with("VmRSS:"))
-                            .and_then(|l| l.split_whitespace().nth(1))
-                            .and_then(|s| s.parse().ok())
-                            .unwrap_or(0u64);
-                        vmrss.push(rss);
-                    }
-                }
-            }
+    for line in text.lines().skip(1) {  // skip header
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() >= 11 {
+            users.push(parts[0].into());
+            pids.push(parts[1].parse().unwrap_or(0));
+            cpus.push(parts[2].parse().unwrap_or(0.0));
+            mems.push(parts[3].parse().unwrap_or(0.0));
+            vszs.push(parts[4].parse().unwrap_or(0));
+            rsss.push(parts[5].parse().unwrap_or(0));
+            ttys.push(parts[6].into());
+            stats.push(parts[7].into());
+            starts.push(parts[8].into());
+            times.push(parts[9].into());
+            cmds.push(parts[10..].join(" "));
         }
     }
 
     Ok(DataFrame::new(vec![
+        Series::new("user".into(), users).into(),
         Series::new("pid".into(), pids).into(),
-        Series::new("name".into(), names).into(),
-        Series::new("state".into(), states).into(),
-        Series::new("ppid".into(), ppids).into(),
-        Series::new("rss_kb".into(), vmrss).into(),
-        Series::new("threads".into(), threads).into(),
+        Series::new("%cpu".into(), cpus).into(),
+        Series::new("%mem".into(), mems).into(),
+        Series::new("vsz".into(), vszs).into(),
+        Series::new("rss".into(), rsss).into(),
+        Series::new("tty".into(), ttys).into(),
+        Series::new("stat".into(), stats).into(),
+        Series::new("start".into(), starts).into(),
+        Series::new("time".into(), times).into(),
+        Series::new("command".into(), cmds).into(),
     ])?)
 }
 

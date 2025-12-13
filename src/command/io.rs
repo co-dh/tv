@@ -337,8 +337,7 @@ pub struct Save {
     pub file_path: String,
 }
 
-const CHUNK_ROWS: usize = 10_000_000;  // rows per chunk for streaming
-const MAX_CHUNK_BYTES: usize = 1024 * 1024 * 1024;  // ~1GB per parquet file
+const CHUNK_ROWS: usize = 1_000_000;  // rows per read chunk
 
 impl Command for Save {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
@@ -404,7 +403,7 @@ fn stream_gz_worker(gz_path: &str, out_path: &Path, raw: bool, tx: Sender<String
     }
 }
 
-const FIRST_CHUNK_ROWS: usize = 100_000;  // larger first chunk for schema detection
+const FIRST_CHUNK_ROWS: usize = 100_000;  // first chunk for schema detection
 
 fn stream_gz_impl(gz_path: &str, out_path: &Path, raw: bool, tx: &Sender<String>) -> Result<()> {
     let mut child = Cmd::new("zcat")
@@ -424,145 +423,142 @@ fn stream_gz_impl(gz_path: &str, out_path: &Path, raw: bool, tx: &Sender<String>
     let col_count = header.split(sep as char).count();
     let header_bytes = header.as_bytes().to_vec();
 
-    let prefix = out_path.file_stem().and_then(|s| s.to_str()).unwrap_or("out");
-    let parent = out_path.parent().unwrap_or(Path::new("."));
-    let mut file_idx = 1usize;
-    let mut total_rows = 0usize;
-    let mut final_schema: Option<Schema> = None;  // schema from first chunk (when not raw)
-
-    loop {
-        let mut chunk_buf = header_bytes.clone();
-        let mut chunk_bytes = 0usize;
+    // Helper to read N lines into a chunk buffer
+    let mut read_chunk = |n: usize| -> Result<(Vec<u8>, usize)> {
+        let mut buf = header_bytes.clone();
         let mut lines = 0usize;
-
-        // First chunk is larger for better schema detection (when not raw)
-        let max_lines = if !raw && file_idx == 1 { FIRST_CHUNK_ROWS } else { CHUNK_ROWS };
-
-        while chunk_bytes < MAX_CHUNK_BYTES && lines < max_lines {
+        while lines < n {
             let mut line = String::new();
-            let n = reader.read_line(&mut line)?;
-            if n == 0 { break; }
-            chunk_buf.extend_from_slice(line.as_bytes());
-            chunk_bytes += n;
+            if reader.read_line(&mut line)? == 0 { break; }
+            buf.extend_from_slice(line.as_bytes());
             lines += 1;
         }
+        Ok((buf, lines))
+    };
 
+    // Helper to parse CSV buffer with string schema
+    let str_schema = Arc::new(Schema::from_iter((0..col_count).map(|i| {
+        let name = header.split(sep as char).nth(i).unwrap_or("").trim();
+        Field::new(name.into(), DataType::String)
+    })));
+    let parse = |buf: Vec<u8>| -> Result<DataFrame> {
+        CsvReadOptions::default()
+            .with_has_header(true)
+            .with_schema(Some(str_schema.clone()))
+            .map_parse_options(|o| o.with_separator(sep))
+            .into_reader_with_file_handle(std::io::Cursor::new(buf))
+            .finish()
+            .map_err(|e| anyhow!("Failed to parse chunk: {}", e))
+    };
+
+    // Read first chunk to detect schema
+    let (buf, lines) = read_chunk(FIRST_CHUNK_ROWS)?;
+    if lines == 0 { return Err(anyhow!("Empty file")); }
+    let first_df = parse(buf)?;
+    let first_df = if raw { first_df } else { convert_types(first_df) };
+    let schema = first_df.schema().to_owned();
+
+    // Collect all chunks
+    let mut chunks: Vec<DataFrame> = vec![first_df];
+    let mut total_rows = chunks[0].height();
+    let _ = tx.send(format!("Read {} rows", total_rows));
+
+    // Stream remaining chunks
+    loop {
+        let (buf, lines) = read_chunk(CHUNK_ROWS)?;
         if lines == 0 { break; }
 
-        // Parse CSV with all columns as String first
-        let cursor = std::io::Cursor::new(chunk_buf);
-        let str_schema = Schema::from_iter((0..col_count).map(|i| {
-            let name = header.split(sep as char).nth(i).unwrap_or("").trim();
-            Field::new(name.into(), DataType::String)
-        }));
-        let df = CsvReadOptions::default()
-            .with_has_header(true)
-            .with_schema(Some(Arc::new(str_schema)))
-            .map_parse_options(|o| o.with_separator(sep))
-            .into_reader_with_file_handle(cursor)
-            .finish()
-            .map_err(|e| anyhow!("Failed to parse chunk: {}", e))?;
-
-        // raw mode: keep as String; otherwise detect/apply schema
-        let df = if raw {
-            df
-        } else if let Some(ref schema) = final_schema {
-            apply_schema(df, schema)
-        } else {
-            let df = convert_types(df);
-            final_schema = Some(df.schema().to_owned());
+        let df = parse(buf)?;
+        let df = if raw { df } else {
+            let (df, err) = apply_schema(df, &schema);
+            if let Some(e) = err { let _ = tx.send(format!("Warning: {}", e)); }
             df
         };
 
-        let chunk_path = parent.join(format!("{}_{:03}.parquet", prefix, file_idx));
-        ParquetWriter::new(std::fs::File::create(&chunk_path)?)
-            .finish(&mut df.clone())
-            .map_err(|e| anyhow!("Failed to write {}: {}", chunk_path.display(), e))?;
+        total_rows += df.height();
+        chunks.push(df);
+        let _ = tx.send(format!("Read {} rows", total_rows));
+    }
 
-        // Verify saved schema matches expected (not raw mode)
-        if !raw {
-            if let Some(ref expected) = final_schema {
-                let arrow_schema = ParquetReader::new(std::fs::File::open(&chunk_path)?)
-                    .schema()
-                    .map_err(|e| anyhow!("Failed to read schema from {}: {}", chunk_path.display(), e))?;
-                if let Some(mismatch) = schema_mismatch_arrow(expected, &arrow_schema) {
-                    return Err(anyhow!("Schema mismatch in {}: {}", chunk_path.display(), mismatch));
+    // Stack and write
+    let _ = tx.send("Writing parquet...".to_string());
+    let mut df = chunks.into_iter().reduce(|a, b| a.vstack(&b).unwrap_or(a)).unwrap();
+    ParquetWriter::new(std::fs::File::create(out_path)?)
+        .finish(&mut df)
+        .map_err(|e| anyhow!("Write error: {}", e))?;
+    let _ = child.wait();
+    let _ = tx.send(format!("Done: {} rows to {}", total_rows, out_path.display()));
+    Ok(())
+}
+
+/// Apply a fixed schema to dataframe (cast columns to match)
+/// Returns (df, Option<error_msg>) - error_msg if conversion failed for a column
+fn apply_schema(df: DataFrame, schema: &Schema) -> (DataFrame, Option<String>) {
+    let mut cols: Vec<Column> = Vec::with_capacity(df.width());
+    let mut err_msg: Option<String> = None;
+    let n_rows = df.height();
+
+    for col in df.get_columns() {
+        let name = col.name();
+        let target = schema.get(name);
+
+        // No target type or already matches - keep as is
+        if target.is_none() || col.dtype() == target.unwrap() {
+            cols.push(col.clone());
+            continue;
+        }
+        let target = target.unwrap();
+
+        // Try TAQ time conversion: String → i64 → TAQ → Time
+        if *target == DataType::Time && col.dtype() == &DataType::String {
+            if let Ok(i64_s) = col.cast(&DataType::Int64) {
+                if let Ok(i64_ca) = i64_s.as_materialized_series().i64() {
+                    let ns_ca: Int64Chunked = i64_ca.apply(|v| v.map(taq_to_ns));
+                    if let Ok(t) = ns_ca.into_series().cast(&DataType::Time) {
+                        if t.len() == n_rows {
+                            cols.push(t.into_column());
+                            continue;
+                        }
+                    }
                 }
             }
         }
 
-        let chunk_rows = df.height();
-        let start_row = total_rows + 1;
-        total_rows += chunk_rows;
-        let _ = tx.send(format!("Saved rows {}-{} to {}", start_row, total_rows, chunk_path.display()));
-        file_idx += 1;
-    }
-
-    let _ = child.wait();
-    let _ = tx.send(format!("Done: {} files, {} rows", file_idx - 1, total_rows));
-    Ok(())
-}
-
-/// Compare polars Schema with ArrowSchema, return mismatch description if different
-fn schema_mismatch_arrow(expected: &Schema, actual: &ArrowSchema) -> Option<String> {
-    for (name, fld) in actual.iter() {
-        let n = name.as_str();
-        if let Some(exp_dtype) = expected.get(n) {
-            // Convert ArrowDataType to polars DataType for comparison
-            let actual_dtype = DataType::from_arrow_dtype(fld.dtype());
-            if *exp_dtype != actual_dtype {
-                return Some(format!("column '{}' expected {:?}, got {:?}", n, exp_dtype, actual_dtype));
-            }
-        }
-    }
-    None
-}
-
-/// Apply a fixed schema to dataframe (cast columns to match)
-fn apply_schema(df: DataFrame, schema: &Schema) -> DataFrame {
-    let mut cols: Vec<Column> = Vec::with_capacity(df.width());
-    for col in df.get_columns() {
-        let name = col.name();
-        if let Some(target_dtype) = schema.get(name) {
-            if col.dtype() != target_dtype {
-                // Time/Datetime: convert String→Int64 first, then apply TAQ/epoch logic
-                if matches!(target_dtype, DataType::Time | DataType::Datetime(_, _)) && col.dtype() == &DataType::String {
-                    if let Ok(i64_col) = col.cast(&DataType::Int64) {
-                        let s = i64_col.as_materialized_series();
-                        if let Ok(i64_ca) = s.i64() {
-                            let v = i64_ca.iter().flatten().next();
-                            if let Some(v) = v {
-                                // TAQ time format (always try for Time target)
-                                if *target_dtype == DataType::Time {
-                                    let ns_ca: Int64Chunked = i64_ca.apply(|v| v.map(taq_to_ns));
-                                    if let Ok(t) = ns_ca.into_series().cast(&DataType::Time) {
-                                        cols.push(t.into_column());
-                                        continue;
-                                    }
-                                }
-                                // Epoch conversion for Datetime
-                                if let Some(unit) = epoch_unit(v) {
-                                    let mult = if v.abs() < 10_000_000_000 { 1000i64 } else { 1 };
-                                    let scaled = i64_ca.clone() * mult;
-                                    if let Ok(dt) = scaled.into_series().cast(&DataType::Datetime(unit, None)) {
-                                        cols.push(dt.into_column());
-                                        continue;
-                                    }
+        // Try epoch conversion: String → i64 → Datetime
+        if matches!(target, DataType::Datetime(_, _)) && col.dtype() == &DataType::String {
+            if let Ok(i64_s) = col.cast(&DataType::Int64) {
+                if let Ok(i64_ca) = i64_s.as_materialized_series().i64() {
+                    if let Some(v) = i64_ca.iter().flatten().next() {
+                        if let Some(unit) = epoch_unit(v) {
+                            let mult = if v.abs() < 10_000_000_000 { 1000i64 } else { 1 };
+                            let scaled = i64_ca.clone() * mult;
+                            if let Ok(dt) = scaled.into_series().cast(&DataType::Datetime(unit, None)) {
+                                if dt.len() == n_rows {
+                                    cols.push(dt.into_column());
+                                    continue;
                                 }
                             }
                         }
                     }
                 }
-                // Standard cast
-                if let Ok(casted) = col.cast(target_dtype) {
-                    cols.push(casted);
-                    continue;
-                }
             }
+        }
+
+        // Standard cast
+        if let Ok(casted) = col.cast(target) {
+            if casted.len() == n_rows {
+                cols.push(casted);
+                continue;
+            }
+        }
+
+        // Fallback: keep original (log warning on type mismatch)
+        if err_msg.is_none() {
+            err_msg = Some(format!("Column '{}': failed to convert {:?} to {:?}", name, col.dtype(), target));
         }
         cols.push(col.clone());
     }
-    DataFrame::new(cols).unwrap_or(df)
+    (DataFrame::new(cols).unwrap_or(df), err_msg)
 }
 
 /// Check if string looks like a pure integer (no decimal, no scientific notation)
@@ -719,11 +715,10 @@ mod tests {
         assert!(!msgs.is_empty());
         assert!(msgs.last().unwrap().contains("Done"));
 
-        // Verify parquet was created with correct types
-        let pq_path = tmp.join("test_bbo_001.parquet");
-        assert!(pq_path.exists(), "parquet file should exist");
+        // Verify parquet was created with correct types (single file now)
+        assert!(out_path.exists(), "parquet file should exist");
 
-        let df = ParquetReader::new(std::fs::File::open(&pq_path).unwrap())
+        let df = ParquetReader::new(std::fs::File::open(&out_path).unwrap())
             .finish()
             .unwrap();
 
@@ -735,6 +730,6 @@ mod tests {
         // Cleanup
         let _ = std::fs::remove_file(csv_path);
         let _ = std::fs::remove_file(gz_path);
-        let _ = std::fs::remove_file(pq_path);
+        let _ = std::fs::remove_file(out_path);
     }
 }

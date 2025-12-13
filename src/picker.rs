@@ -30,10 +30,17 @@ pub fn fzf(items: Vec<String>, prompt: &str) -> Result<Option<String>> {
     }
 }
 
-/// fzf with edit - select then edit before submit
+/// fzf with optional edit - if user selects existing item, return directly; else allow edit
 pub fn fzf_edit(items: Vec<String>, prompt: &str) -> Result<Option<String>> {
-    match fzf(items, prompt)? {
-        Some(selected) => edit_line(prompt, &selected),
+    match fzf(items.clone(), prompt)? {
+        Some(selected) => {
+            // If exact match to an item, return directly (no edit needed)
+            if items.contains(&selected) {
+                Ok(Some(selected))
+            } else {
+                edit_line(prompt, &selected)
+            }
+        }
         None => Ok(None),
     }
 }

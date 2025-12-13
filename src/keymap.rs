@@ -129,9 +129,14 @@ impl KeyMap {
             }
         }
 
-        // Add picker hint for table view
-        if tab == "table" {
-            hints.push(("Enter".to_string(), "sel+edit", 0));
+        // Add view-specific hints
+        match tab {
+            "table" => hints.push(("Enter".to_string(), "sel+edit", 0)),
+            "folder" => {
+                hints.push(("Enter".to_string(), "open", 0));
+                hints.push(("D".to_string(), "del file", 0));
+            }
+            _ => {}
         }
 
         // Sort by category, then by hint text

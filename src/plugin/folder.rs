@@ -30,8 +30,7 @@ impl Plugin for FolderPlugin {
     fn matches(&self, name: &str) -> bool { name.starts_with("ls") }
 
     fn handle(&self, cmd: &str, app: &mut AppContext) -> Option<Box<dyn Command>> {
-        if cmd != "enter" { return None; }
-        let (path, is_dir) = app.view().and_then(|v| {
+        let (path, is_dir, dir) = app.view().and_then(|v| {
             let df = &v.dataframe;
             let path = df.column("path").ok()?.get(v.state.cr).ok()
                 .map(|v| v.to_string().trim_matches('"').to_string())?;
@@ -39,14 +38,23 @@ impl Plugin for FolderPlugin {
                 .and_then(|c| c.get(v.state.cr).ok())
                 .map(|v| v.to_string().trim_matches('"') == "x")
                 .unwrap_or(false);
-            Some((path, is_dir))
+            // Extract parent dir from view name (ls:path or ls -r:path)
+            let dir = v.name.split(':').nth(1).map(|s| PathBuf::from(s)).unwrap_or_else(|| PathBuf::from("."));
+            Some((path, is_dir, dir))
         })?;
-        if is_dir {
-            Some(Box::new(Ls { dir: PathBuf::from(path), recursive: false }))
-        } else if is_text_file(Path::new(&path)) {
-            Some(Box::new(BatView { path }))
-        } else {
-            Some(Box::new(From { file_path: path }))
+
+        match cmd {
+            "enter" => {
+                if is_dir {
+                    Some(Box::new(Ls { dir: PathBuf::from(&path), recursive: false }))
+                } else if is_text_file(Path::new(&path)) {
+                    Some(Box::new(BatView { path }))
+                } else {
+                    Some(Box::new(From { file_path: path }))
+                }
+            }
+            "delete" => Some(Box::new(DelFile { path, dir })),
+            _ => None,
         }
     }
 
@@ -77,6 +85,36 @@ impl Command for Ls {
     }
 }
 
+/// Delete file with confirmation
+pub struct DelFile { pub path: String, pub dir: PathBuf }
+
+impl Command for DelFile {
+    fn exec(&mut self, app: &mut AppContext) -> Result<()> {
+        use crate::picker;
+        let name = Path::new(&self.path).file_name().and_then(|s| s.to_str()).unwrap_or(&self.path);
+        let prompt = format!("Delete '{}'? ", name);
+        let result = picker::fzf(vec!["No".into(), "Yes".into()], &prompt)?;
+        app.needs_redraw = true;
+        match result {
+            Some(s) if s == "Yes" => {
+                std::fs::remove_file(&self.path)?;
+                app.msg(format!("Deleted: {}", self.path));
+                // Refresh by re-running ls on parent dir
+                let df = crate::os::ls(&self.dir)?;
+                if let Some(view) = app.view_mut() {
+                    view.dataframe = df;
+                    if view.state.cr >= view.dataframe.height() {
+                        view.state.cr = view.dataframe.height().saturating_sub(1);
+                    }
+                }
+            }
+            _ => app.msg("Cancelled".into()),
+        }
+        Ok(())
+    }
+    fn to_str(&self) -> String { format!("del {}", self.path) }
+}
+
 /// View text file with bat (leaves alternate screen, restores on exit)
 pub struct BatView { pub path: String }
 
@@ -96,8 +134,9 @@ impl Command for BatView {
             .or_else(|_| Cmd::new("less").arg(&self.path).status())
             .or_else(|_| Cmd::new("cat").arg(&self.path).status());
 
-        // Re-enter alternate screen
+        // Re-enter alternate screen and mark for redraw
         execute!(stdout(), EnterAlternateScreen)?;
+        app.needs_redraw = true;  // force ratatui to redraw
 
         match status {
             Ok(s) if s.success() => { app.msg(format!("Viewed: {}", self.path)); Ok(()) }

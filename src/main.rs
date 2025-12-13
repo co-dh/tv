@@ -89,6 +89,11 @@ fn main() -> Result<()> {
         app.check_bg_saver();
         app.check_bg_meta();
 
+        // Force full redraw if needed (after bat/less return)
+        if app.needs_redraw {
+            tui.clear()?;
+            app.needs_redraw = false;
+        }
         // Render with ratatui diff-based update
         tui.draw(|frame| Renderer::render(frame, &mut app))?;
 
@@ -353,29 +358,31 @@ fn on_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
         }
         KeyCode::Char('/') => {
             // /: Search with SQL WHERE expression
-            if let Some(view) = app.view() {
-                if let Some(col_name) = view.state.cur_col(&view.dataframe) {
-                    let expr_opt = picker::fzf_edit(
-                        hints(&view.dataframe, &col_name, view.state.cr), "Search> ");
+            let info = app.view().and_then(|v| {
+                let col_name = v.state.cur_col(&v.dataframe)?;
+                Some((hints(&v.dataframe, &col_name, v.state.cr), col_name))
+            });
+            if let Some((hint_list, col_name)) = info {
+                let expr_opt = picker::fzf_edit(hint_list, "Search> ");
+                app.needs_redraw = true;
 
-                    if let Ok(Some(expr)) = expr_opt {
-                        // If prql_hints disabled (default) and plain value, convert to substring match
-                        let prql_mode = theme::load_config_value("prql_hints").map(|v| v == "true").unwrap_or(false);
-                        let expr = if !prql_mode && is_plain_value(&expr) {
-                            format!("{} ~ \"{}\"", col_name, expr)
-                        } else { expr };
-                        let matches = find(&view.dataframe, &expr);
-                        app.search.col_name = None;
-                        app.search.value = Some(expr.clone());
+                if let Ok(Some(expr)) = expr_opt {
+                    // If prql_hints disabled (default) and plain value, convert to SQL LIKE
+                    let prql_mode = theme::load_config_value("prql_hints").map(|v| v == "true").unwrap_or(false);
+                    let expr = if !prql_mode && is_plain_value(&expr) {
+                        format!("{} LIKE '%{}%'", col_name, expr)
+                    } else { expr };
+                    let matches = app.view().map(|v| find(&v.dataframe, &expr)).unwrap_or_default();
+                    app.search.col_name = None;
+                    app.search.value = Some(expr.clone());
 
-                        if let Some(view) = app.view_mut() {
-                            if let Some(&pos) = matches.first() {
-                                view.state.cr = pos;
-                                view.state.visible();
-                                app.msg(format!("Found {} match(es)", matches.len()));
-                            } else {
-                                app.msg(format!("Not found: {}", expr));
-                            }
+                    if let Some(view) = app.view_mut() {
+                        if let Some(&pos) = matches.first() {
+                            view.state.cr = pos;
+                            view.state.visible();
+                            app.msg(format!("Found {} match(es)", matches.len()));
+                        } else {
+                            app.msg(format!("Not found: {}", expr));
                         }
                     }
                 }
@@ -383,15 +390,17 @@ fn on_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
         }
         KeyCode::Char('\\') => {
             // \: Filter rows with SQL WHERE expression
-            if let Some(view) = app.view() {
-                if let Some(col_name) = view.state.cur_col(&view.dataframe) {
-                    let expr_opt = picker::fzf_edit(
-                        hints(&view.dataframe, &col_name, view.state.cr), "WHERE> ");
+            let info = app.view().and_then(|v| {
+                let col_name = v.state.cur_col(&v.dataframe)?;
+                Some((hints(&v.dataframe, &col_name, v.state.cr), col_name))
+            });
+            if let Some((hint_list, _col_name)) = info {
+                let expr_opt = picker::fzf_edit(hint_list, "WHERE> ");
+                app.needs_redraw = true;
 
-                    if let Ok(Some(expr)) = expr_opt {
-                        if let Err(e) = CommandExecutor::exec(app, Box::new(Filter { expr })) {
-                            app.err(e);
-                        }
+                if let Ok(Some(expr)) = expr_opt {
+                    if let Err(e) = CommandExecutor::exec(app, Box::new(Filter { expr })) {
+                        app.err(e);
                     }
                 }
             } else {
@@ -489,7 +498,9 @@ fn on_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                         "Float64".to_string(),
                         "Boolean".to_string(),
                     ];
-                    if let Ok(Some(selected)) = picker::fzf(types, "Convert to: ") {
+                    let result = picker::fzf(types, "Convert to: ");
+                    app.needs_redraw = true;
+                    if let Ok(Some(selected)) = result {
                         if let Some(view) = app.view_mut() {
                             let result = match selected.as_str() {
                                 "String" => view.dataframe.column(&col_name)
@@ -519,7 +530,9 @@ fn on_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
         }
         KeyCode::Char('b') => {  // b: Aggregate by current column
             if let Some(col) = app.view().and_then(|v| v.state.cur_col(&v.dataframe)) {
-                if let Ok(Some(func)) = picker::fzf(vec!["count".into(), "sum".into(), "mean".into(), "min".into(), "max".into(), "std".into()], "Aggregate: ") {
+                let result = picker::fzf(vec!["count".into(), "sum".into(), "mean".into(), "min".into(), "max".into(), "std".into()], "Aggregate: ");
+                app.needs_redraw = true;
+                if let Ok(Some(func)) = result {
                     if let Err(e) = CommandExecutor::exec(app, Box::new(Agg { col, func })) { app.err(e); }
                 }
             }
@@ -565,7 +578,9 @@ fn on_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                 "filter <expr>", "freq <col>", "meta", "corr",
                 "select <cols>", "delcol <cols>", "sort <col>", "sort -<col>", "take <n>", "rename <old> <new>",
             ].iter().map(|s| s.to_string()).collect();
-            if let Ok(Some(selected)) = picker::fzf_edit(cmd_list, ": ") {
+            let result = picker::fzf_edit(cmd_list, ": ");
+            app.needs_redraw = true;
+            if let Ok(Some(selected)) = result {
                 let cmd_str = selected.split_whitespace().next().unwrap_or(&selected);
                 if let Some(cmd) = parse(cmd_str, app).or_else(|| parse(&selected, app)) {
                     if let Err(e) = CommandExecutor::exec(app, cmd) {
@@ -583,7 +598,9 @@ fn on_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                     .iter()
                     .map(|s| s.to_string())
                     .collect();
-                if let Ok(Some(selected)) = picker::fzf(col_names.clone(), "Column: ") {
+                let result = picker::fzf(col_names.clone(), "Column: ");
+                app.needs_redraw = true;
+                if let Ok(Some(selected)) = result {
                     if let Some(idx) = col_names.iter().position(|c| c == &selected) {
                         if let Some(view) = app.view_mut() {
                             view.state.cc = idx;

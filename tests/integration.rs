@@ -561,8 +561,8 @@ fn test_ps_command() {
     let output = run_script("ps\n", id);
     assert!(output.contains("=== ps"), "ps should show view name");
     assert!(output.contains("pid"), "ps should have pid column");
-    assert!(output.contains("name"), "ps should have name column");
-    assert!(output.contains("state"), "ps should have state column");
+    assert!(output.contains("user"), "ps should have user column");
+    assert!(output.contains("command"), "ps should have command column");
 }
 
 #[test]

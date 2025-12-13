@@ -35,6 +35,7 @@ pub struct AppContext {
     pub bg_saver: Option<Receiver<String>>,      // background save status
     pub raw_save: bool,            // --raw: skip type detection on save
     pub bg_meta: Option<(usize, Receiver<DataFrame>)>,  // (parent_id, meta stats receiver)
+    pub needs_redraw: bool,  // force full redraw (after leaving alternate screen)
 }
 
 impl AppContext {
@@ -65,6 +66,7 @@ impl AppContext {
             bg_saver: None,
             raw_save: false,
             bg_meta: None,
+            needs_redraw: false,
         }
     }
 
