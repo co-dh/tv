@@ -9,7 +9,6 @@ mod prql;
 mod render;
 mod state;
 mod theme;
-mod view;
 
 use anyhow::Result;
 use app::AppContext;
