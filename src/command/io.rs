@@ -8,7 +8,7 @@ use std::path::Path;
 use std::process::{Command as Cmd, Stdio};
 use std::sync::Arc;
 
-const MAX_PREVIEW_BYTES: usize = 1024 * 1024 * 1024;  // 1GB preview limit
+const MAX_PREVIEW_ROWS: usize = 1000;  // preview row limit
 
 /// Load file command (CSV, Parquet, or gzipped CSV)
 pub struct Load {
@@ -66,7 +66,7 @@ impl Load {
             .map_err(|e| anyhow!("Failed to read Parquet: {}", e))
     }
 
-    /// Load first ~1GB from gzipped CSV using zcat
+    /// Load first N rows from gzipped CSV using zcat, auto-detect delimiter
     fn load_csv_gz(&self, path: &Path) -> Result<DataFrame> {
         let mut child = Cmd::new("zcat")
             .arg(path)
@@ -77,36 +77,42 @@ impl Load {
 
         let stdout = child.stdout.take().ok_or_else(|| anyhow!("No stdout"))?;
         let mut reader = BufReader::new(stdout);
-        let mut buf = Vec::with_capacity(MAX_PREVIEW_BYTES);
-        let mut total = 0usize;
 
-        // Read up to MAX_PREVIEW_BYTES
-        loop {
-            let len = {
-                let data = reader.fill_buf()?;
-                if data.is_empty() { break; }
-                let take = data.len().min(MAX_PREVIEW_BYTES - total);
-                buf.extend_from_slice(&data[..take]);
-                take
-            };
-            reader.consume(len);
-            total += len;
-            if total >= MAX_PREVIEW_BYTES { break; }
+        // Read header to detect delimiter
+        let mut header = String::new();
+        reader.read_line(&mut header)?;
+        let sep = detect_sep(&header);
+
+        // Read up to MAX_PREVIEW_ROWS lines
+        let mut buf = header.into_bytes();
+        for _ in 0..MAX_PREVIEW_ROWS {
+            let mut line = String::new();
+            if reader.read_line(&mut line)? == 0 { break; }
+            buf.extend_from_slice(line.as_bytes());
         }
 
-        // Kill zcat if we stopped early
         let _ = child.kill();
         let _ = child.wait();
 
-        // Parse CSV from buffer
+        // Parse with detected separator
         let cursor = std::io::Cursor::new(buf);
         CsvReadOptions::default()
             .with_has_header(true)
-            .with_infer_schema_length(Some(1000))
+            .with_infer_schema_length(Some(500))
+            .map_parse_options(|o| o.with_separator(sep))
             .into_reader_with_file_handle(cursor)
             .finish()
-            .map_err(|e| anyhow!("Failed to parse CSV: {}", e))
+            .map_err(|e| anyhow!("Failed to parse: {}", e))
     }
+}
+
+/// Detect separator by counting occurrences in header line
+fn detect_sep(line: &str) -> u8 {
+    let seps = [(b'|', line.matches('|').count()),
+                (b'\t', line.matches('\t').count()),
+                (b',', line.matches(',').count()),
+                (b';', line.matches(';').count())];
+    seps.into_iter().max_by_key(|&(_, n)| n).map(|(c, _)| c).unwrap_or(b',')
 }
 
 /// Save file command (Parquet) - supports streaming from gz source
@@ -168,11 +174,12 @@ impl Save {
             .map_err(|e| anyhow!("Failed to spawn zcat: {}", e))?;
 
         let stdout = child.stdout.take().ok_or_else(|| anyhow!("No stdout"))?;
-        let mut reader = BufReader::with_capacity(64 * 1024 * 1024, stdout);  // 64MB buffer
+        let mut reader = BufReader::with_capacity(64 * 1024 * 1024, stdout);
 
-        // Read header line
+        // Read header and detect separator
         let mut header = String::new();
         reader.read_line(&mut header)?;
+        let sep = detect_sep(&header);
         let header_bytes = header.as_bytes().to_vec();
 
         let prefix = out_path.file_stem().and_then(|s| s.to_str()).unwrap_or("out");
@@ -181,7 +188,6 @@ impl Save {
         let mut total_rows = 0usize;
 
         loop {
-            // Collect chunk of data
             let mut chunk_buf = header_bytes.clone();
             let mut chunk_bytes = 0usize;
             let mut lines = 0usize;
@@ -189,19 +195,19 @@ impl Save {
             while chunk_bytes < MAX_CHUNK_BYTES && lines < CHUNK_ROWS {
                 let mut line = String::new();
                 let n = reader.read_line(&mut line)?;
-                if n == 0 { break; }  // EOF
+                if n == 0 { break; }
                 chunk_buf.extend_from_slice(line.as_bytes());
                 chunk_bytes += n;
                 lines += 1;
             }
 
-            if lines == 0 { break; }  // no more data
+            if lines == 0 { break; }
 
-            // Parse chunk and save
             let cursor = std::io::Cursor::new(chunk_buf);
             let df = CsvReadOptions::default()
                 .with_has_header(true)
                 .with_schema(Some(Arc::new(schema.clone())))
+                .map_parse_options(|o| o.with_separator(sep))
                 .into_reader_with_file_handle(cursor)
                 .finish()
                 .map_err(|e| anyhow!("Failed to parse chunk: {}", e))?;
