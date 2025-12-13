@@ -867,3 +867,73 @@ fn test_xkey_moves_columns_to_front() {
     // Columns should be reordered: c,b,a,d (xkey cols first)
     assert!(output.contains("c") && output.contains("b"), "xkey columns should be present");
 }
+
+// =============================================================================
+// Underscore Command Naming
+// =============================================================================
+
+#[test]
+fn test_del_col_underscore() {
+    // Test del_col command (underscore style)
+    let id = unique_id();
+    let path = format!("/tmp/tv_delcol_{}.csv", id);
+    fs::write(&path, "a,b,c\n1,2,3\n4,5,6\n").unwrap();
+
+    let output = run_script(&format!("from {}\ndel_col b\n", path), id);
+    assert!(!output.contains("│ b"), "Column b should be deleted");
+    assert!(output.contains("a") && output.contains("c"), "Columns a,c should remain");
+}
+
+#[test]
+fn test_goto_col_underscore() {
+    // Test goto_col command (underscore style)
+    let id = unique_id();
+    let path = format!("/tmp/tv_gotocol_{}.csv", id);
+    fs::write(&path, "a,b,c\n1,2,3\n").unwrap();
+
+    // goto_col should work (no error)
+    let output = run_script(&format!("from {}\ngoto_col 2\n", path), id);
+    assert!(output.contains("(1 rows)"), "Should load successfully");
+}
+
+#[test]
+fn test_sort_desc_underscore() {
+    // Test sort_desc command (underscore style)
+    let id = unique_id();
+    let path = format!("/tmp/tv_sortdesc_{}.csv", id);
+    fs::write(&path, "a,b\n1,x\n3,y\n2,z\n").unwrap();
+
+    let output = run_script(&format!("from {}\nsort_desc a\n", path), id);
+    // Should sort descending: 3, 2, 1
+    assert!(output.contains("3"), "Should have value 3");
+}
+
+// =============================================================================
+// Freq with Key Columns
+// =============================================================================
+
+#[test]
+fn test_freq_with_key_columns() {
+    // Test freq groups by key columns when xkey is set
+    let id = unique_id();
+    let path = format!("/tmp/tv_freq_key_{}.csv", id);
+    fs::write(&path, "sym,date,price\nA,2024-01-01,100\nA,2024-01-01,100\nA,2024-01-02,101\nB,2024-01-01,200\n").unwrap();
+
+    // Set sym as key column, then freq on price
+    let output = run_script(&format!("from {}\nxkey sym\nfreq price\n", path), id);
+    // Freq should group by sym + price
+    assert!(output.contains("Freq:price"), "Should show freq view");
+    assert!(output.contains("sym"), "Should include key column sym in freq output");
+}
+
+#[test]
+fn test_freq_without_key_columns() {
+    // Test freq without key columns (simple value_counts)
+    let id = unique_id();
+    let path = format!("/tmp/tv_freq_nokey_{}.csv", id);
+    fs::write(&path, "a,b\n1,x\n2,x\n3,y\n").unwrap();
+
+    let output = run_script(&format!("from {}\nfreq b\n", path), id);
+    assert!(output.contains("Freq:b"), "Should show freq view");
+    assert!(output.contains("Cnt"), "Should have count column");
+}

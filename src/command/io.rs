@@ -16,11 +16,11 @@ const BG_CHUNK_ROWS: usize = 100_000;  // rows per background chunk
 
 /// Load file command (CSV, Parquet, or gzipped CSV)
 /// Supports glob patterns for parquet files (e.g., "data/*.parquet")
-pub struct Load {
+pub struct From {
     pub file_path: String,
 }
 
-impl Command for Load {
+impl Command for From {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         let p = &self.file_path;
 
@@ -60,11 +60,10 @@ impl Command for Load {
         Ok(())
     }
 
-    fn to_str(&self) -> String { format!("load {}", self.file_path) }
-    fn record(&self) -> bool { false }
+    fn to_str(&self) -> String { format!("from {}", self.file_path) }
 }
 
-impl Load {
+impl From {
     fn load_csv(&self, path: &Path) -> Result<DataFrame> {
         CsvReadOptions::default()
             .with_has_header(true)
@@ -522,11 +521,15 @@ fn is_pure_int(s: &str) -> bool {
     !s.is_empty() && s.chars().all(|c| c.is_ascii_digit())
 }
 
-/// Check if string->i64->string round-trips exactly
+/// Check if string->i64->string round-trips (allows leading zeros)
 fn int_roundtrip(s: &str) -> bool {
     let s = s.trim();
     if s.is_empty() { return true; }
-    s.parse::<i64>().map(|n| n.to_string() == s).unwrap_or(false)
+    // Strip leading zeros for comparison (but keep at least one digit)
+    let (neg, digits) = if let Some(rest) = s.strip_prefix('-') { (true, rest) } else { (false, s) };
+    let stripped = digits.trim_start_matches('0');
+    let canon = if stripped.is_empty() { "0".to_string() } else if neg { format!("-{}", stripped) } else { stripped.to_string() };
+    s.parse::<i64>().map(|n| n.to_string() == canon).unwrap_or(false)
 }
 
 /// Check if string->f64->string round-trips (allowing trailing zeros)
@@ -608,8 +611,10 @@ mod tests {
     fn test_int_roundtrip() {
         assert!(int_roundtrip("123"));
         assert!(int_roundtrip("-456"));
-        assert!(!int_roundtrip("0123"));  // leading zero doesn't round-trip
-        assert!(!int_roundtrip("12.3"));
+        assert!(int_roundtrip("0123"));   // leading zeros allowed (for TAQ time)
+        assert!(int_roundtrip("0"));
+        assert!(int_roundtrip("-007"));
+        assert!(!int_roundtrip("12.3"));  // decimals fail
     }
 
     #[test]

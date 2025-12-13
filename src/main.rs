@@ -124,6 +124,7 @@ fn run_commands(commands: &str) -> Result<()> {
         }
     }
 
+    wait_bg_save(&mut app);  // wait for background save
     print(&app);
     Ok(())
 }
@@ -164,10 +165,18 @@ fn run_script(script_path: &str) -> Result<()> {
         }
     }
 
-    // Print the final state
+    wait_bg_save(&mut app);  // wait for background save
     print(&app);
-
     Ok(())
+}
+
+/// Wait for background save to complete (for script mode)
+fn wait_bg_save(app: &mut AppContext) {
+    if let Some(rx) = app.bg_saver.take() {
+        for msg in rx {
+            eprintln!("{}", msg);  // print status to stderr
+        }
+    }
 }
 
 /// Print table to stdout (for script mode)
@@ -202,7 +211,7 @@ fn parse(line: &str, _app: &AppContext) -> Option<Box<dyn command::Command>> {
         "freq" | "frequency" => Some(Box::new(Frequency { col_name: arg.to_string() })),
         "meta" | "metadata" => Some(Box::new(Metadata)),
         "corr" | "correlation" => Some(Box::new(Correlation { selected_cols: vec![] })),
-        "delcol" => Some(Box::new(DelCol { col_names: arg.split(',').map(|s| s.trim().to_string()).collect() })),
+        "del_col" | "delcol" => Some(Box::new(DelCol { col_names: arg.split(',').map(|s| s.trim().to_string()).collect() })),
         "filter" => Some(Box::new(Filter { expr: arg.to_string() })),
         "select" | "sel" => Some(Box::new(Select {
             col_names: arg.split(',').map(|s| s.trim().to_string()).collect()
@@ -212,7 +221,7 @@ fn parse(line: &str, _app: &AppContext) -> Option<Box<dyn command::Command>> {
             let (col, desc) = prql::parse_sort(arg);
             Some(Box::new(Sort { col_name: col, descending: desc }))
         }
-        "sortdesc" => Some(Box::new(Sort { col_name: arg.to_string(), descending: true })),
+        "sort_desc" | "sortdesc" => Some(Box::new(Sort { col_name: arg.to_string(), descending: true })),
         "take" => arg.parse().ok().map(|n| Box::new(Take { n }) as Box<dyn command::Command>),
         "xkey" => Some(Box::new(Xkey { col_names: arg.split(',').map(|s| s.trim().to_string()).collect() })),
         "rename" => {
@@ -228,7 +237,7 @@ fn parse(line: &str, _app: &AppContext) -> Option<Box<dyn command::Command>> {
         }
         // Navigation commands (unified: goto +1/-1/0/max/page/-page, gotocol +1/-1/0/max)
         "goto" => Some(Box::new(Goto { arg: arg.to_string() })),
-        "gotocol" => Some(Box::new(GotoCol { arg: arg.to_string() })),
+        "goto_col" | "gotocol" => Some(Box::new(GotoCol { arg: arg.to_string() })),
         "toggle_info" => Some(Box::new(ToggleInfo)),
         "decimals" => arg.parse().ok().map(|d| Box::new(Decimals { delta: d }) as Box<dyn command::Command>),
         "toggle_sel" => Some(Box::new(ToggleSel)),
@@ -347,6 +356,25 @@ fn on_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                         let _ = CommandExecutor::exec(app, Box::new(DelCol { col_names }));
                         if let Some(v) = app.view_mut() { v.selected_cols.clear(); }
                     }
+                }
+            }
+        }
+        KeyCode::Char('!') => {
+            // !: xkey with selected columns (move to front as keys)
+            if let Some(view) = app.view() {
+                let names: Vec<String> = view.dataframe.get_column_names().iter().map(|s| s.to_string()).collect();
+                let col_names: Vec<String> = if view.selected_cols.is_empty() {
+                    view.state.cur_col(&view.dataframe).into_iter().collect()
+                } else {
+                    let mut sel: Vec<usize> = view.selected_cols.iter().copied().collect();
+                    sel.sort();  // preserve left-to-right order
+                    sel.into_iter().filter_map(|i| names.get(i).cloned()).collect()
+                };
+                if !col_names.is_empty() {
+                    if let Err(e) = CommandExecutor::exec(app, Box::new(Xkey { col_names })) {
+                        app.err(e);
+                    }
+                    if let Some(v) = app.view_mut() { v.selected_cols.clear(); }
                 }
             }
         }

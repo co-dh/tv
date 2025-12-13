@@ -42,6 +42,7 @@ table,@,goto_col,Jump to column by name
 table,m,bookmark,Toggle bookmark on current row
 table,',next_bookmark,Jump to next bookmark
 table,D,delete,Delete selected columns
+table,!,xkey,Set selected columns as key columns
 freq,Enter,filter_parent,Filter parent table by selected values
 freq,D,delete,Delete selected rows
 meta,Enter,goto_col,Jump to column in parent

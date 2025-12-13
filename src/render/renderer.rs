@@ -433,9 +433,10 @@ impl Renderer {
 
         let left = if !message.is_empty() { message.to_string() }
         else if view.name.starts_with("Freq:") || view.name == "metadata" {
-            // Show parent row count for Meta/Freq views
+            // Show parent name and row count for Meta/Freq views
+            let pn = view.parent_name.as_deref().unwrap_or("");
             let pr = view.parent_rows.map(|n| format!(" ({})", Self::commify(n))).unwrap_or_default();
-            format!("{}{}", view.name, pr)
+            format!("{} <- {}{}", view.name, pn, pr)
         }
         else { view.filename.as_deref().unwrap_or("(no file)").to_string() };
 

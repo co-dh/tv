@@ -23,7 +23,7 @@ impl Command for DelCol {
         app.msg(format!("{} columns deleted", n));
         Ok(())
     }
-    fn to_str(&self) -> String { format!("delcol {}", self.col_names.join(",")) }
+    fn to_str(&self) -> String { format!("del_col {}", self.col_names.join(",")) }
 }
 
 /// Filter rows using PRQL filter syntax

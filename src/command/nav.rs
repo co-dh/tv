@@ -40,7 +40,7 @@ impl Command for GotoCol {
         }
         Ok(())
     }
-    fn to_str(&self) -> String { format!("gotocol {}", self.arg) }
+    fn to_str(&self) -> String { format!("goto_col {}", self.arg) }
     fn record(&self) -> bool { false }
 }
 

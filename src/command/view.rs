@@ -14,56 +14,72 @@ impl Command for Frequency {
         let view = app.req()?;
         let parent_id = view.id;
         let parent_rows = view.dataframe.height();
+        let parent_name = view.name.clone();
+        let col_names: Vec<String> = view.dataframe.get_column_names().iter().map(|s| s.to_string()).collect();
 
         // Check if column exists
-        let found = view.dataframe.get_column_names()
-            .iter()
-            .any(|c| c.as_str() == self.col_name.as_str());
-        if !found {
+        if !col_names.contains(&self.col_name) {
             return Err(anyhow!("Column '{}' not found", self.col_name));
         }
 
-        // Get the column and compute value counts (sorted descending)
-        let col = view.dataframe.column(&self.col_name)?;
-        let series = col.as_materialized_series();
-        let value_counts = series.value_counts(true, false, "Cnt".into(), false)?;
+        // Get key columns (if any)
+        let key_cols: Vec<String> = view.col_separator.map(|sep| {
+            col_names[..sep].iter().filter(|c| *c != &self.col_name).cloned().collect()
+        }).unwrap_or_default();
 
-        // Calculate total count for percentage
-        let cnt_col = value_counts.column("Cnt")?.as_materialized_series();
-        let total: u32 = cnt_col.sum().unwrap_or(0);
-
-        // Calculate percentage and bar
-        let counts: Vec<u32> = cnt_col
-            .u32()
-            .map(|ca| ca.into_iter().map(|v| v.unwrap_or(0)).collect())
-            .unwrap_or_default();
-
-        let pcts: Vec<f64> = counts.iter().map(|&c| 100.0 * c as f64 / total as f64).collect();
-        let bars: Vec<String> = pcts.iter().map(|&p| "#".repeat(p.floor() as usize)).collect();
-
-        // Add Pct and Bar columns
-        let pct_series = Series::new("Pct".into(), pcts);
-        let bar_series = Series::new("Bar".into(), bars);
-
-        let mut result = value_counts.clone();
-        result.with_column(pct_series)?;
-        result.with_column(bar_series)?;
+        // Group by key columns + target column, or just value_counts
+        let result = if key_cols.is_empty() {
+            // Simple value_counts
+            let col = view.dataframe.column(&self.col_name)?;
+            let series = col.as_materialized_series();
+            let value_counts = series.value_counts(true, false, "Cnt".into(), false)?;
+            add_freq_cols(value_counts)?
+        } else {
+            // Group by key columns + target column
+            let mut group_cols: Vec<&str> = key_cols.iter().map(|s| s.as_str()).collect();
+            group_cols.push(&self.col_name);
+            let grouped = view.dataframe.clone().lazy()
+                .group_by(group_cols.iter().map(|&s| col(s)).collect::<Vec<_>>())
+                .agg([len().alias("Cnt")])
+                .sort(["Cnt"], SortMultipleOptions::default().with_order_descending(true))
+                .collect()?;
+            add_freq_cols(grouped)?
+        };
 
         // Create new view with frequency table
         let id = app.next_id();
-        app.stack.push(ViewState::new_freq(
+        let mut new_view = ViewState::new_freq(
             id,
             format!("Freq:{}", self.col_name),
             result,
             parent_id,
             parent_rows,
+            parent_name,
             self.col_name.clone(),
-        ));
+        );
+        // Set separator after key columns in freq view
+        if !key_cols.is_empty() {
+            new_view.col_separator = Some(key_cols.len());
+        }
+        app.stack.push(new_view);
         Ok(())
     }
 
     fn to_str(&self) -> String { format!("freq {}", self.col_name) }
-    fn record(&self) -> bool { false }  // view cmd
+}
+
+/// Add Pct and Bar columns to frequency dataframe
+fn add_freq_cols(mut df: DataFrame) -> Result<DataFrame> {
+    let cnt_col = df.column("Cnt")?.as_materialized_series();
+    let total: u32 = cnt_col.sum().unwrap_or(0);
+    let counts: Vec<u32> = cnt_col.u32()
+        .map(|ca| ca.into_iter().map(|v| v.unwrap_or(0)).collect())
+        .unwrap_or_default();
+    let pcts: Vec<f64> = counts.iter().map(|&c| 100.0 * c as f64 / total as f64).collect();
+    let bars: Vec<String> = pcts.iter().map(|&p| "#".repeat(p.floor() as usize)).collect();
+    df.with_column(Series::new("Pct".into(), pcts))?;
+    df.with_column(Series::new("Bar".into(), bars))?;
+    Ok(df)
 }
 
 /// Metadata view command - shows column types and statistics (data profile)
@@ -75,17 +91,15 @@ const BG_THRESHOLD: usize = 10_000;  // compute in background if rows > this
 impl Command for Metadata {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         // Extract values before mutable borrow
-        let (parent_id, parent_col, parent_rows, cached, df) = {
+        let (parent_id, parent_col, parent_rows, parent_name, cached, df) = {
             let view = app.req()?;
-            (view.id, view.state.cc, view.dataframe.height(), view.meta_cache.clone(), view.dataframe.clone())
+            (view.id, view.state.cc, view.dataframe.height(), view.name.clone(), view.meta_cache.clone(), view.dataframe.clone())
         };
 
         // Check for cached meta
         if let Some(cached_df) = cached {
             let id = app.next_id();
-            let mut new_view = ViewState::new(id, "metadata".into(), cached_df, None);
-            new_view.parent_id = Some(parent_id);
-            new_view.parent_rows = Some(parent_rows);
+            let mut new_view = ViewState::new_child(id, "metadata".into(), cached_df, parent_id, parent_rows, parent_name.clone());
             new_view.state.cr = parent_col;
             app.stack.push(new_view);
             return Ok(());
@@ -99,9 +113,7 @@ impl Command for Metadata {
                 parent.meta_cache = Some(meta_df.clone());
             }
             let id = app.next_id();
-            let mut new_view = ViewState::new(id, "metadata".into(), meta_df, None);
-            new_view.parent_id = Some(parent_id);
-            new_view.parent_rows = Some(parent_rows);
+            let mut new_view = ViewState::new_child(id, "metadata".into(), meta_df, parent_id, parent_rows, parent_name);
             new_view.state.cr = parent_col;
             app.stack.push(new_view);
         } else {
@@ -122,9 +134,7 @@ impl Command for Metadata {
             ])?;
 
             let id = app.next_id();
-            let mut new_view = ViewState::new(id, "metadata".into(), placeholder_df, None);
-            new_view.parent_id = Some(parent_id);
-            new_view.parent_rows = Some(parent_rows);
+            let mut new_view = ViewState::new_child(id, "metadata".into(), placeholder_df, parent_id, parent_rows, parent_name);
             new_view.state.cr = parent_col;
             app.stack.push(new_view);
 
@@ -142,7 +152,6 @@ impl Command for Metadata {
     }
 
     fn to_str(&self) -> String { "meta".into() }
-    fn record(&self) -> bool { false }
 }
 
 /// Compute full metadata stats (runs in background)
@@ -335,7 +344,6 @@ impl Command for Correlation {
     }
 
     fn to_str(&self) -> String { "corr".into() }
-    fn record(&self) -> bool { false }
 }
 
 /// Pop view from stack
@@ -348,7 +356,6 @@ impl Command for Pop {
         Ok(())
     }
     fn to_str(&self) -> String { "pop".into() }
-    fn record(&self) -> bool { false }
 }
 
 /// Swap top two views
@@ -394,7 +401,6 @@ impl Command for Ls {
         Ok(())
     }
     fn to_str(&self) -> String { format!("ls {}", self.dir.display()) }
-    fn record(&self) -> bool { false }
 }
 
 /// List directory recursively
@@ -408,7 +414,6 @@ impl Command for Lr {
         Ok(())
     }
     fn to_str(&self) -> String { format!("lr {}", self.dir.display()) }
-    fn record(&self) -> bool { false }
 }
 
 /// Process list
@@ -422,7 +427,6 @@ impl Command for Ps {
         Ok(())
     }
     fn to_str(&self) -> String { "ps".into() }
-    fn record(&self) -> bool { false }
 }
 
 /// Disk usage
@@ -436,7 +440,6 @@ impl Command for Df {
         Ok(())
     }
     fn to_str(&self) -> String { "df".into() }
-    fn record(&self) -> bool { false }
 }
 
 /// Mount points
@@ -450,7 +453,6 @@ impl Command for Mounts {
         Ok(())
     }
     fn to_str(&self) -> String { "mounts".into() }
-    fn record(&self) -> bool { false }
 }
 
 /// TCP connections
@@ -464,7 +466,6 @@ impl Command for Tcp {
         Ok(())
     }
     fn to_str(&self) -> String { "tcp".into() }
-    fn record(&self) -> bool { false }
 }
 
 /// UDP connections
@@ -478,7 +479,6 @@ impl Command for Udp {
         Ok(())
     }
     fn to_str(&self) -> String { "udp".into() }
-    fn record(&self) -> bool { false }
 }
 
 /// Block devices
@@ -492,7 +492,6 @@ impl Command for Lsblk {
         Ok(())
     }
     fn to_str(&self) -> String { "lsblk".into() }
-    fn record(&self) -> bool { false }
 }
 
 /// Logged in users
@@ -506,7 +505,6 @@ impl Command for Who {
         Ok(())
     }
     fn to_str(&self) -> String { "who".into() }
-    fn record(&self) -> bool { false }
 }
 
 /// Open files
@@ -521,7 +519,6 @@ impl Command for Lsof {
         Ok(())
     }
     fn to_str(&self) -> String { self.pid.map(|p| format!("lsof {}", p)).unwrap_or("lsof".into()) }
-    fn record(&self) -> bool { false }
 }
 
 /// Environment variables
@@ -535,7 +532,6 @@ impl Command for Env {
         Ok(())
     }
     fn to_str(&self) -> String { "env".into() }
-    fn record(&self) -> bool { false }
 }
 
 #[cfg(test)]
@@ -565,6 +561,54 @@ mod tests {
         let meta_view = app.view().unwrap();
         assert_eq!(meta_view.name, "metadata");
         assert_eq!(meta_view.state.cr, 2);
+    }
+
+    #[test]
+    fn test_meta_null_percent_format() {
+        // Test that compute_meta_stats produces null% values matchable with get_str()
+        let df = df! {
+            "all_null" => &[None::<i32>, None, None],
+            "some_null" => &[Some(1), None, Some(3)],
+            "no_null" => &[1, 2, 3],
+        }.unwrap();
+
+        let meta_df = compute_meta_stats(&df).unwrap();
+        let null_col = meta_df.column("null%").unwrap();
+        let s = null_col.as_materialized_series();
+
+        // all_null should be "100.0"
+        let v0 = s.get(0).unwrap();
+        assert_eq!(v0.get_str().unwrap(), "100.0", "all_null should be 100.0%");
+
+        // no_null should be "0.0"
+        let v2 = s.get(2).unwrap();
+        assert_eq!(v2.get_str().unwrap(), "0.0", "no_null should be 0.0%");
+    }
+
+    #[test]
+    fn test_meta_distinct_format() {
+        // Test that compute_meta_stats produces distinct values matchable with get_str()
+        let df = df! {
+            "single_val" => &[1, 1, 1],
+            "two_vals" => &[1, 2, 1],
+            "all_diff" => &[1, 2, 3],
+        }.unwrap();
+
+        let meta_df = compute_meta_stats(&df).unwrap();
+        let distinct_col = meta_df.column("distinct").unwrap();
+        let s = distinct_col.as_materialized_series();
+
+        // single_val should have distinct = "1"
+        let v0 = s.get(0).unwrap();
+        assert_eq!(v0.get_str().unwrap(), "1", "single_val should have 1 distinct");
+
+        // two_vals should have distinct = "2"
+        let v1 = s.get(1).unwrap();
+        assert_eq!(v1.get_str().unwrap(), "2", "two_vals should have 2 distinct");
+
+        // all_diff should have distinct = "3"
+        let v2 = s.get(2).unwrap();
+        assert_eq!(v2.get_str().unwrap(), "3", "all_diff should have 3 distinct");
     }
 }
 

@@ -71,53 +71,58 @@ impl KeyMap {
         None
     }
 
-    /// Get hint text for a command (hardcoded mapping)
-    pub fn hint(command: &str) -> Option<&'static str> {
+    /// Get hint text for a command (hint, category)
+    /// Categories: 0=view-specific, 1=selection, 2=search, 3=data, 4=file, 5=display, 9=nav (hidden)
+    pub fn hint(command: &str) -> Option<(&'static str, u8)> {
         match command {
-            "quit" => Some("quit"),
-            "top" => Some("top"),
-            "bottom" => Some("bottom"),
-            "page_down" => Some("page down"),
-            "page_up" => Some("page up"),
-            "select" => Some("select"),
-            "clear_sel" => Some("clear sel"),
-            "decimals_inc" => Some("decimals++"),
-            "decimals_dec" => Some("decimals--"),
-            "load" => Some("load file"),
-            "save" => Some("save file"),
-            "search" => Some("search"),
-            "filter" => Some("filter"),
-            "next_match" => Some("next match"),
-            "prev_match" => Some("prev match"),
-            "freq" => Some("freq table"),
-            "meta" => Some("metadata"),
-            "corr" => Some("correlation"),
-            "sort_asc" => Some("sort asc"),
-            "sort_desc" => Some("sort desc"),
-            "delete" => Some("delete"),
-            "delete_sel" => Some("delete sel"),
-            "filter_parent" => Some("filter parent"),
-            "sel_null" => Some("sel null"),
-            "sel_single" => Some("sel single"),
-            "command" => Some("command"),
+            // Navigation - category 9 (hidden from info box)
+            "quit" => Some(("quit", 5)),
+            "top" | "bottom" | "page_down" | "page_up" => None,  // hide nav
+            // Selection
+            "select" => Some(("select", 1)),
+            "clear_sel" => Some(("clear sel", 1)),
+            "sel_null" => Some(("sel null", 0)),
+            "sel_single" => Some(("sel single", 0)),
+            // Search
+            "search" => Some(("search", 2)),
+            "filter" => Some(("filter", 2)),
+            "next_match" => Some(("next", 2)),
+            "prev_match" => Some(("prev", 2)),
+            // Data ops
+            "freq" => Some(("freq", 3)),
+            "meta" => Some(("meta", 3)),
+            "corr" => Some(("corr", 3)),
+            "sort" => Some(("sort↑", 3)),
+            "sort-" => Some(("sort↓", 3)),
+            "delete" => Some(("del", 3)),
+            "delete_sel" => Some(("del sel", 3)),
+            "filter_parent" => Some(("filter↑", 0)),
+            "goto_col" => Some(("goto", 0)),
+            // File ops
+            "from" => Some(("load", 4)),
+            "save" => Some(("save", 4)),
+            // Transform
+            "xkey" => Some(("xkey", 3)),
+            // Display
+            "decimals_inc" => Some(("dec++", 5)),
+            "decimals_dec" => Some(("dec--", 5)),
+            "command" => Some(("cmd", 5)),
             _ => None,
         }
     }
 
-    /// Get hints for info box for a tab
+    /// Get hints for info box for a tab (sorted by category: view-specific, selection, search, data, file, display)
     pub fn get_hints(&self, tab: &str) -> Vec<(String, &'static str)> {
-        let mut hints = Vec::new();
+        let mut hints: Vec<(String, &'static str, u8)> = Vec::new();  // (key, text, category)
         let mut seen_cmds = std::collections::HashSet::new();
 
-        // Collect commands to show (tab-specific first, then common)
-        let tabs_to_check = vec![tab, "common"];
-
-        for t in tabs_to_check {
+        // Collect commands (tab-specific first, then common)
+        for t in [tab, "common"] {
             if let Some(cmds) = self.bindings.get(t) {
                 for (cmd, binding) in cmds {
                     if !seen_cmds.contains(cmd) {
-                        if let Some(hint) = Self::hint(cmd) {
-                            hints.push((binding.key.clone(), hint));
+                        if let Some((text, cat)) = Self::hint(cmd) {
+                            hints.push((binding.key.clone(), text, cat));
                             seen_cmds.insert(cmd.clone());
                         }
                     }
@@ -127,10 +132,14 @@ impl KeyMap {
 
         // Add picker hint for table view
         if tab == "table" {
-            hints.push(("Enter".to_string(), "sel+edit"));
+            hints.push(("Enter".to_string(), "sel+edit", 0));
         }
 
-        hints
+        // Sort by category, then by hint text
+        hints.sort_by(|a, b| a.2.cmp(&b.2).then(a.1.cmp(&b.1)));
+
+        // Strip category
+        hints.into_iter().map(|(k, h, _)| (k, h)).collect()
     }
 }
 
