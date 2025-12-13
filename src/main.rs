@@ -268,6 +268,23 @@ fn on_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
             if !app.has_view() {
                 app.no_table();
             } else if let Some(file_path) = prompt(app, "Save to: ")? {
+                let path = std::path::Path::new(&file_path);
+                // Check if parent directory exists
+                if let Some(parent) = path.parent() {
+                    if !parent.as_os_str().is_empty() && !parent.exists() {
+                        let msg = format!("Create dir '{}'? (y/n): ", parent.display());
+                        if let Some(ans) = prompt(app, &msg)? {
+                            if ans.to_lowercase() == "y" {
+                                if let Err(e) = std::fs::create_dir_all(parent) {
+                                    app.err(anyhow::anyhow!("Failed to create dir: {}", e));
+                                    return Ok(true);
+                                }
+                            } else {
+                                return Ok(true);  // User declined
+                            }
+                        }
+                    }
+                }
                 if let Err(e) = CommandExecutor::exec(app, Box::new(Save { file_path })) {
                     app.err(e);
                 }
