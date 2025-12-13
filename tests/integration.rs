@@ -1003,3 +1003,32 @@ fn test_meta_without_key_columns() {
     assert!(output.contains("metadata"), "Should show metadata view");
     assert!(output.contains("(3 rows)"), "Should have one row per column");
 }
+
+#[test]
+fn test_parquet_time_roundtrip() {
+    use polars::prelude::*;
+    let id = unique_id();
+    let pq_path = format!("/tmp/tv_pq_time_rt_{}.parquet", id);
+    
+    // Create Time column directly
+    let ns: Vec<i64> = vec![3600_000_000_000, 7200_000_000_000, 10800_000_000_000];
+    let time_series = Series::new("event_time".into(), ns)
+        .cast(&DataType::Time).unwrap();
+    let mut df = DataFrame::new(vec![time_series.into()]).unwrap();
+    
+    println!("Before save: {:?}", df.column("event_time").unwrap().dtype());
+    
+    // Save to parquet
+    ParquetWriter::new(std::fs::File::create(&pq_path).unwrap())
+        .finish(&mut df).unwrap();
+    
+    // Load back raw
+    let loaded = ParquetReader::new(std::fs::File::open(&pq_path).unwrap())
+        .finish().unwrap();
+    println!("After load: {:?}", loaded.column("event_time").unwrap().dtype());
+    
+    // Should be Time type
+    assert!(matches!(loaded.column("event_time").unwrap().dtype(), DataType::Time),
+        "Time column should remain Time after parquet roundtrip, got {:?}", 
+        loaded.column("event_time").unwrap().dtype());
+}

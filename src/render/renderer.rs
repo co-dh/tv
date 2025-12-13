@@ -286,6 +286,17 @@ impl Renderer {
                     if s.len() >= 16 { s[..16].to_string() } else { s }
                 }).unwrap_or_else(|_| "null".to_string())
             }
+            DataType::Time => {
+                // Format Time as HH:MM:SS.mmm
+                col.get(row_idx).map(|v| match v {
+                    AnyValue::Time(ns) => {
+                        let secs = ns / 1_000_000_000;
+                        let ms = (ns % 1_000_000_000) / 1_000_000;
+                        format!("{:02}:{:02}:{:02}.{:03}", secs / 3600, (secs % 3600) / 60, secs % 60, ms)
+                    }
+                    _ => v.to_string(),
+                }).unwrap_or_else(|_| "null".to_string())
+            }
             _ => col.get(row_idx).map(|v| v.to_string()).unwrap_or_else(|_| "null".to_string()),
         }
     }
