@@ -41,6 +41,14 @@
 
 - **Delete feedback**: Shows "N columns deleted" message
 
+- **View handler refactor**: Extracted view-specific logic to modules
+  - New `src/view/` module with ViewKind enum and ViewHandler trait
+  - `meta.rs` - MetaEnter, MetaDelete commands
+  - `freq.rs` - FreqEnter command
+  - `folder.rs` - opens file on Enter
+  - `table.rs` - placeholder for table-specific commands
+  - Dispatch system routes commands to view handlers
+
 ### Files Modified
 - `src/render/mod.rs` - new module with init/restore
 - `src/render/terminal.rs` - ratatui terminal lifecycle

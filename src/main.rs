@@ -7,12 +7,13 @@ mod prql;
 mod render;
 mod state;
 mod theme;
+mod view;
 
 use anyhow::Result;
 use app::AppContext;
 use command::executor::CommandExecutor;
 use command::io::{Load, Save};
-use command::transform::{Agg, DelCol, Filter, FilterIn, RenameCol, Select, Sort, Take, Xkey};
+use command::transform::{Agg, DelCol, Filter, RenameCol, Select, Sort, Take, Xkey};
 use command::view::{Correlation, Df, Dup, Env, Frequency, Lr, Ls, Lsblk, Lsof, Metadata, Mounts, Pop, Ps, Swap, Tcp, Udp, Who};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use crossterm::{cursor, execute, style::Print, terminal};
@@ -273,69 +274,27 @@ fn on_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
             }
         }
         KeyCode::Char('D') => {
-            // D: Delete column(s) - in metadata view, delete from parent; otherwise delete current
-            // Extract needed data first to avoid borrow issues
-            let delete_info: Option<(bool, Option<usize>, Vec<String>)> = app.view().map(|view| {
-                let is_meta = view.name == "metadata";
-                let parent_id = view.parent_id;
-
-                if is_meta {
-                    let rows_to_delete: Vec<usize> = if view.selected_rows.is_empty() {
-                        vec![view.state.cr]
-                    } else {
-                        let mut rows: Vec<usize> = view.selected_rows.iter().copied().collect();
-                        rows.sort_by(|a, b| b.cmp(a));
-                        rows
-                    };
-
-                    let col_names: Vec<String> = rows_to_delete.iter()
-                        .filter_map(|&row| {
-                            view.dataframe.get_columns()[0]
-                                .get(row)
-                                .ok()
-                                .map(|v| unquote(&v.to_string()))
-                        })
-                        .collect();
-                    (true, parent_id, col_names)
+            // D: Delete - dispatch to view-specific handler, fallback to table delete
+            let kind = app.view().map(|v| view::ViewKind::from_name(&v.name));
+            if let Some(k) = kind {
+                if let Some(cmd) = view::handler::dispatch(k, "delete", app) {
+                    let _ = CommandExecutor::exec(app, cmd);
                 } else {
-                    let cols_to_delete: Vec<String> = if view.selected_cols.is_empty() {
-                        view.state.cur_col(&view.dataframe)
-                            .map(|c| vec![c.to_string()])
-                            .unwrap_or_default()
-                    } else {
-                        let col_names: Vec<String> = view.dataframe.get_column_names()
-                            .iter()
-                            .map(|s| s.to_string())
-                            .collect();
-                        let mut selected: Vec<usize> = view.selected_cols.iter().copied().collect();
-                        selected.sort_by(|a, b| b.cmp(a));
-                        selected.iter()
-                            .filter_map(|&idx| col_names.get(idx).cloned())
-                            .collect()
-                    };
-                    (false, None, cols_to_delete)
-                }
-            });
-
-            if let Some((is_meta, parent_id, col_names)) = delete_info {
-                if is_meta {
-                    let n = col_names.len();
-                    if let Some(pid) = parent_id {
-                        if let Some(parent) = app.stack.find_mut(pid) {
-                            // Adjust col_separator for deleted cols
-                            if let Some(sep) = parent.col_separator {
-                                let all: Vec<String> = parent.dataframe.get_column_names().iter().map(|s| s.to_string()).collect();
-                                let adj = col_names.iter().filter(|c| all.iter().position(|n| n == *c).map(|i| i < sep).unwrap_or(false)).count();
-                                parent.col_separator = Some(sep.saturating_sub(adj));
-                            }
-                            for c in &col_names { let _ = parent.dataframe.drop_in_place(c); }
+                    // Default table delete
+                    let col_names: Vec<String> = app.view().map(|view| {
+                        if view.selected_cols.is_empty() {
+                            view.state.cur_col(&view.dataframe).map(|c| vec![c]).unwrap_or_default()
+                        } else {
+                            let names: Vec<String> = view.dataframe.get_column_names().iter().map(|s| s.to_string()).collect();
+                            let mut sel: Vec<usize> = view.selected_cols.iter().copied().collect();
+                            sel.sort_by(|a, b| b.cmp(a));
+                            sel.iter().filter_map(|&i| names.get(i).cloned()).collect()
                         }
+                    }).unwrap_or_default();
+                    if !col_names.is_empty() {
+                        let _ = CommandExecutor::exec(app, Box::new(DelCol { col_names }));
+                        if let Some(v) = app.view_mut() { v.selected_cols.clear(); }
                     }
-                    let _ = CommandExecutor::exec(app, Box::new(Pop));
-                    app.msg(format!("{} columns deleted", n));
-                } else if !col_names.is_empty() {
-                    let _ = CommandExecutor::exec(app, Box::new(DelCol { col_names: col_names }));
-                    if let Some(v) = app.view_mut() { v.selected_cols.clear(); }
                 }
             }
         }
@@ -494,50 +453,12 @@ fn on_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
             }
         }
         KeyCode::Enter => {
-            // Enter: In meta view, pop and focus column; in freq view, filter parent
-            let view_info = app.view().map(|v| (v.name.clone(), v.parent_id, v.freq_col.clone()));
-            match view_info {
-                Some((name, Some(_pid), None)) if name == "metadata" => {
-                    // Meta view: get selected column names, pop, apply xkey
-                    let col_names: Vec<String> = app.view().map(|v| {
-                        let rows: Vec<usize> = if v.selected_rows.is_empty() { vec![v.state.cr] }
-                                               else { let mut r: Vec<_> = v.selected_rows.iter().copied().collect(); r.sort(); r };
-                        rows.iter().filter_map(|&r| v.dataframe.get_columns()[0].get(r).ok().map(|v| unquote(&v.to_string()))).collect()
-                    }).unwrap_or_default();
-                    let _ = CommandExecutor::exec(app, Box::new(Pop));
-                    if col_names.len() == 1 {
-                        // Single: just focus
-                        if let Some(v) = app.view_mut() {
-                            if let Some(idx) = v.dataframe.get_column_names().iter().position(|c| c.as_str() == col_names[0]) {
-                                v.state.cc = idx;
-                            }
-                        }
-                    } else if !col_names.is_empty() {
-                        // Multiple: use xkey command
-                        let _ = CommandExecutor::exec(app, Box::new(Xkey { col_names }));
-                    }
+            // Dispatch Enter to view-specific handler
+            let kind = app.view().map(|v| view::ViewKind::from_name(&v.name));
+            if let Some(k) = kind {
+                if let Some(cmd) = view::handler::dispatch(k, "enter", app) {
+                    let _ = CommandExecutor::exec(app, cmd);
                 }
-                Some((_, Some(_), Some(freq_col))) => {
-                    // Freq view: filter parent with selected value(s)
-                    let (values, filename) = app.view().map(|view| {
-                        let rows: Vec<usize> = if view.selected_rows.is_empty() { vec![view.state.cr] }
-                                               else { view.selected_rows.iter().copied().collect() };
-                        let vals: Vec<String> = rows.iter()
-                            .filter_map(|&r| view.dataframe.get_columns()[0].get(r).ok().map(|v| unquote(&v.to_string())))
-                            .collect();
-                        (vals, view.filename.clone())
-                    }).unwrap_or_default();
-                    let _ = CommandExecutor::exec(app, Box::new(Pop));
-                    if !values.is_empty() {
-                        let _ = CommandExecutor::exec(app, Box::new(FilterIn { col: freq_col.clone(), values, filename }));
-                        if let Some(v) = app.view_mut() {
-                            if let Some(idx) = v.dataframe.get_column_names().iter().position(|c| c.as_str() == freq_col) {
-                                v.state.cc = idx;
-                            }
-                        }
-                    }
-                }
-                _ => {}
             }
         }
         KeyCode::Char('c') => {
