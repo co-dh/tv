@@ -13,6 +13,7 @@ impl Command for Frequency {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         let view = app.req()?;
         let parent_id = view.id;
+        let parent_rows = view.dataframe.height();
 
         // Check if column exists
         let found = view.dataframe.get_column_names()
@@ -55,6 +56,7 @@ impl Command for Frequency {
             format!("Freq:{}", self.col_name),
             result,
             parent_id,
+            parent_rows,
             self.col_name.clone(),
         ));
         Ok(())
@@ -65,130 +67,173 @@ impl Command for Frequency {
 }
 
 /// Metadata view command - shows column types and statistics (data profile)
-/// Uses polars lazy expressions for efficient computation on large datasets
+/// Uses cache if available, otherwise computes stats in background
 pub struct Metadata;
+
+const BG_THRESHOLD: usize = 10_000;  // compute in background if rows > this
 
 impl Command for Metadata {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
-        let view = app.req()?;
-        let parent_id = view.id;
-        let parent_col = view.state.cc;
-        let df = &view.dataframe;
+        // Extract values before mutable borrow
+        let (parent_id, parent_col, parent_rows, cached, df) = {
+            let view = app.req()?;
+            (view.id, view.state.cc, view.dataframe.height(), view.meta_cache.clone(), view.dataframe.clone())
+        };
 
-        let col_names: Vec<String> = df.get_column_names().iter().map(|s| s.to_string()).collect();
-        let dtypes = df.dtypes();
-        let col_types: Vec<String> = dtypes.iter().map(|dt| format!("{:?}", dt)).collect();
-        let total_rows = df.height() as f64;
-
-        // Check which columns are numeric
-        let is_numeric: Vec<bool> = dtypes.iter().map(|dt| matches!(dt,
-            DataType::Int8 | DataType::Int16 | DataType::Int32 | DataType::Int64 |
-            DataType::UInt8 | DataType::UInt16 | DataType::UInt32 | DataType::UInt64 |
-            DataType::Float32 | DataType::Float64
-        )).collect();
-
-        // Use lazy expressions to compute stats efficiently
-        let lazy = df.clone().lazy();
-
-        // Build expressions - only compute mean/std for numeric columns
-        let null_exprs: Vec<_> = col_names.iter().map(|c| col(c).null_count().alias(c)).collect();
-        let min_exprs: Vec<_> = col_names.iter().map(|c| col(c).min().alias(c)).collect();
-        let max_exprs: Vec<_> = col_names.iter().map(|c| col(c).max().alias(c)).collect();
-        let distinct_exprs: Vec<_> = col_names.iter().map(|c| col(c).n_unique().alias(c)).collect();
-
-        // Only compute mean/std for numeric columns
-        let numeric_cols: Vec<&String> = col_names.iter().zip(&is_numeric)
-            .filter(|(_, &is_num)| is_num).map(|(c, _)| c).collect();
-        let mean_exprs: Vec<_> = numeric_cols.iter().map(|c| col(*c).mean().alias(*c)).collect();
-        let std_exprs: Vec<_> = numeric_cols.iter().map(|c| col(*c).std(1).alias(*c)).collect();
-
-        // Execute
-        let null_df = lazy.clone().select(null_exprs).collect()?;
-        let min_df = lazy.clone().select(min_exprs).collect()?;
-        let max_df = lazy.clone().select(max_exprs).collect()?;
-        let distinct_df = lazy.clone().select(distinct_exprs).collect()?;
-        let mean_df = if !mean_exprs.is_empty() { Some(lazy.clone().select(mean_exprs).collect()?) } else { None };
-        let std_df = if !std_exprs.is_empty() { Some(lazy.select(std_exprs).collect()?) } else { None };
-
-        // Extract values from result DataFrames
-        let mut null_pcts = Vec::new();
-        let mut mins = Vec::new();
-        let mut maxs = Vec::new();
-        let mut medians = Vec::new();
-        let mut sigmas = Vec::new();
-        let mut distincts = Vec::new();
-
-        for (i, name) in col_names.iter().enumerate() {
-            // Null percentage
-            let null_count = null_df.column(name).ok()
-                .and_then(|c| c.get(0).ok())
-                .map(|v| v.try_extract::<u32>().unwrap_or(0) as f64)
-                .unwrap_or(0.0);
-            null_pcts.push(100.0 * null_count / total_rows);
-
-            // Min
-            mins.push(min_df.column(name).ok()
-                .and_then(|c| c.get(0).ok())
-                .map(|v| format_anyvalue(&v))
-                .unwrap_or_default());
-
-            // Max
-            maxs.push(max_df.column(name).ok()
-                .and_then(|c| c.get(0).ok())
-                .map(|v| format_anyvalue(&v))
-                .unwrap_or_default());
-
-            // Distinct
-            distincts.push(distinct_df.column(name).ok()
-                .and_then(|c| c.get(0).ok())
-                .map(|v| v.try_extract::<u32>().unwrap_or(0))
-                .unwrap_or(0));
-
-            // Mean and std only for numeric
-            if is_numeric[i] {
-                medians.push(mean_df.as_ref()
-                    .and_then(|df| df.column(name).ok())
-                    .and_then(|c| c.get(0).ok())
-                    .map(|v| format_anyvalue(&v))
-                    .unwrap_or_default());
-                sigmas.push(std_df.as_ref()
-                    .and_then(|df| df.column(name).ok())
-                    .and_then(|c| c.get(0).ok())
-                    .map(|v| format_anyvalue(&v))
-                    .unwrap_or_default());
-            } else {
-                medians.push(String::new());
-                sigmas.push(String::new());
-            }
+        // Check for cached meta
+        if let Some(cached_df) = cached {
+            let id = app.next_id();
+            let mut new_view = ViewState::new(id, "metadata".into(), cached_df, None);
+            new_view.parent_id = Some(parent_id);
+            new_view.parent_rows = Some(parent_rows);
+            new_view.state.cr = parent_col;
+            app.stack.push(new_view);
+            return Ok(());
         }
 
-        let metadata_df = DataFrame::new(vec![
-            Series::new("column".into(), col_names).into(),
-            Series::new("type".into(), col_types).into(),
-            Series::new("null%".into(), null_pcts).into(),
-            Series::new("distinct".into(), distincts).into(),
-            Series::new("min".into(), mins).into(),
-            Series::new("max".into(), maxs).into(),
-            Series::new("median".into(), medians).into(),
-            Series::new("sigma".into(), sigmas).into(),
-        ])?;
+        // Small datasets: compute synchronously; large: use background
+        if parent_rows <= BG_THRESHOLD {
+            let meta_df = compute_meta_stats(&df)?;
+            // Cache in parent
+            if let Some(parent) = app.stack.find_mut(parent_id) {
+                parent.meta_cache = Some(meta_df.clone());
+            }
+            let id = app.next_id();
+            let mut new_view = ViewState::new(id, "metadata".into(), meta_df, None);
+            new_view.parent_id = Some(parent_id);
+            new_view.parent_rows = Some(parent_rows);
+            new_view.state.cr = parent_col;
+            app.stack.push(new_view);
+        } else {
+            // Large dataset: show placeholder, compute in background
+            let col_names: Vec<String> = df.get_column_names().iter().map(|s| s.to_string()).collect();
+            let col_types: Vec<String> = df.dtypes().iter().map(|dt| format!("{:?}", dt)).collect();
+            let n = col_names.len();
 
-        let id = app.next_id();
-        let mut new_view = ViewState::new(
-            id,
-            String::from("metadata"),
-            metadata_df,
-            None,
-        );
-        new_view.parent_id = Some(parent_id);
-        new_view.state.cr = parent_col;
+            let placeholder_df = DataFrame::new(vec![
+                Series::new("column".into(), col_names).into(),
+                Series::new("type".into(), col_types).into(),
+                Series::new("null%".into(), vec!["...".to_string(); n]).into(),
+                Series::new("distinct".into(), vec!["...".to_string(); n]).into(),
+                Series::new("min".into(), vec!["...".to_string(); n]).into(),
+                Series::new("max".into(), vec!["...".to_string(); n]).into(),
+                Series::new("median".into(), vec!["...".to_string(); n]).into(),
+                Series::new("sigma".into(), vec!["...".to_string(); n]).into(),
+            ])?;
 
-        app.stack.push(new_view);
+            let id = app.next_id();
+            let mut new_view = ViewState::new(id, "metadata".into(), placeholder_df, None);
+            new_view.parent_id = Some(parent_id);
+            new_view.parent_rows = Some(parent_rows);
+            new_view.state.cr = parent_col;
+            app.stack.push(new_view);
+
+            // Spawn background thread
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                if let Ok(meta_df) = compute_meta_stats(&df) {
+                    let _ = tx.send(meta_df);
+                }
+            });
+            app.bg_meta = Some((parent_id, rx));
+        }
+
         Ok(())
     }
 
     fn to_str(&self) -> String { "meta".into() }
     fn record(&self) -> bool { false }
+}
+
+/// Compute full metadata stats (runs in background)
+fn compute_meta_stats(df: &DataFrame) -> Result<DataFrame> {
+    let col_names: Vec<String> = df.get_column_names().iter().map(|s| s.to_string()).collect();
+    let dtypes = df.dtypes();
+    let col_types: Vec<String> = dtypes.iter().map(|dt| format!("{:?}", dt)).collect();
+    let total_rows = df.height() as f64;
+
+    let is_numeric: Vec<bool> = dtypes.iter().map(|dt| matches!(dt,
+        DataType::Int8 | DataType::Int16 | DataType::Int32 | DataType::Int64 |
+        DataType::UInt8 | DataType::UInt16 | DataType::UInt32 | DataType::UInt64 |
+        DataType::Float32 | DataType::Float64
+    )).collect();
+
+    let lazy = df.clone().lazy();
+
+    // Build and execute expressions
+    let null_exprs: Vec<_> = col_names.iter().map(|c| col(c).null_count().alias(c)).collect();
+    let min_exprs: Vec<_> = col_names.iter().map(|c| col(c).min().alias(c)).collect();
+    let max_exprs: Vec<_> = col_names.iter().map(|c| col(c).max().alias(c)).collect();
+    let distinct_exprs: Vec<_> = col_names.iter().map(|c| col(c).n_unique().alias(c)).collect();
+
+    let numeric_cols: Vec<&String> = col_names.iter().zip(&is_numeric)
+        .filter(|(_, &is_num)| is_num).map(|(c, _)| c).collect();
+    let mean_exprs: Vec<_> = numeric_cols.iter().map(|c| col(*c).mean().alias(*c)).collect();
+    let std_exprs: Vec<_> = numeric_cols.iter().map(|c| col(*c).std(1).alias(*c)).collect();
+
+    let null_df = lazy.clone().select(null_exprs).collect()?;
+    let min_df = lazy.clone().select(min_exprs).collect()?;
+    let max_df = lazy.clone().select(max_exprs).collect()?;
+    let distinct_df = lazy.clone().select(distinct_exprs).collect()?;
+    let mean_df = if !mean_exprs.is_empty() { Some(lazy.clone().select(mean_exprs).collect()?) } else { None };
+    let std_df = if !std_exprs.is_empty() { Some(lazy.select(std_exprs).collect()?) } else { None };
+
+    let mut null_pcts = Vec::new();
+    let mut mins = Vec::new();
+    let mut maxs = Vec::new();
+    let mut medians = Vec::new();
+    let mut sigmas = Vec::new();
+    let mut distincts = Vec::new();
+
+    for (i, name) in col_names.iter().enumerate() {
+        let null_count = null_df.column(name).ok()
+            .and_then(|c| c.get(0).ok())
+            .map(|v| v.try_extract::<u32>().unwrap_or(0) as f64)
+            .unwrap_or(0.0);
+        null_pcts.push(format!("{:.1}", 100.0 * null_count / total_rows));
+
+        mins.push(min_df.column(name).ok()
+            .and_then(|c| c.get(0).ok())
+            .map(|v| format_anyvalue(&v))
+            .unwrap_or_default());
+
+        maxs.push(max_df.column(name).ok()
+            .and_then(|c| c.get(0).ok())
+            .map(|v| format_anyvalue(&v))
+            .unwrap_or_default());
+
+        distincts.push(distinct_df.column(name).ok()
+            .and_then(|c| c.get(0).ok())
+            .map(|v| format!("{}", v.try_extract::<u32>().unwrap_or(0)))
+            .unwrap_or_default());
+
+        if is_numeric[i] {
+            medians.push(mean_df.as_ref()
+                .and_then(|df| df.column(name).ok())
+                .and_then(|c| c.get(0).ok())
+                .map(|v| format_anyvalue(&v))
+                .unwrap_or_default());
+            sigmas.push(std_df.as_ref()
+                .and_then(|df| df.column(name).ok())
+                .and_then(|c| c.get(0).ok())
+                .map(|v| format_anyvalue(&v))
+                .unwrap_or_default());
+        } else {
+            medians.push(String::new());
+            sigmas.push(String::new());
+        }
+    }
+
+    Ok(DataFrame::new(vec![
+        Series::new("column".into(), col_names).into(),
+        Series::new("type".into(), col_types).into(),
+        Series::new("null%".into(), null_pcts).into(),
+        Series::new("distinct".into(), distincts).into(),
+        Series::new("min".into(), mins).into(),
+        Series::new("max".into(), maxs).into(),
+        Series::new("median".into(), medians).into(),
+        Series::new("sigma".into(), sigmas).into(),
+    ])?)
 }
 
 /// Format AnyValue for display

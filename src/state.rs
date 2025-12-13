@@ -69,39 +69,42 @@ pub struct ViewState {
     pub filename: Option<String>,
     pub show_row_numbers: bool,
     pub parent_id: Option<usize>,   // for freq tables
+    pub parent_rows: Option<usize>, // parent table row count (for meta/freq status)
     pub freq_col: Option<String>,   // freq column name
     pub selected_cols: HashSet<usize>,
     pub selected_rows: HashSet<usize>,
     pub gz_source: Option<String>,  // original .csv.gz path for streaming save
     pub stats_cache: Option<(usize, String)>,  // (col_idx, stats) cache
     pub col_separator: Option<usize>,  // draw separator bar after this column index
+    pub meta_cache: Option<DataFrame>, // cached metadata stats for this view
 }
 
 impl ViewState {
     pub fn new(id: usize, name: String, df: DataFrame, filename: Option<String>) -> Self {
         Self {
             id, name, dataframe: df, state: TableState::new(), history: Vec::new(),
-            filename, show_row_numbers: false, parent_id: None, freq_col: None,
+            filename, show_row_numbers: false, parent_id: None, parent_rows: None, freq_col: None,
             selected_cols: HashSet::new(), selected_rows: HashSet::new(), gz_source: None,
-            stats_cache: None, col_separator: None,
+            stats_cache: None, col_separator: None, meta_cache: None,
         }
     }
 
     pub fn new_gz(id: usize, name: String, df: DataFrame, filename: Option<String>, gz: String) -> Self {
         Self {
             id, name, dataframe: df, state: TableState::new(), history: Vec::new(),
-            filename, show_row_numbers: false, parent_id: None, freq_col: None,
+            filename, show_row_numbers: false, parent_id: None, parent_rows: None, freq_col: None,
             selected_cols: HashSet::new(), selected_rows: HashSet::new(), gz_source: Some(gz),
-            stats_cache: None, col_separator: None,
+            stats_cache: None, col_separator: None, meta_cache: None,
         }
     }
 
-    pub fn new_freq(id: usize, name: String, df: DataFrame, pid: usize, col: String) -> Self {
+    /// Create freq view with parent info
+    pub fn new_freq(id: usize, name: String, df: DataFrame, pid: usize, prows: usize, col: String) -> Self {
         Self {
             id, name, dataframe: df, state: TableState::new(), history: Vec::new(),
-            filename: None, show_row_numbers: false, parent_id: Some(pid), freq_col: Some(col),
+            filename: None, show_row_numbers: false, parent_id: Some(pid), parent_rows: Some(prows), freq_col: Some(col),
             selected_cols: HashSet::new(), selected_rows: HashSet::new(), gz_source: None,
-            stats_cache: None, col_separator: None,
+            stats_cache: None, col_separator: None, meta_cache: None,
         }
     }
 

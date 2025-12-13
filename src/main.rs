@@ -44,14 +44,21 @@ fn main() -> Result<()> {
         return run_script(&args[idx + 1]);
     }
 
+    // Check for --raw flag (skip type detection on save)
+    let raw_save = args.iter().any(|a| a == "--raw");
+
     // Initialize ratatui terminal
     let mut tui = render::init()?;
 
+    // Get file path (first non-flag argument after program name)
+    let file_arg = args.iter().skip(1).find(|a| !a.starts_with('-'));
+
     // Create app context
-    let mut app = if args.len() > 1 {
+    let mut app = if let Some(path) = file_arg {
         // Load file from CLI argument
         let mut temp_app = AppContext::new();
-        match CommandExecutor::exec(&mut temp_app, Box::new(Load { file_path: args[1].clone() })) {
+        temp_app.raw_save = raw_save;
+        match CommandExecutor::exec(&mut temp_app, Box::new(Load { file_path: path.clone() })) {
             Ok(_) => temp_app,
             Err(e) => {
                 render::restore()?;
@@ -60,7 +67,9 @@ fn main() -> Result<()> {
             }
         }
     } else {
-        AppContext::new()
+        let mut temp_app = AppContext::new();
+        temp_app.raw_save = raw_save;
+        temp_app
     };
 
     // Update viewport
@@ -69,8 +78,10 @@ fn main() -> Result<()> {
 
     // Main event loop
     loop {
-        // Merge any background-loaded data
+        // Check background tasks
         app.merge_bg_data();
+        app.check_bg_saver();
+        app.check_bg_meta();
 
         // Render with ratatui diff-based update
         tui.draw(|frame| Renderer::render(frame, &mut app))?;

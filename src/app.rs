@@ -28,6 +28,9 @@ pub struct AppContext {
     pub keymap: KeyMap,            // key bindings
     pub theme: Theme,              // color theme
     pub bg_loader: Option<Receiver<DataFrame>>,  // background gz loader
+    pub bg_saver: Option<Receiver<String>>,      // background save status
+    pub raw_save: bool,            // --raw: skip type detection on save
+    pub bg_meta: Option<(usize, Receiver<DataFrame>)>,  // (parent_id, meta stats receiver)
 }
 
 impl AppContext {
@@ -51,6 +54,9 @@ impl AppContext {
             keymap,
             theme,
             bg_loader: None,
+            bg_saver: None,
+            raw_save: false,
+            bg_meta: None,
         }
     }
 
@@ -84,6 +90,43 @@ impl AppContext {
             if new_rows > old_rows {
                 view.state.col_widths.clear();  // recalc widths
             }
+        }
+    }
+
+    /// Check for background save status updates
+    pub fn check_bg_saver(&mut self) {
+        use std::sync::mpsc::TryRecvError;
+        let Some(rx) = &self.bg_saver else { return };
+        loop {
+            match rx.try_recv() {
+                Ok(msg) => self.message = msg,
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => { self.bg_saver = None; break; }
+            }
+        }
+    }
+
+    /// Check for background meta stats and update view
+    pub fn check_bg_meta(&mut self) {
+        use std::sync::mpsc::TryRecvError;
+        let Some((parent_id, ref rx)) = self.bg_meta else { return };
+        match rx.try_recv() {
+            Ok(meta_df) => {
+                // Update current meta view if it's the one we're computing for
+                if let Some(view) = self.stack.cur_mut() {
+                    if view.name == "metadata" && view.parent_id == Some(parent_id) {
+                        view.dataframe = meta_df.clone();
+                        view.state.col_widths.clear();
+                    }
+                }
+                // Cache in parent
+                if let Some(parent) = self.stack.find_mut(parent_id) {
+                    parent.meta_cache = Some(meta_df);
+                }
+                self.bg_meta = None;
+            }
+            Err(TryRecvError::Empty) => {}
+            Err(TryRecvError::Disconnected) => { self.bg_meta = None; }
         }
     }
 

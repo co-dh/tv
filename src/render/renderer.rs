@@ -432,7 +432,11 @@ impl Renderer {
         let total_str = Self::commify(view.rows());
 
         let left = if !message.is_empty() { message.to_string() }
-        else if view.name.starts_with("Freq:") || view.name == "metadata" { view.name.clone() }
+        else if view.name.starts_with("Freq:") || view.name == "metadata" {
+            // Show parent row count for Meta/Freq views
+            let pr = view.parent_rows.map(|n| format!(" ({})", Self::commify(n))).unwrap_or_default();
+            format!("{}{}", view.name, pr)
+        }
         else { view.filename.as_deref().unwrap_or("(no file)").to_string() };
 
         // Use cached stats if column unchanged
