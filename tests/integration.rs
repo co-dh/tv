@@ -937,3 +937,35 @@ fn test_freq_without_key_columns() {
     assert!(output.contains("Freq:b"), "Should show freq view");
     assert!(output.contains("Cnt"), "Should have count column");
 }
+
+// =============================================================================
+// Meta with Key Columns
+// =============================================================================
+
+#[test]
+fn test_meta_with_key_columns() {
+    // Test meta groups by key columns when xkey is set
+    let id = unique_id();
+    let path = format!("/tmp/tv_meta_key_{}.csv", id);
+    fs::write(&path, "sym,price,volume\nA,100,1000\nA,101,2000\nB,200,3000\nB,201,4000\n").unwrap();
+
+    // Set sym as key column, then run meta
+    let output = run_script(&format!("from {}\nxkey sym\nmeta\n", path), id);
+    // Meta should group by sym, showing stats for price and volume per sym
+    assert!(output.contains("metadata"), "Should show metadata view");
+    assert!(output.contains("sym"), "Should include key column sym");
+    assert!(output.contains("price"), "Should show stats for price");
+    assert!(output.contains("volume"), "Should show stats for volume");
+}
+
+#[test]
+fn test_meta_without_key_columns() {
+    // Test meta without key columns (standard per-column stats)
+    let id = unique_id();
+    let path = format!("/tmp/tv_meta_nokey_{}.csv", id);
+    fs::write(&path, "a,b,c\n1,2,3\n4,5,6\n").unwrap();
+
+    let output = run_script(&format!("from {}\nmeta\n", path), id);
+    assert!(output.contains("metadata"), "Should show metadata view");
+    assert!(output.contains("(3 rows)"), "Should have one row per column");
+}

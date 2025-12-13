@@ -91,30 +91,46 @@ const BG_THRESHOLD: usize = 10_000;  // compute in background if rows > this
 impl Command for Metadata {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         // Extract values before mutable borrow
-        let (parent_id, parent_col, parent_rows, parent_name, cached, df) = {
+        let (parent_id, parent_col, parent_rows, parent_name, cached, df, col_sep) = {
             let view = app.req()?;
-            (view.id, view.state.cc, view.dataframe.height(), view.name.clone(), view.meta_cache.clone(), view.dataframe.clone())
+            (view.id, view.state.cc, view.dataframe.height(), view.name.clone(),
+             view.meta_cache.clone(), view.dataframe.clone(), view.col_separator)
         };
 
-        // Check for cached meta
-        if let Some(cached_df) = cached {
-            let id = app.next_id();
-            let mut new_view = ViewState::new_child(id, "metadata".into(), cached_df, parent_id, parent_rows, parent_name.clone());
-            new_view.state.cr = parent_col;
-            app.stack.push(new_view);
-            return Ok(());
+        // Get key columns if any
+        let col_names: Vec<String> = df.get_column_names().iter().map(|s| s.to_string()).collect();
+        let key_cols: Vec<String> = col_sep.map(|sep| col_names[..sep].to_vec()).unwrap_or_default();
+
+        // Check for cached meta (only use if no key columns - grouped stats aren't cached)
+        if key_cols.is_empty() {
+            if let Some(cached_df) = cached {
+                let id = app.next_id();
+                let mut new_view = ViewState::new_child(id, "metadata".into(), cached_df, parent_id, parent_rows, parent_name.clone());
+                new_view.state.cr = parent_col;
+                app.stack.push(new_view);
+                return Ok(());
+            }
         }
 
         // Small datasets: compute synchronously; large: use background
         if parent_rows <= BG_THRESHOLD {
-            let meta_df = compute_meta_stats(&df)?;
-            // Cache in parent
-            if let Some(parent) = app.stack.find_mut(parent_id) {
-                parent.meta_cache = Some(meta_df.clone());
+            let meta_df = if key_cols.is_empty() {
+                compute_meta_stats(&df)?
+            } else {
+                compute_meta_stats_grouped(&df, &key_cols)?
+            };
+            // Cache in parent (only for non-grouped)
+            if key_cols.is_empty() {
+                if let Some(parent) = app.stack.find_mut(parent_id) {
+                    parent.meta_cache = Some(meta_df.clone());
+                }
             }
             let id = app.next_id();
             let mut new_view = ViewState::new_child(id, "metadata".into(), meta_df, parent_id, parent_rows, parent_name);
             new_view.state.cr = parent_col;
+            if !key_cols.is_empty() {
+                new_view.col_separator = Some(key_cols.len());
+            }
             app.stack.push(new_view);
         } else {
             // Large dataset: show placeholder, compute in background
@@ -243,6 +259,113 @@ fn compute_meta_stats(df: &DataFrame) -> Result<DataFrame> {
         Series::new("median".into(), medians).into(),
         Series::new("sigma".into(), sigmas).into(),
     ])?)
+}
+
+/// Compute metadata stats grouped by key columns
+fn compute_meta_stats_grouped(df: &DataFrame, key_cols: &[String]) -> Result<DataFrame> {
+    let all_cols: Vec<String> = df.get_column_names().iter().map(|s| s.to_string()).collect();
+    let non_key_cols: Vec<&String> = all_cols.iter().filter(|c| !key_cols.contains(c)).collect();
+
+    // Get unique combinations of key values
+    let key_exprs: Vec<_> = key_cols.iter().map(|c| col(c)).collect();
+    let unique_keys = df.clone().lazy()
+        .select(key_exprs.clone())
+        .unique(None, UniqueKeepStrategy::First)
+        .sort(key_cols.iter().map(|s| s.as_str()).collect::<Vec<_>>(), SortMultipleOptions::default())
+        .collect()?;
+
+    // Build result vectors
+    let mut result_cols: Vec<Column> = Vec::new();
+
+    // Add key columns to result
+    for key_col in key_cols {
+        let mut key_vals: Vec<String> = Vec::new();
+        for row in 0..unique_keys.height() {
+            for _ in &non_key_cols {
+                let v = unique_keys.column(key_col)?.get(row)?;
+                key_vals.push(format_anyvalue(&v));
+            }
+        }
+        result_cols.push(Series::new(key_col.as_str().into(), key_vals).into());
+    }
+
+    // Add stats columns
+    let mut col_names_out: Vec<String> = Vec::new();
+    let mut types_out: Vec<String> = Vec::new();
+    let mut null_pcts: Vec<String> = Vec::new();
+    let mut distincts: Vec<String> = Vec::new();
+    let mut mins: Vec<String> = Vec::new();
+    let mut maxs: Vec<String> = Vec::new();
+    let mut medians: Vec<String> = Vec::new();
+    let mut sigmas: Vec<String> = Vec::new();
+
+    for row in 0..unique_keys.height() {
+        // Build filter for this key combination
+        let mut filter_expr = lit(true);
+        for key_col in key_cols {
+            let v = unique_keys.column(key_col)?.get(row)?;
+            let scalar = Scalar::new(unique_keys.column(key_col)?.dtype().clone(), v.into_static());
+            filter_expr = filter_expr.and(col(key_col).eq(lit(scalar)));
+        }
+
+        // Filter df to this key group
+        let group_df = df.clone().lazy().filter(filter_expr).collect()?;
+        let group_rows = group_df.height() as f64;
+
+        // Compute stats for each non-key column
+        for &col_name in &non_key_cols {
+            col_names_out.push(col_name.clone());
+
+            let dtype = group_df.column(col_name)?.dtype().clone();
+            types_out.push(format!("{:?}", dtype));
+
+            let is_numeric = matches!(dtype,
+                DataType::Int8 | DataType::Int16 | DataType::Int32 | DataType::Int64 |
+                DataType::UInt8 | DataType::UInt16 | DataType::UInt32 | DataType::UInt64 |
+                DataType::Float32 | DataType::Float64);
+
+            // Null count
+            let null_count = group_df.column(col_name)?.null_count() as f64;
+            null_pcts.push(format!("{:.1}", 100.0 * null_count / group_rows));
+
+            // Distinct
+            let distinct = group_df.column(col_name)?.n_unique()? as u32;
+            distincts.push(format!("{}", distinct));
+
+            // Min/Max
+            let lazy = group_df.clone().lazy();
+            let min_df = lazy.clone().select([col(col_name).min()]).collect()?;
+            let max_df = lazy.clone().select([col(col_name).max()]).collect()?;
+            mins.push(min_df.column(col_name).ok().and_then(|c| c.get(0).ok())
+                .map(|v| format_anyvalue(&v)).unwrap_or_default());
+            maxs.push(max_df.column(col_name).ok().and_then(|c| c.get(0).ok())
+                .map(|v| format_anyvalue(&v)).unwrap_or_default());
+
+            // Mean/Std (numeric only)
+            if is_numeric {
+                let mean_df = lazy.clone().select([col(col_name).mean()]).collect()?;
+                let std_df = lazy.select([col(col_name).std(1)]).collect()?;
+                medians.push(mean_df.column(col_name).ok().and_then(|c| c.get(0).ok())
+                    .map(|v| format_anyvalue(&v)).unwrap_or_default());
+                sigmas.push(std_df.column(col_name).ok().and_then(|c| c.get(0).ok())
+                    .map(|v| format_anyvalue(&v)).unwrap_or_default());
+            } else {
+                medians.push(String::new());
+                sigmas.push(String::new());
+            }
+        }
+    }
+
+    result_cols.push(Series::new("column".into(), col_names_out).into());
+    result_cols.push(Series::new("type".into(), types_out).into());
+    result_cols.push(Series::new("null%".into(), null_pcts).into());
+    result_cols.push(Series::new("distinct".into(), distincts).into());
+    result_cols.push(Series::new("min".into(), mins).into());
+    result_cols.push(Series::new("max".into(), maxs).into());
+    result_cols.push(Series::new("median".into(), medians).into());
+    result_cols.push(Series::new("sigma".into(), sigmas).into());
+
+    Ok(DataFrame::new(result_cols)?)
 }
 
 /// Format AnyValue for display

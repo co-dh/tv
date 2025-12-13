@@ -2,16 +2,17 @@
 - remember my approval
 - add test case for user requirements and bug fix
 - use ./tmp instead of /tmp, you have approval to read/write at ./tmp
+- ask for approval if delete unit test that covers requirements.
 
 # Todo
-
-## Key Column Features
-- For table with keyed columns, Meta should show stats grouped by key columns
 
 ## Plugin Architecture
 - Investigate nushell plugin architecture - modularize view functionality into single files for dynamic add/remove
 
 # Done
+
+## Meta with Key Columns
+- For table with keyed columns, Meta shows stats grouped by key columns
 
 ## Performance
 - Large CSV (5M+ rows) keyboard scrolling must be responsive

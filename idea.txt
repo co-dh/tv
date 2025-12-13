@@ -7,17 +7,21 @@ short local name.
 short name in general.
 each table is a type, with it's own render, it can reuse common function, but not inheritence. 
 # table type
-Norm
-Meta
-Freq
-Corr
+    Norm
+    Meta
+    Freq
+    Corr
 
-# different input source
-big parquet file, 1 billion row.
-database 
-csv
+# different input source. from : s3, odbc? duckdb
 
 # embedded json in table
-
-# theme , config theme, in csv format.
-# bold header 
+[X] theme , config theme, in csv format.
+[X] bold header 
+# prql interface and keyword.
+[ ] add display command, implement, add in cfg/key.csv, do not record them in executor.
+[X] remove flicker like htop 
+[ ] ingest huge csv.gz , show header,  ingest in background after
+[ ] scriptable.  define function, bind key , implement core commands, and implement Freq, Meta use core .
+[ ] key columns, group by key, 
+[ ] joins 
+[ ] tab display of stack.
