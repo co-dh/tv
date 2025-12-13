@@ -25,7 +25,7 @@ impl Command for Load {
         let is_gz = fname.ends_with(".gz");
 
         if is_gz {
-            let df = self.load_csv_gz(path)?;
+            let df = convert_epoch_cols(self.load_csv_gz(path)?);
             if df.height() == 0 { return Err(anyhow!("File is empty")); }
             app.stack = crate::state::StateStack::init(ViewState::new_gz(
                 app.next_id(), self.file_path.clone(), df,
@@ -33,8 +33,8 @@ impl Command for Load {
             ));
         } else {
             let df = match path.extension().and_then(|s| s.to_str()) {
-                Some("csv") => self.load_csv(path)?,
-                Some("parquet") => self.load_parquet(path)?,
+                Some("csv") => convert_epoch_cols(self.load_csv(path)?),
+                Some("parquet") => self.load_parquet(path)?,  // parquet keeps types
                 Some(ext) => return Err(anyhow!("Unsupported file format: {}", ext)),
                 None => return Err(anyhow!("Could not determine file type")),
             };
@@ -113,6 +113,57 @@ fn detect_sep(line: &str) -> u8 {
                 (b',', line.matches(',').count()),
                 (b';', line.matches(';').count())];
     seps.into_iter().max_by_key(|&(_, n)| n).map(|(c, _)| c).unwrap_or(b',')
+}
+
+/// Check if column name looks like a datetime field
+fn is_datetime_name(name: &str) -> bool {
+    let n = name.to_lowercase();
+    n.contains("time") || n.contains("date") || n.contains("created") || n.contains("updated")
+        || n.contains("_at") || n.contains("_ts") || n == "ts" || n == "dt"
+}
+
+/// Detect epoch unit from integer value: sec, ms, us, ns
+fn epoch_unit(v: i64) -> Option<TimeUnit> {
+    let abs = v.abs();
+    if abs > 1_000_000_000_000_000_000 && abs < 3_000_000_000_000_000_000 { Some(TimeUnit::Nanoseconds) }
+    else if abs > 1_000_000_000_000_000 && abs < 3_000_000_000_000_000 { Some(TimeUnit::Microseconds) }
+    else if abs > 1_000_000_000_000 && abs < 3_000_000_000_000 { Some(TimeUnit::Milliseconds) }
+    else if abs > 1_000_000_000 && abs < 3_000_000_000 { Some(TimeUnit::Milliseconds) }  // treat sec as ms*1000
+    else { None }
+}
+
+/// Convert integer columns with datetime-like names to datetime
+fn convert_epoch_cols(df: DataFrame) -> DataFrame {
+    let mut cols: Vec<Column> = Vec::with_capacity(df.width());
+    for c in df.get_columns() {
+        let name = c.name().as_str();
+        if !is_datetime_name(name) || !c.dtype().is_integer() {
+            cols.push(c.clone());
+            continue;
+        }
+        // Cast to i64 and sample first non-null value
+        let s = c.as_materialized_series();
+        let i64_s = match s.cast(&DataType::Int64) {
+            Ok(s) => s,
+            Err(_) => { cols.push(c.clone()); continue; }
+        };
+        let i64_ca = match i64_s.i64() {
+            Ok(ca) => ca,
+            Err(_) => { cols.push(c.clone()); continue; }
+        };
+        let sample = i64_ca.into_iter().flatten().next();
+        let Some(v) = sample else { cols.push(c.clone()); continue; };
+        let Some(unit) = epoch_unit(v) else { cols.push(c.clone()); continue; };
+
+        // Convert: if sec range, multiply by 1000 to get ms
+        let multiplier = if v.abs() < 10_000_000_000 { 1000i64 } else { 1 };
+        let scaled = i64_ca.clone() * multiplier;
+        match scaled.into_series().cast(&DataType::Datetime(unit, None)) {
+            Ok(dt) => cols.push(dt.into_column()),
+            Err(_) => cols.push(c.clone()),
+        }
+    }
+    DataFrame::new(cols).unwrap_or(df)
 }
 
 /// Save file command (Parquet) - supports streaming from gz source

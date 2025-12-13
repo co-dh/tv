@@ -703,3 +703,38 @@ fn test_gz_comma_separated() {
     assert!(output.contains("(2 rows)"), "Comma-separated gz should have 2 rows");
     assert!(output.contains("┆ b"), "Should detect comma separator");
 }
+
+// Epoch timestamp conversion tests
+
+fn setup_epoch_csv(id: usize, col_name: &str, epoch_val: i64) -> String {
+    let path = format!("/tmp/tv_epoch_test_{}.csv", id);
+    fs::write(&path, format!("id,{},value\n1,{},100\n2,{},200\n", col_name, epoch_val, epoch_val + 86400000)).unwrap();
+    path
+}
+
+#[test]
+fn test_epoch_ms_conversion() {
+    let id = unique_id();
+    let csv = setup_epoch_csv(id, "timestamp", 1702483200000);  // ms
+    let output = run_script(&format!("from {}\n", csv), id);
+    assert!(output.contains("datetime[ms]"), "Should convert ms epoch to datetime");
+    assert!(output.contains("2023-12-13"), "Should show correct date");
+}
+
+#[test]
+fn test_epoch_sec_conversion() {
+    let id = unique_id();
+    let csv = setup_epoch_csv(id, "created_at", 1702483200);  // sec
+    let output = run_script(&format!("from {}\n", csv), id);
+    assert!(output.contains("datetime"), "Should convert sec epoch to datetime");
+    assert!(output.contains("2023-12-13"), "Should show correct date");
+}
+
+#[test]
+fn test_epoch_us_conversion() {
+    let id = unique_id();
+    let csv = setup_epoch_csv(id, "event_time", 1702483200000000);  // us
+    let output = run_script(&format!("from {}\n", csv), id);
+    assert!(output.contains("datetime[μs]"), "Should convert us epoch to datetime");
+    assert!(output.contains("2023-12-13"), "Should show correct date");
+}
