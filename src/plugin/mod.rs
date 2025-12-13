@@ -28,59 +28,39 @@ pub trait Plugin: Send + Sync {
 
     /// Parse a command string into a Command (for command mode)
     fn parse(&self, cmd: &str, arg: &str) -> Option<Box<dyn Command>>;
-
-    /// List of commands this plugin provides (name, description)
-    fn commands(&self) -> Vec<(&str, &str)> { vec![] }
 }
 
 /// Plugin registry - manages enabled plugins
 pub struct Registry {
     plugins: Vec<Box<dyn Plugin>>,
-    enabled: HashMap<String, bool>,
 }
 
 impl Registry {
     /// Create registry and load enabled plugins from config
     pub fn new(cfg_path: &Path) -> Self {
-        let mut enabled = HashMap::new();
-
-        // Load cfg/plugins.csv if exists
+        let mut enabled: HashMap<String, bool> = HashMap::new();
         if let Ok(content) = fs::read_to_string(cfg_path) {
-            for line in content.lines().skip(1) {  // skip header
+            for line in content.lines().skip(1) {
                 let parts: Vec<&str> = line.split(',').collect();
                 if parts.len() >= 2 {
-                    let name = parts[0].trim();
-                    let on = parts[1].trim() == "true" || parts[1].trim() == "1";
-                    enabled.insert(name.to_string(), on);
+                    enabled.insert(parts[0].trim().into(), parts[1].trim() == "true" || parts[1].trim() == "1");
                 }
             }
         }
-
-        // Default all to enabled if not in config
         let mut plugins: Vec<Box<dyn Plugin>> = vec![
-            Box::new(meta::MetaPlugin),
-            Box::new(freq::FreqPlugin),
-            Box::new(folder::FolderPlugin),
-            Box::new(system::SystemPlugin),
+            Box::new(meta::MetaPlugin), Box::new(freq::FreqPlugin),
+            Box::new(folder::FolderPlugin), Box::new(system::SystemPlugin),
         ];
-
-        // Filter to only enabled plugins
         plugins.retain(|p| *enabled.get(p.name()).unwrap_or(&true));
-
-        Self { plugins, enabled }
+        Self { plugins }
     }
 
-    /// Create registry with all plugins enabled (no config)
+    /// Create registry with all plugins enabled
     pub fn all() -> Self {
-        Self {
-            plugins: vec![
-                Box::new(meta::MetaPlugin),
-                Box::new(freq::FreqPlugin),
-                Box::new(folder::FolderPlugin),
-                Box::new(system::SystemPlugin),
-            ],
-            enabled: HashMap::new(),
-        }
+        Self { plugins: vec![
+            Box::new(meta::MetaPlugin), Box::new(freq::FreqPlugin),
+            Box::new(folder::FolderPlugin), Box::new(system::SystemPlugin),
+        ]}
     }
 
     /// Find plugin that matches view name
@@ -100,22 +80,7 @@ impl Registry {
 
     /// Parse command string
     pub fn parse(&self, cmd: &str, arg: &str) -> Option<Box<dyn Command>> {
-        for plugin in &self.plugins {
-            if let Some(c) = plugin.parse(cmd, arg) {
-                return Some(c);
-            }
-        }
-        None
-    }
-
-    /// List all commands from all plugins
-    pub fn all_commands(&self) -> Vec<(&str, &str)> {
-        self.plugins.iter().flat_map(|p| p.commands()).collect()
-    }
-
-    /// Check if plugin is enabled
-    pub fn is_enabled(&self, name: &str) -> bool {
-        *self.enabled.get(name).unwrap_or(&true)
+        self.plugins.iter().find_map(|p| p.parse(cmd, arg))
     }
 }
 

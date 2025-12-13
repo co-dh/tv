@@ -124,28 +124,13 @@ impl From {
             if reader.read_line(&mut line)? == 0 {
                 // File fully read, no background needed
                 let _ = child.wait();
-                let cursor = std::io::Cursor::new(buf);
-                let df = CsvReadOptions::default()
-                    .with_has_header(true)
-                    .with_infer_schema_length(Some(500))
-                    .map_parse_options(|o| o.with_separator(sep))
-                    .into_reader_with_file_handle(cursor)
-                    .finish()
-                    .map_err(|e| anyhow!("Failed to parse: {}", e))?;
-                return Ok((df, None));
+                return Ok((parse_csv_buf(buf, sep, 500)?, None));
             }
             buf.extend_from_slice(line.as_bytes());
         }
 
         // Parse preview
-        let cursor = std::io::Cursor::new(buf);
-        let df = CsvReadOptions::default()
-            .with_has_header(true)
-            .with_infer_schema_length(Some(500))
-            .map_parse_options(|o| o.with_separator(sep))
-            .into_reader_with_file_handle(cursor)
-            .finish()
-            .map_err(|e| anyhow!("Failed to parse: {}", e))?;
+        let df = parse_csv_buf(buf, sep, 500)?;
 
         // Get memory limit from config
         let mem_pct: u64 = load_config_value("gz_mem_pct")
@@ -195,15 +180,7 @@ fn bg_stream_csv(
         if lines == 0 { break; }  // no more data
 
         // Parse chunk
-        let cursor = std::io::Cursor::new(chunk_buf);
-        let df = CsvReadOptions::default()
-            .with_has_header(true)
-            .with_infer_schema_length(Some(100))
-            .map_parse_options(|o| o.with_separator(sep))
-            .into_reader_with_file_handle(cursor)
-            .finish();
-
-        if let Ok(df) = df {
+        if let Ok(df) = parse_csv_buf(chunk_buf, sep, 100) {
             let df = convert_epoch_cols(df);
             if tx.send(df).is_err() { break; }  // receiver dropped
         }
@@ -223,6 +200,17 @@ fn detect_sep(line: &str) -> u8 {
                 (b',', line.matches(',').count()),
                 (b';', line.matches(';').count())];
     seps.into_iter().max_by_key(|&(_, n)| n).map(|(c, _)| c).unwrap_or(b',')
+}
+
+/// Parse CSV buffer with separator (DRY helper)
+fn parse_csv_buf(buf: Vec<u8>, sep: u8, schema_len: usize) -> Result<DataFrame> {
+    CsvReadOptions::default()
+        .with_has_header(true)
+        .with_infer_schema_length(Some(schema_len))
+        .map_parse_options(|o| o.with_separator(sep))
+        .into_reader_with_file_handle(std::io::Cursor::new(buf))
+        .finish()
+        .map_err(|e| anyhow!("Failed to parse: {}", e))
 }
 
 /// Check if column name looks like a datetime field

@@ -53,11 +53,6 @@ impl Funcs {
         }
     }
 
-    /// Get function body by name
-    pub fn get(&self, name: &str) -> Option<&str> {
-        self.defs.get(name).map(|s| s.as_str())
-    }
-
     /// Expand function calls in command string (recursive)
     pub fn expand(&self, cmd: &str) -> String {
         let mut result = cmd.to_string();
@@ -82,11 +77,6 @@ impl Funcs {
         }
         result
     }
-
-    /// List all defined functions
-    pub fn list(&self) -> Vec<(&str, &str)> {
-        self.defs.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect()
-    }
 }
 
 impl Default for Funcs {
@@ -101,21 +91,14 @@ mod tests {
     fn test_parse_simple() {
         let mut f = Funcs::new();
         f.parse(": hello world ;");
-        assert_eq!(f.get("hello"), Some("world"));
+        assert_eq!(f.expand("hello"), "world");
     }
 
     #[test]
     fn test_parse_multi_word() {
         let mut f = Funcs::new();
         f.parse(": sel_null sel_rows `null%` == '100.0' ;");
-        assert_eq!(f.get("sel_null"), Some("sel_rows `null%` == '100.0'"));
-    }
-
-    #[test]
-    fn test_expand() {
-        let mut f = Funcs::new();
-        f.parse(": greet hello world ;");
-        assert_eq!(f.expand("greet"), "hello world");
+        assert_eq!(f.expand("sel_null"), "sel_rows `null%` == '100.0'");
     }
 
     #[test]

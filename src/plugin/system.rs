@@ -23,25 +23,13 @@ impl Plugin for SystemPlugin {
 
     fn parse(&self, cmd: &str, arg: &str) -> Option<Box<dyn Command>> {
         match cmd {
-            "ps" => Some(Box::new(SysCmd::Ps)),
-            "df" => Some(Box::new(SysCmd::Df)),
-            "mounts" => Some(Box::new(SysCmd::Mounts)),
-            "tcp" => Some(Box::new(SysCmd::Tcp)),
-            "udp" => Some(Box::new(SysCmd::Udp)),
-            "lsblk" => Some(Box::new(SysCmd::Lsblk)),
-            "who" => Some(Box::new(SysCmd::Who)),
-            "env" => Some(Box::new(SysCmd::Env)),
+            "ps" => Some(Box::new(SysCmd::Ps)), "df" => Some(Box::new(SysCmd::Df)),
+            "mounts" => Some(Box::new(SysCmd::Mounts)), "tcp" => Some(Box::new(SysCmd::Tcp)),
+            "udp" => Some(Box::new(SysCmd::Udp)), "lsblk" => Some(Box::new(SysCmd::Lsblk)),
+            "who" => Some(Box::new(SysCmd::Who)), "env" => Some(Box::new(SysCmd::Env)),
             "lsof" => Some(Box::new(Lsof { pid: arg.parse().ok() })),
             _ => None,
         }
-    }
-
-    fn commands(&self) -> Vec<(&str, &str)> {
-        vec![
-            ("ps", "Process list"), ("df", "Disk usage"), ("mounts", "Mount points"),
-            ("tcp", "TCP connections"), ("udp", "UDP connections"), ("lsblk", "Block devices"),
-            ("who", "Logged in users"), ("lsof", "Open files"), ("env", "Environment variables"),
-        ]
     }
 }
 

@@ -1,6 +1,6 @@
 {
-  "total_length": 29821.0,
-  "total_bugs": 46.425844618136004,
+  "total_length": 29184.0,
+  "total_bugs": 45.33765637305328,
   "files": [
     {
       "file": "./src/app.rs",
@@ -16,9 +16,9 @@
     },
     {
       "file": "./src/command/io.rs",
-      "length": 3890.0,
-      "bugs": 6.0228470223756245,
-      "volume": 33496.8864615256
+      "length": 3833.0,
+      "bugs": 5.878253467994501,
+      "volume": 33034.271630157236
     },
     {
       "file": "./src/command/mod.rs",
@@ -46,9 +46,9 @@
     },
     {
       "file": "./src/funcs.rs",
-      "length": 510.0,
-      "bugs": 0.803759251098309,
-      "volume": 3350.6263602487834
+      "length": 413.0,
+      "bugs": 0.6813777957015767,
+      "volume": 2647.078456624871
     },
     {
       "file": "./src/keymap.rs",
@@ -58,9 +58,9 @@
     },
     {
       "file": "./src/main.rs",
-      "length": 5675.0,
-      "bugs": 8.54142222504574,
-      "volume": 51233.3665305341
+      "length": 5492.0,
+      "bugs": 8.131258324948778,
+      "volume": 49716.70373501641
     },
     {
       "file": "./src/os.rs",
@@ -76,33 +76,33 @@
     },
     {
       "file": "./src/plugin/folder.rs",
-      "length": 528.0,
-      "bugs": 0.7886590418902897,
-      "volume": 3436.115570024912
+      "length": 415.0,
+      "bugs": 0.585636471995594,
+      "volume": 2623.6001593782553
     },
     {
       "file": "./src/plugin/freq.rs",
-      "length": 906.0,
-      "bugs": 1.2889944379487366,
-      "volume": 6311.000561903851
+      "length": 883.0,
+      "bugs": 1.2624470420674125,
+      "volume": 6130.240308214548
     },
     {
       "file": "./src/plugin/meta.rs",
-      "length": 2648.0,
-      "bugs": 4.251431347996036,
-      "volume": 20372.353463458214
+      "length": 2626.0,
+      "bugs": 4.238765719306653,
+      "volume": 20166.314741301303
     },
     {
       "file": "./src/plugin/mod.rs",
-      "length": 512.0,
-      "bugs": 0.7887541680960708,
-      "volume": 3272.8665204627255
+      "length": 415.0,
+      "bugs": 0.64516976493831,
+      "volume": 2584.9597565557906
     },
     {
       "file": "./src/plugin/system.rs",
-      "length": 568.0,
-      "bugs": 0.8585469430760918,
-      "volume": 3765.474560205218
+      "length": 523.0,
+      "bugs": 0.8333176054913469,
+      "volume": 3378.2827365473063
     },
     {
       "file": "./src/prql.rs",

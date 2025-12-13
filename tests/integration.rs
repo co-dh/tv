@@ -482,7 +482,7 @@ fn test_pipe_chain() {
     assert!(output.contains("(3 rows)"), "Pipe chain should work");
 }
 
-// === ls/lr tests (from test_ls.sh) ===
+// === ls tests (from test_ls.sh) ===
 
 #[test]
 fn test_ls_shows_directory() {
@@ -513,15 +513,15 @@ fn test_ls_dir_column_x_for_dirs() {
 }
 
 #[test]
-fn test_lr_recursive() {
+fn test_ls_recursive() {
     let id = unique_id();
     let dir = format!("/tmp/tv_test_dir3_{}", id);
     fs::create_dir_all(format!("{}/subdir", dir)).unwrap();
     fs::write(format!("{}/subdir/nested.txt", dir), "test").unwrap();
 
-    let output = run_script(&format!("lr {}\n", dir), id);
-    assert!(output.contains("subdir"), "lr should show subdir");
-    assert!(output.contains("nested.txt"), "lr should show nested file");
+    let output = run_script(&format!("ls -r {}\n", dir), id);
+    assert!(output.contains("subdir"), "ls -r should show subdir");
+    assert!(output.contains("nested.txt"), "ls -r should show nested file");
 }
 
 #[test]

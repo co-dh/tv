@@ -19,7 +19,7 @@ use command::transform::{Agg, DelCol, Filter, RenameCol, Select, Sort, Take, Xke
 use command::view::{Correlation, Dup, Pop, Swap};
 use plugin::freq::Frequency;
 use plugin::meta::Metadata;
-use plugin::folder::{Ls, Lr};
+use plugin::folder::Ls;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use crossterm::{cursor, execute, style::Print, terminal};
 use render::Renderer;
@@ -105,59 +105,16 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-/// Run commands from inline string (-c option)
-fn run_commands(commands: &str) -> Result<()> {
+/// Run batch commands (used by both -c and --script)
+fn run_batch<I: Iterator<Item = String>>(lines: I) -> Result<()> {
     let mut app = AppContext::new();
     app.viewport(50, 120);
-
-    // Expand functions, then split on |
-    let expanded = app.funcs.expand(commands);
-    for cmd_str in expanded.split('|') {
-        let cmd_str = cmd_str.trim();
-        if cmd_str.is_empty() || cmd_str == "quit" {
-            continue;
-        }
-
-        if let Some(cmd) = parse(cmd_str, &app) {
-            if let Err(e) = CommandExecutor::exec(&mut app, cmd) {
-                eprintln!("Error executing '{}': {}", cmd_str, e);
-            }
-        } else {
-            eprintln!("Unknown command: {}", cmd_str);
-        }
-    }
-
-    wait_bg_save(&mut app);  // wait for background save
-    print(&app);
-    Ok(())
-}
-
-/// Run commands from a script file and print result
-fn run_script(script_path: &str) -> Result<()> {
-    let mut app = AppContext::new();
-
-    // Set a reasonable viewport for printing
-    app.viewport(50, 120);
-
-    'outer: for line in fs::read_to_string(script_path)?.lines() {
+    'outer: for line in lines {
         let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-
-        // Expand functions, then split on |
-        let expanded = app.funcs.expand(line);
-        for cmd_str in expanded.split('|') {
-            let cmd_str = cmd_str.trim();
-            if cmd_str.is_empty() {
-                continue;
-            }
-
-            if cmd_str == "quit" {
-                break 'outer;
-            }
-
-            // Parse and execute command
+        if line.is_empty() || line.starts_with('#') { continue; }
+        for cmd_str in app.funcs.expand(line).split('|').map(str::trim) {
+            if cmd_str.is_empty() { continue; }
+            if cmd_str == "quit" { break 'outer; }
             if let Some(cmd) = parse(cmd_str, &app) {
                 if let Err(e) = CommandExecutor::exec(&mut app, cmd) {
                     eprintln!("Error executing '{}': {}", cmd_str, e);
@@ -167,10 +124,19 @@ fn run_script(script_path: &str) -> Result<()> {
             }
         }
     }
-
-    wait_bg_save(&mut app);  // wait for background save
+    wait_bg_save(&mut app);
     print(&app);
     Ok(())
+}
+
+/// Run commands from inline string (-c option)
+fn run_commands(commands: &str) -> Result<()> {
+    run_batch(std::iter::once(commands.to_string()))
+}
+
+/// Run commands from a script file
+fn run_script(script_path: &str) -> Result<()> {
+    run_batch(fs::read_to_string(script_path)?.lines().map(String::from))
 }
 
 /// Wait for background save to complete (for script mode)
@@ -242,23 +208,33 @@ fn parse(line: &str, app: &AppContext) -> Option<Box<dyn command::Command>> {
 
 /// Execute a command string with function expansion
 fn exec_str(cmd_str: &str, app: &mut AppContext) -> bool {
-    // Expand functions from cfg/funcs.4th
-    let expanded = app.funcs.expand(cmd_str);
-    // Execute pipe-separated commands
-    for cmd_part in expanded.split('|') {
-        let cmd_part = cmd_part.trim();
+    for cmd_part in app.funcs.expand(cmd_str).split('|').map(str::trim) {
         if cmd_part.is_empty() { continue; }
         if let Some(cmd) = parse(cmd_part, app) {
-            if let Err(e) = CommandExecutor::exec(app, cmd) {
-                app.err(e);
-                return false;
-            }
-        } else {
-            app.msg(format!("Unknown command: {}", cmd_part));
-            return false;
-        }
+            if let Err(e) = CommandExecutor::exec(app, cmd) { app.err(e); return false; }
+        } else { app.msg(format!("Unknown command: {}", cmd_part)); return false; }
     }
     true
+}
+
+/// Execute command on current column (DRY helper)
+fn on_col<F>(app: &mut AppContext, f: F) where F: FnOnce(String) -> Box<dyn command::Command> {
+    if let Some(col) = app.view().and_then(|v| v.state.cur_col(&v.dataframe)) {
+        if let Err(e) = CommandExecutor::exec(app, f(col)) { app.err(e); }
+    }
+}
+
+/// Find next/prev search match (DRY helper)
+fn find_match(app: &mut AppContext, forward: bool) {
+    if let Some(expr) = app.search.value.clone() {
+        if let Some(view) = app.view_mut() {
+            let m = find(&view.dataframe, &expr);
+            let cur = view.state.cr;
+            let pos = if forward { m.iter().find(|&&i| i > cur) } else { m.iter().rev().find(|&&i| i < cur) };
+            if let Some(&p) = pos { view.state.cr = p; view.state.visible(); }
+            else { app.msg("No more matches".into()); }
+        }
+    } else { app.msg("No search active".into()); }
 }
 
 /// Handle keyboard input
@@ -416,40 +392,8 @@ fn on_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                 app.no_table();
             }
         }
-        KeyCode::Char('n') => {
-            // n: Find next match
-            if let Some(expr) = app.search.value.clone() {
-                if let Some(view) = app.view_mut() {
-                    let matches = find(&view.dataframe, &expr);
-                    let cur = view.state.cr;
-                    if let Some(&pos) = matches.iter().find(|&&i| i > cur) {
-                        view.state.cr = pos;
-                        view.state.visible();
-                    } else {
-                        app.msg("No more matches".to_string());
-                    }
-                }
-            } else {
-                app.msg("No search active".to_string());
-            }
-        }
-        KeyCode::Char('N') => {
-            // N: Find previous match
-            if let Some(expr) = app.search.value.clone() {
-                if let Some(view) = app.view_mut() {
-                    let matches = find(&view.dataframe, &expr);
-                    let cur = view.state.cr;
-                    if let Some(&pos) = matches.iter().rev().find(|&&i| i < cur) {
-                        view.state.cr = pos;
-                        view.state.visible();
-                    } else {
-                        app.msg("No more matches".to_string());
-                    }
-                }
-            } else {
-                app.msg("No search active".to_string());
-            }
-        }
+        KeyCode::Char('n') => find_match(app, true),   // n: Find next
+        KeyCode::Char('N') => find_match(app, false),  // N: Find prev
         KeyCode::Char('*') => {
             // *: Search for current cell value (creates SQL expression)
             if let Some(view) = app.view() {
@@ -478,44 +422,14 @@ fn on_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                 }
             }
         }
-        KeyCode::Char('F') => {
-            // F: Frequency table for current column
-            if let Some(view) = app.view() {
-                if let Some(col_name) = view.state.cur_col(&view.dataframe) {
-                    if let Err(e) = CommandExecutor::exec(app, Box::new(Frequency { col_name })) {
-                        app.err(e);
-                    }
-                }
-            }
-        }
-        KeyCode::Char('M') => {
-            // M: Metadata view
+        KeyCode::Char('F') => on_col(app, |c| Box::new(Frequency { col_name: c })),  // F: Frequency
+        KeyCode::Char('M') => {  // M: Metadata view
             if app.has_view() {
-                if let Err(e) = CommandExecutor::exec(app, Box::new(Metadata)) {
-                    app.err(e);
-                }
+                if let Err(e) = CommandExecutor::exec(app, Box::new(Metadata)) { app.err(e); }
             }
         }
-        KeyCode::Char('[') => {
-            // [: Sort ascending by current column
-            if let Some(view) = app.view() {
-                if let Some(col_name) = view.state.cur_col(&view.dataframe) {
-                    if let Err(e) = CommandExecutor::exec(app, Box::new(Sort { col_name, descending: false })) {
-                        app.err(e);
-                    }
-                }
-            }
-        }
-        KeyCode::Char(']') => {
-            // ]: Sort descending by current column
-            if let Some(view) = app.view() {
-                if let Some(col_name) = view.state.cur_col(&view.dataframe) {
-                    if let Err(e) = CommandExecutor::exec(app, Box::new(Sort { col_name, descending: true })) {
-                        app.err(e);
-                    }
-                }
-            }
-        }
+        KeyCode::Char('[') => on_col(app, |c| Box::new(Sort { col_name: c, descending: false })),  // [: Sort asc
+        KeyCode::Char(']') => on_col(app, |c| Box::new(Sort { col_name: c, descending: true })),   // ]: Sort desc
         KeyCode::Char('^') => {
             // ^: Rename current column
             if let Some(view) = app.view() {
@@ -597,17 +511,10 @@ fn on_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                 }
             }
         }
-        KeyCode::Char('b') => {
-            // b: Aggregate by current column
-            if let Some(view) = app.view() {
-                if let Some(col) = view.state.cur_col(&view.dataframe) {
-                    if let Ok(Some(func)) = picker::fzf(vec![
-                        "count".into(), "sum".into(), "mean".into(), "min".into(), "max".into(), "std".into(),
-                    ], "Aggregate: ") {
-                        if let Err(e) = CommandExecutor::exec(app, Box::new(Agg { col, func })) {
-                            app.err(e);
-                        }
-                    }
+        KeyCode::Char('b') => {  // b: Aggregate by current column
+            if let Some(col) = app.view().and_then(|v| v.state.cur_col(&v.dataframe)) {
+                if let Ok(Some(func)) = picker::fzf(vec!["count".into(), "sum".into(), "mean".into(), "min".into(), "max".into(), "std".into()], "Aggregate: ") {
+                    if let Err(e) = CommandExecutor::exec(app, Box::new(Agg { col, func })) { app.err(e); }
                 }
             }
         }
@@ -623,19 +530,13 @@ fn on_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                 app.err(e);
             }
         }
-        KeyCode::Char('l') => {
-            // l: Directory listing
+        KeyCode::Char('l') => {  // l: Directory listing
             let dir = std::env::current_dir().unwrap_or_default();
-            if let Err(e) = CommandExecutor::exec(app, Box::new(Ls { dir })) {
-                app.err(e);
-            }
+            if let Err(e) = CommandExecutor::exec(app, Box::new(Ls { dir, recursive: false })) { app.err(e); }
         }
-        KeyCode::Char('r') => {
-            // r: Recursive directory listing
+        KeyCode::Char('r') => {  // r: Recursive directory listing (ls -r)
             let dir = std::env::current_dir().unwrap_or_default();
-            if let Err(e) = CommandExecutor::exec(app, Box::new(Lr { dir })) {
-                app.err(e);
-            }
+            if let Err(e) = CommandExecutor::exec(app, Box::new(Ls { dir, recursive: true })) { app.err(e); }
         }
         KeyCode::Char('C') => {
             // C: Correlation matrix (uses selected columns if >= 2, otherwise all numeric)

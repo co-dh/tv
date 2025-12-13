@@ -27,14 +27,7 @@ impl Plugin for MetaPlugin {
     }
 
     fn parse(&self, cmd: &str, _arg: &str) -> Option<Box<dyn Command>> {
-        match cmd {
-            "meta" | "metadata" => Some(Box::new(Metadata)),
-            _ => None,
-        }
-    }
-
-    fn commands(&self) -> Vec<(&str, &str)> {
-        vec![("meta", "Show metadata/data profile")]
+        match cmd { "meta" | "metadata" => Some(Box::new(Metadata)), _ => None }
     }
 }
 

@@ -49,16 +49,9 @@ impl Plugin for FreqPlugin {
 
     fn parse(&self, cmd: &str, arg: &str) -> Option<Box<dyn Command>> {
         match cmd {
-            "freq" | "frequency" => {
-                if arg.is_empty() { None }
-                else { Some(Box::new(Frequency { col_name: arg.to_string() })) }
-            }
+            "freq" | "frequency" if !arg.is_empty() => Some(Box::new(Frequency { col_name: arg.to_string() })),
             _ => None,
         }
-    }
-
-    fn commands(&self) -> Vec<(&str, &str)> {
-        vec![("freq", "Show value frequency for column")]
     }
 }
 
