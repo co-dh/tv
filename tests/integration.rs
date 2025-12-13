@@ -749,3 +749,24 @@ fn test_taq_time_conversion() {
     assert!(output.contains("time"), "Should convert TAQ format to time type");
     assert!(output.contains("03:59:00"), "Should show correct time");
 }
+
+#[test]
+fn test_gz_taq_save_parquet() {
+    use std::process::Command;
+    let id = unique_id();
+    // Create CSV with TAQ time format
+    let csv_path = format!("/tmp/tv_taq_gz_{}.csv", id);
+    let gz_path = format!("/tmp/tv_taq_gz_{}.csv.gz", id);
+    let out_path = format!("/tmp/tv_taq_out_{}.parquet", id);
+    // Streaming save creates {prefix}_001.parquet
+    let chunk_path = format!("/tmp/tv_taq_out_{}_001.parquet", id);
+    fs::write(&csv_path, "Time|Value\n035900085993578|100\n143000000000000|200\n120000000000000|300\n").unwrap();
+    // Gzip the file
+    Command::new("gzip").arg("-f").arg(&csv_path).output().unwrap();
+    // Load gz and save to parquet (streaming creates chunked files)
+    run_script(&format!("from {} | save {}\n", gz_path, out_path), id);
+    // Load parquet chunk and verify time conversion
+    let output = run_script(&format!("from {}\n", chunk_path), id);
+    assert!(output.contains("time"), "Parquet should have time type");
+    assert!(output.contains("03:59:00"), "Should preserve TAQ time in parquet");
+}

@@ -6,7 +6,6 @@ use polars::prelude::*;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::process::{Command as Cmd, Stdio};
-use std::sync::Arc;
 
 const MAX_PREVIEW_ROWS: usize = 1000;  // preview row limit
 
@@ -249,7 +248,8 @@ impl Save {
     }
 
     /// Stream entire gz file to parquet in chunks
-    fn stream_gz_to_parquet(&self, gz_path: &str, schema: &Schema, out_path: &Path) -> Result<()> {
+    /// Note: schema param unused - we infer from CSV and convert epoch cols
+    fn stream_gz_to_parquet(&self, gz_path: &str, _schema: &Schema, out_path: &Path) -> Result<()> {
         let mut child = Cmd::new("zcat")
             .arg(gz_path)
             .stdout(Stdio::piped())
@@ -287,14 +287,18 @@ impl Save {
 
             if lines == 0 { break; }
 
+            // Parse CSV without schema (infer types), then convert epoch columns
             let cursor = std::io::Cursor::new(chunk_buf);
             let df = CsvReadOptions::default()
                 .with_has_header(true)
-                .with_schema(Some(Arc::new(schema.clone())))
+                .with_infer_schema_length(Some(500))
                 .map_parse_options(|o| o.with_separator(sep))
                 .into_reader_with_file_handle(cursor)
                 .finish()
                 .map_err(|e| anyhow!("Failed to parse chunk: {}", e))?;
+
+            // Apply same epoch/TAQ conversion as preview load
+            let df = convert_epoch_cols(df);
 
             let chunk_path = parent.join(format!("{}_{:03}.parquet", prefix, file_idx));
             ParquetWriter::new(std::fs::File::create(&chunk_path)?)
