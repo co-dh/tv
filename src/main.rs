@@ -373,9 +373,9 @@ fn on_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
             // /: Search with SQL WHERE expression
             let info = app.view().and_then(|v| {
                 let col_name = v.state.cur_col(&v.dataframe)?;
-                Some((hints(&v.dataframe, &col_name, v.state.cr), col_name))
+                Some((hints(&v.dataframe, &col_name, v.state.cr), col_name, v.name.starts_with("ls")))
             });
-            if let Some((hint_list, col_name)) = info {
+            if let Some((hint_list, col_name, is_folder)) = info {
                 let expr_opt = picker::fzf_edit(hint_list, "Search> ");
                 app.needs_redraw = true;
 
@@ -389,13 +389,26 @@ fn on_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                     app.search.col_name = None;
                     app.search.value = Some(expr.clone());
 
-                    if let Some(view) = app.view_mut() {
+                    let found = if let Some(view) = app.view_mut() {
                         if let Some(&pos) = matches.first() {
                             view.state.cr = pos;
-                            app.needs_center = true;  // defer scroll until after viewport update
-                            app.msg(format!("Found {} match(es)", matches.len()));
+                            app.needs_center = true;
+                            true
                         } else {
                             app.msg(format!("Not found: {}", expr));
+                            false
+                        }
+                    } else { false };
+
+                    // Folder view: auto-execute Enter after search
+                    if found && is_folder {
+                        let name = app.view().map(|v| v.name.clone());
+                        if let Some(name) = name {
+                            let plugins = std::mem::take(&mut app.plugins);
+                            if let Some(cmd) = plugins.handle(&name, "enter", app) {
+                                let _ = CommandExecutor::exec(app, cmd);
+                            }
+                            app.plugins = plugins;
                         }
                     }
                 }

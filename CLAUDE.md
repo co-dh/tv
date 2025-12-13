@@ -6,15 +6,18 @@
 
 # Todo
 
-## Folder View FZF Direct Action
-- In Folder view, fzf selection should directly execute Enter action
-- Currently: select in fzf, return to folder, then Enter again
-- Should: select in fzf, immediately open the file
+## Measure Halstead, DRY and Unify
+- Measure Halstead complexity metrics
+- DRY and unify code until you can't
 
 ## Plugin Architecture
 - Investigate nushell plugin architecture - modularize view functionality into single files for dynamic add/remove
 
 # Done
+
+## Folder View FZF Direct Action
+- In Folder view, fzf search selection auto-executes Enter action
+- No need to press Enter again after selecting file in fzf
 
 ## Tab Bar Visibility Fix
 - Clear empty rows loop was overwriting tab row
