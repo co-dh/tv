@@ -1,5 +1,6 @@
 pub mod executor;
 pub mod io;
+pub mod nav;
 pub mod transform;
 pub mod view;
 

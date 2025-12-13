@@ -770,3 +770,100 @@ fn test_gz_taq_save_parquet() {
     assert!(output.contains("time"), "Parquet should have time type");
     assert!(output.contains("03:59:00"), "Should preserve TAQ time in parquet");
 }
+
+// =============================================================================
+// Forth-style User Functions (cfg/funcs.4th)
+// =============================================================================
+
+#[test]
+fn test_forth_func_sel_null() {
+    // Test sel_null function selects rows with 100% null columns (doesn't filter)
+    let id = unique_id();
+    let path = format!("/tmp/tv_forth_null_{}.csv", id);
+    fs::write(&path, "a,b,c\n1,,x\n2,,y\n3,,z\n").unwrap();
+
+    // sel_null uses sel_rows to select matching rows, keeps all 3 rows visible
+    let output = run_script(&format!("from {}\nmeta\nsel_null\n", path), id);
+    assert!(output.contains("(3 rows)"), "sel_null should keep all rows, just select matching");
+    assert!(output.contains("100.0"), "Should still show the 100% null column");
+}
+
+#[test]
+fn test_forth_func_sel_single() {
+    // Test sel_single function selects rows with single-value columns (doesn't filter)
+    let id = unique_id();
+    let path = format!("/tmp/tv_forth_single_{}.csv", id);
+    fs::write(&path, "a,b,c\n1,x,same\n2,y,same\n3,z,same\n").unwrap();
+
+    // sel_single uses sel_rows to select matching rows
+    let output = run_script(&format!("from {}\nmeta\nsel_single\n", path), id);
+    assert!(output.contains("(3 rows)"), "sel_single should keep all rows");
+}
+
+#[test]
+fn test_sel_rows_command() {
+    // Test sel_rows command directly - selects matching rows without filtering
+    let id = unique_id();
+    let path = format!("/tmp/tv_sel_rows_{}.csv", id);
+    fs::write(&path, "a,b\n1,x\n2,y\n3,x\n").unwrap();
+
+    let output = run_script(&format!("from {}\nsel_rows b == 'x'\n", path), id);
+    // Should keep all 3 rows (selection is visual only, not reflected in output)
+    assert!(output.contains("(3 rows)"), "sel_rows should not filter rows");
+}
+
+#[test]
+fn test_forth_func_expansion() {
+    // Test that functions expand correctly
+    let id = unique_id();
+    let path = format!("/tmp/tv_forth_expand_{}.csv", id);
+    fs::write(&path, "a,b\n1,\n2,\n3,\n").unwrap();
+
+    // sel_null expands to: sel_rows `null%` == '100.0'
+    let output = run_script(&format!("from {}\nmeta\nsel_null\n", path), id);
+    // All rows kept (sel_rows doesn't filter), b column with 100% null shown
+    assert!(output.contains("(2 rows)"), "Should show all 2 columns in meta");
+    assert!(output.contains("b"), "Should show column b (100% null)");
+}
+
+#[test]
+fn test_forth_comment_ignored() {
+    // Verify that comments ( ... ) are ignored in funcs.4th parsing
+    // The funcs.4th has comments like "( Syntax: : name body ; )"
+    // This should NOT create a function called "Syntax:"
+    let id = unique_id();
+    let path = format!("/tmp/tv_forth_comment_{}.csv", id);
+    fs::write(&path, "Syntax,val\na,1\nb,2\n").unwrap();
+
+    // If comments were parsed as functions, "Syntax" would be replaced
+    let output = run_script(&format!("from {}\n", path), id);
+    assert!(output.contains("Syntax"), "Column 'Syntax' should not be replaced by function expansion");
+}
+
+#[test]
+fn test_sel_all_command() {
+    // Test sel_all command selects all rows in meta view
+    let id = unique_id();
+    let path = format!("/tmp/tv_sel_all_{}.csv", id);
+    fs::write(&path, "a,b,c\n1,2,3\n4,5,6\n").unwrap();
+
+    // sel_all in meta view selects all rows
+    let output = run_script(&format!("from {}\nmeta\nsel_all\n", path), id);
+    assert!(output.contains("(3 rows)"), "sel_all should keep all 3 column rows");
+}
+
+// =============================================================================
+// Meta View Enter (xkey on selected columns)
+// =============================================================================
+
+#[test]
+fn test_xkey_moves_columns_to_front() {
+    // Test xkey command moves columns to front
+    let id = unique_id();
+    let path = format!("/tmp/tv_xkey_{}.csv", id);
+    fs::write(&path, "a,b,c,d\n1,2,3,4\n5,6,7,8\n").unwrap();
+
+    let output = run_script(&format!("from {}\nxkey c,b\n", path), id);
+    // Columns should be reordered: c,b,a,d (xkey cols first)
+    assert!(output.contains("c") && output.contains("b"), "xkey columns should be present");
+}

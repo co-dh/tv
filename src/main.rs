@@ -1,5 +1,6 @@
 mod app;
 mod command;
+mod funcs;
 mod keymap;
 mod os;
 mod picker;
@@ -12,7 +13,8 @@ mod view;
 use anyhow::Result;
 use app::AppContext;
 use command::executor::CommandExecutor;
-use command::io::{Load, Save};
+use command::io::{From, Save};
+use command::nav::{Goto, GotoCol, ToggleInfo, Decimals, ToggleSel, ClearSel, SelAll, SelRows};
 use command::transform::{Agg, DelCol, Filter, RenameCol, Select, Sort, Take, Xkey};
 use command::view::{Correlation, Df, Dup, Env, Frequency, Lr, Ls, Lsblk, Lsof, Metadata, Mounts, Pop, Ps, Swap, Tcp, Udp, Who};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
@@ -58,7 +60,7 @@ fn main() -> Result<()> {
         // Load file from CLI argument
         let mut temp_app = AppContext::new();
         temp_app.raw_save = raw_save;
-        match CommandExecutor::exec(&mut temp_app, Box::new(Load { file_path: path.clone() })) {
+        match CommandExecutor::exec(&mut temp_app, Box::new(From { file_path: path.clone() })) {
             Ok(_) => temp_app,
             Err(e) => {
                 render::restore()?;
@@ -105,7 +107,9 @@ fn run_commands(commands: &str) -> Result<()> {
     let mut app = AppContext::new();
     app.viewport(50, 120);
 
-    for cmd_str in commands.split('|') {
+    // Expand functions, then split on |
+    let expanded = app.funcs.expand(commands);
+    for cmd_str in expanded.split('|') {
         let cmd_str = cmd_str.trim();
         if cmd_str.is_empty() || cmd_str == "quit" {
             continue;
@@ -137,8 +141,9 @@ fn run_script(script_path: &str) -> Result<()> {
             continue;
         }
 
-        // Support pipe-separated commands on a single line
-        for cmd_str in line.split('|') {
+        // Expand functions, then split on |
+        let expanded = app.funcs.expand(line);
+        for cmd_str in expanded.split('|') {
             let cmd_str = cmd_str.trim();
             if cmd_str.is_empty() {
                 continue;
@@ -181,7 +186,7 @@ fn parse(line: &str, _app: &AppContext) -> Option<Box<dyn command::Command>> {
     let arg = parts.get(1).map(|s| s.trim()).unwrap_or("");
 
     match parts[0].to_lowercase().as_str() {
-        "load" | "from" => Some(Box::new(Load { file_path: arg.to_string() })),
+        "load" | "from" => Some(Box::new(From { file_path: arg.to_string() })),
         "save" => Some(Box::new(Save { file_path: arg.to_string() })),
         "ls" => Some(Box::new(Ls { dir: std::path::PathBuf::from(if arg.is_empty() { "." } else { arg }) })),
         "lr" => Some(Box::new(Lr { dir: std::path::PathBuf::from(if arg.is_empty() { "." } else { arg }) })),
@@ -221,8 +226,38 @@ fn parse(line: &str, _app: &AppContext) -> Option<Box<dyn command::Command>> {
                 None
             }
         }
+        // Navigation commands (unified: goto +1/-1/0/max/page/-page, gotocol +1/-1/0/max)
+        "goto" => Some(Box::new(Goto { arg: arg.to_string() })),
+        "gotocol" => Some(Box::new(GotoCol { arg: arg.to_string() })),
+        "toggle_info" => Some(Box::new(ToggleInfo)),
+        "decimals" => arg.parse().ok().map(|d| Box::new(Decimals { delta: d }) as Box<dyn command::Command>),
+        "toggle_sel" => Some(Box::new(ToggleSel)),
+        "clear_sel" => Some(Box::new(ClearSel)),
+        "sel_all" => Some(Box::new(SelAll)),
+        "sel_rows" => Some(Box::new(SelRows { expr: arg.to_string() })),
         _ => None,
     }
+}
+
+/// Execute a command string with function expansion
+fn exec_str(cmd_str: &str, app: &mut AppContext) -> bool {
+    // Expand functions from cfg/funcs.4th
+    let expanded = app.funcs.expand(cmd_str);
+    // Execute pipe-separated commands
+    for cmd_part in expanded.split('|') {
+        let cmd_part = cmd_part.trim();
+        if cmd_part.is_empty() { continue; }
+        if let Some(cmd) = parse(cmd_part, app) {
+            if let Err(e) = CommandExecutor::exec(app, cmd) {
+                app.err(e);
+                return false;
+            }
+        } else {
+            app.msg(format!("Unknown command: {}", cmd_part));
+            return false;
+        }
+    }
+    true
 }
 
 /// Handle keyboard input
@@ -240,36 +275,25 @@ fn on_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
             // Ctrl+C to force quit
             return Ok(false);
         }
-        KeyCode::Up => app.nav_row(-1),
-        KeyCode::Down => app.nav_row(1),
-        KeyCode::Left => app.nav_col(-1),
-        KeyCode::Right => app.nav_col(1),
-        KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => app.nav_row(app.page()),
-        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => app.nav_row(-app.page()),
-        KeyCode::Char('g') => app.nav_row(isize::MIN),
-        KeyCode::Char('G') => app.nav_row(isize::MAX),
-        KeyCode::PageUp => app.nav_row(-app.page()),
-        KeyCode::PageDown => app.nav_row(app.page()),
-        KeyCode::Home => app.nav_row(isize::MIN),
-        KeyCode::End => app.nav_row(isize::MAX),
-        KeyCode::Char('I') => {
-            // I: Toggle info box
-            app.show_info = !app.show_info;
-        }
-        KeyCode::Char('.') => {
-            app.float_decimals = (app.float_decimals + 1).min(17);
-            if let Some(v) = app.view_mut() { v.state.col_widths.clear(); }
-            app.msg(format!("Float decimals: {}", app.float_decimals));
-        }
-        KeyCode::Char(',') => {
-            app.float_decimals = app.float_decimals.saturating_sub(1);
-            if let Some(v) = app.view_mut() { v.state.col_widths.clear(); }
-            app.msg(format!("Float decimals: {}", app.float_decimals));
-        }
+        KeyCode::Up => { let _ = CommandExecutor::exec(app, Box::new(Goto { arg: "-1".into() })); }
+        KeyCode::Down => { let _ = CommandExecutor::exec(app, Box::new(Goto { arg: "+1".into() })); }
+        KeyCode::Left => { let _ = CommandExecutor::exec(app, Box::new(GotoCol { arg: "-1".into() })); }
+        KeyCode::Right => { let _ = CommandExecutor::exec(app, Box::new(GotoCol { arg: "+1".into() })); }
+        KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => { let _ = CommandExecutor::exec(app, Box::new(Goto { arg: app.page().to_string() })); }
+        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => { let _ = CommandExecutor::exec(app, Box::new(Goto { arg: (-app.page()).to_string() })); }
+        KeyCode::Char('g') => { let _ = CommandExecutor::exec(app, Box::new(Goto { arg: "0".into() })); }
+        KeyCode::Char('G') => { let _ = CommandExecutor::exec(app, Box::new(Goto { arg: "max".into() })); }
+        KeyCode::PageUp => { let _ = CommandExecutor::exec(app, Box::new(Goto { arg: (-app.page()).to_string() })); }
+        KeyCode::PageDown => { let _ = CommandExecutor::exec(app, Box::new(Goto { arg: app.page().to_string() })); }
+        KeyCode::Home => { let _ = CommandExecutor::exec(app, Box::new(Goto { arg: "0".into() })); }
+        KeyCode::End => { let _ = CommandExecutor::exec(app, Box::new(Goto { arg: "max".into() })); }
+        KeyCode::Char('I') => { let _ = CommandExecutor::exec(app, Box::new(ToggleInfo)); }
+        KeyCode::Char('.') => { let _ = CommandExecutor::exec(app, Box::new(Decimals { delta: 1 })); }
+        KeyCode::Char(',') => { let _ = CommandExecutor::exec(app, Box::new(Decimals { delta: -1 })); }
         KeyCode::Char('L') => {
             // L: Load file
             if let Some(file_path) = prompt(app, "Load file: ")? {
-                if let Err(e) = CommandExecutor::exec(app, Box::new(Load { file_path })) {
+                if let Err(e) = CommandExecutor::exec(app, Box::new(From { file_path })) {
                     app.err(e);
                 }
             }
@@ -664,153 +688,18 @@ fn on_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                 app.msg(format!("Bookmark: row {}", row));
             }
         }
-        KeyCode::Char(' ') => {
-            // Space: Toggle selection (rows in Meta/Freq views, columns otherwise)
-            let msg: Option<String> = if let Some(view) = app.view_mut() {
-                let is_meta = view.name == "metadata";
-                let is_freq = view.name.starts_with("Freq:");
-
-                if is_meta || is_freq {
-                    let cr = view.state.cr;
-                    if view.selected_rows.contains(&cr) {
-                        view.selected_rows.remove(&cr);
-                        Some(format!("Deselected row ({} selected)", view.selected_rows.len()))
-                    } else {
-                        view.selected_rows.insert(cr);
-                        Some(format!("Selected row ({} selected)", view.selected_rows.len()))
-                    }
-                } else {
-                    let cc = view.state.cc;
-                    if view.selected_cols.contains(&cc) {
-                        view.selected_cols.remove(&cc);
-                        Some(format!("Deselected column ({} selected)", view.selected_cols.len()))
-                    } else {
-                        view.selected_cols.insert(cc);
-                        Some(format!("Selected column ({} selected)", view.selected_cols.len()))
-                    }
-                }
-            } else {
-                None
-            };
-            if let Some(m) = msg {
-                app.msg(m);
-            }
-        }
-        KeyCode::Esc => {
-            // Esc: Clear selection
-            if let Some(view) = app.view_mut() {
-                if !view.selected_cols.is_empty() || !view.selected_rows.is_empty() {
-                    view.selected_cols.clear();
-                    view.selected_rows.clear();
-                    
-                }
-            }
-        }
+        KeyCode::Char(' ') => { let _ = CommandExecutor::exec(app, Box::new(ToggleSel)); }
+        KeyCode::Esc => { let _ = CommandExecutor::exec(app, Box::new(ClearSel)); }
         KeyCode::Char('0') => {
-            // 0: In Meta view, select rows with 100% null; otherwise select all-null columns
-            // First pass: collect indices
-            let selection: Option<(bool, Vec<usize>)> = app.view().map(|view| {
-                let is_meta = view.name == "metadata";
-                if is_meta {
-                    let df = &view.dataframe;
-                    let null_rows: Vec<usize> = df.column("null%").ok().map(|null_col| {
-                        let series = null_col.as_materialized_series();
-                        (0..series.len())
-                            .filter(|&row_idx| {
-                                series.get(row_idx).ok()
-                                    .map(|v| {
-                                        let s = v.to_string();
-                                        s == "100" || s == "100.0"
-                                    })
-                                    .unwrap_or(false)
-                            })
-                            .collect()
-                    }).unwrap_or_default();
-                    (true, null_rows)
-                } else {
-                    let df = &view.dataframe;
-                    let total_rows = df.height();
-                    let null_cols: Vec<usize> = df.get_columns().iter().enumerate()
-                        .filter(|(_, col)| col.as_materialized_series().null_count() == total_rows)
-                        .map(|(idx, _)| idx)
-                        .collect();
-                    (false, null_cols)
-                }
-            });
-
-            if let Some((is_rows, indices)) = selection {
-                if indices.is_empty() {
-                    app.msg("No all-null columns found".to_string());
-                } else if let Some(view) = app.view_mut() {
-                    let count = indices.len();
-                    if is_rows {
-                        for idx in indices {
-                            view.selected_rows.insert(idx);
-                        }
-                        app.msg(format!("Selected {} row(s) with 100% null", count));
-                    } else {
-                        for idx in indices {
-                            view.selected_cols.insert(idx);
-                        }
-                        app.msg(format!("Selected {} all-null column(s)", count));
-                    }
-                }
+            // 0: Execute sel_null function (defined in cfg/funcs.4th) - Meta view only
+            if app.view().map(|v| v.name == "metadata").unwrap_or(false) {
+                exec_str("sel_null", app);
             }
         }
         KeyCode::Char('1') => {
-            // 1: In Meta view, select rows with 1 distinct value; otherwise select single-value columns
-            let selection: Option<(bool, Vec<usize>)> = app.view().map(|view| {
-                let is_meta = view.name == "metadata";
-                if is_meta {
-                    let df = &view.dataframe;
-                    let single_rows: Vec<usize> = df.column("distinct").ok().map(|distinct_col| {
-                        let series = distinct_col.as_materialized_series();
-                        (0..series.len())
-                            .filter(|&row_idx| {
-                                series.get(row_idx).ok()
-                                    .map(|v| v.to_string() == "1")
-                                    .unwrap_or(false)
-                            })
-                            .collect()
-                    }).unwrap_or_default();
-                    (true, single_rows)
-                } else {
-                    let df = &view.dataframe;
-                    let single_cols: Vec<usize> = df.get_columns().iter().enumerate()
-                        .filter(|(_, col)| {
-                            let series = col.as_materialized_series();
-                            series.n_unique().ok().map(|n_unique| {
-                                let null_count = series.null_count();
-                                if null_count > 0 && null_count < series.len() {
-                                    n_unique <= 2
-                                } else {
-                                    n_unique == 1
-                                }
-                            }).unwrap_or(false)
-                        })
-                        .map(|(idx, _)| idx)
-                        .collect();
-                    (false, single_cols)
-                }
-            });
-
-            if let Some((is_rows, indices)) = selection {
-                if indices.is_empty() {
-                    app.msg("No single-value columns found".to_string());
-                } else if let Some(view) = app.view_mut() {
-                    let count = indices.len();
-                    if is_rows {
-                        for idx in indices {
-                            view.selected_rows.insert(idx);
-                        }
-                        app.msg(format!("Selected {} row(s) with 1 distinct value", count));
-                    } else {
-                        for idx in indices {
-                            view.selected_cols.insert(idx);
-                        }
-                        app.msg(format!("Selected {} single-value column(s)", count));
-                    }
-                }
+            // 1: Execute sel_single function (defined in cfg/funcs.4th) - Meta view only
+            if app.view().map(|v| v.name == "metadata").unwrap_or(false) {
+                exec_str("sel_single", app);
             }
         }
         _ => {}

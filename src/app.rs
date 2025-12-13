@@ -1,3 +1,4 @@
+use crate::funcs::Funcs;
 use crate::keymap::KeyMap;
 use crate::state::{StateStack, ViewState};
 use crate::theme::Theme;
@@ -27,6 +28,7 @@ pub struct AppContext {
     pub float_decimals: usize,     // decimal places for floats
     pub keymap: KeyMap,            // key bindings
     pub theme: Theme,              // color theme
+    pub funcs: Funcs,              // user-defined functions
     pub bg_loader: Option<Receiver<DataFrame>>,  // background gz loader
     pub bg_saver: Option<Receiver<String>>,      // background save status
     pub raw_save: bool,            // --raw: skip type detection on save
@@ -37,10 +39,11 @@ impl AppContext {
     pub fn new() -> Self {
         let keymap = KeyMap::load(std::path::Path::new("cfg/key.csv")).unwrap_or_default();
         let theme = Theme::load_active();
-        // History file: ~/.tv/history
+        let funcs = Funcs::load(std::path::Path::new("cfg/funcs.4th"));
+        // History file: ~/.tv/history.4th
         let history_file = dirs::home_dir()
-            .map(|h| h.join(".tv").join("history"))
-            .unwrap_or_else(|| PathBuf::from("history"));
+            .map(|h| h.join(".tv").join("history.4th"))
+            .unwrap_or_else(|| PathBuf::from("history.4th"));
         if let Some(dir) = history_file.parent() { let _ = std::fs::create_dir_all(dir); }
         Self {
             stack: StateStack::new(),
@@ -53,6 +56,7 @@ impl AppContext {
             float_decimals: 3,
             keymap,
             theme,
+            funcs,
             bg_loader: None,
             bg_saver: None,
             raw_save: false,

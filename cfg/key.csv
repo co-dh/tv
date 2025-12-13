@@ -42,12 +42,8 @@ table,@,goto_col,Jump to column by name
 table,m,bookmark,Toggle bookmark on current row
 table,',next_bookmark,Jump to next bookmark
 table,D,delete,Delete selected columns
-table,0,sel_null,Select all-null columns
-table,1,sel_single,Select single-value columns
 freq,Enter,filter_parent,Filter parent table by selected values
 freq,D,delete,Delete selected rows
-freq,0,sel_null,Select null value rows
-freq,1,sel_single,Select single count rows
 meta,Enter,goto_col,Jump to column in parent
 meta,D,delete_sel,Delete selected columns from parent
 meta,0,sel_null,Select columns with 100% null
