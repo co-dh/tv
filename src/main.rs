@@ -16,7 +16,7 @@ use command::transform::{Agg, DelCol, Filter, FilterIn, RenameCol, Select, Sort,
 use command::view::{Correlation, Df, Dup, Env, Frequency, Lr, Ls, Lsblk, Lsof, Metadata, Mounts, Pop, Ps, Swap, Tcp, Udp, Who};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use crossterm::{cursor, execute, style::Print, terminal};
-use render::{Renderer, Terminal};
+use render::Renderer;
 use std::fs;
 use std::io::{self, Write};
 
@@ -43,8 +43,8 @@ fn main() -> Result<()> {
         return run_script(&args[idx + 1]);
     }
 
-    // Initialize terminal
-    let _terminal = Terminal::init()?;
+    // Initialize ratatui terminal
+    let mut tui = render::init()?;
 
     // Create app context
     let mut app = if args.len() > 1 {
@@ -53,7 +53,7 @@ fn main() -> Result<()> {
         match CommandExecutor::exec(&mut temp_app, Box::new(Load { file_path: args[1].clone() })) {
             Ok(_) => temp_app,
             Err(e) => {
-                Terminal::restore()?;
+                render::restore()?;
                 eprintln!("Error loading file: {}", e);
                 std::process::exit(1);
             }
@@ -62,13 +62,14 @@ fn main() -> Result<()> {
         AppContext::new()
     };
 
-    // Update viewport - Terminal::size() returns (cols, rows)
-    app.viewport(Terminal::size()?.1, Terminal::size()?.0);
+    // Update viewport
+    let size = tui.size()?;
+    app.viewport(size.height, size.width);
 
     // Main event loop
     loop {
-        // Render
-        Renderer::render(&mut app)?;
+        // Render with ratatui diff-based update
+        tui.draw(|frame| Renderer::render(frame, &mut app))?;
 
         // Handle events
         if let Event::Key(key) = event::read()? {
@@ -78,7 +79,7 @@ fn main() -> Result<()> {
         }
     }
 
-    Terminal::restore()?;
+    render::restore()?;
     Ok(())
 }
 
@@ -941,11 +942,8 @@ fn find(df: &polars::prelude::DataFrame, expr: &str) -> Vec<usize> {
 
 /// Prompt user for input
 /// Returns None if user cancels (Esc)
-fn prompt(app: &mut AppContext, prompt: &str) -> Result<Option<String>> {
-    // Render current screen first
-    Renderer::render(app)?;
-
-    // Show prompt at bottom
+fn prompt(_app: &mut AppContext, prompt: &str) -> Result<Option<String>> {
+    // Show prompt at bottom (screen already rendered by main loop)
     let (_cols, rows) = terminal::size()?;
     execute!(
         io::stdout(),

@@ -6,6 +6,7 @@ use std::fs;
 use std::path::Path;
 
 #[derive(Clone)]
+#[allow(dead_code)]  // reserved for future type-specific coloring
 pub struct Theme {
     pub header_bg: Color,
     pub header_fg: Color,

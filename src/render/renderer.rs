@@ -1,30 +1,23 @@
 use crate::app::AppContext;
 use crate::state::{TableState, ViewState};
 use crate::theme::Theme;
-use anyhow::Result;
-use crossterm::{
-    cursor,
-    execute,
-    style::{Attribute, Color, Print, ResetColor, SetAttribute, SetBackgroundColor, SetForegroundColor},
-    terminal,
-};
 use polars::prelude::*;
+use ratatui::prelude::*;
+use ratatui::style::{Color as RColor, Modifier, Style};
 use std::collections::HashSet;
-use std::io::{self, BufWriter, Write};
 
 pub struct Renderer;
 
 impl Renderer {
-    /// Render the entire screen
-    pub fn render(app: &mut AppContext) -> Result<()> {
-        let (cols, rows) = terminal::size()?;
-
+    /// Render entire screen to ratatui frame (diff-based)
+    pub fn render(frame: &mut Frame, app: &mut AppContext) {
+        let area = frame.area();
         let message = app.message.clone();
         let stack_len = app.stack.len();
         let show_info = app.show_info;
         let decimals = app.float_decimals;
 
-        // Get view name for keymap lookup before mutable borrow
+        // Get view name for keymap lookup
         let tab = app.view().map(|v| {
             if v.name.starts_with("Freq:") { "freq" }
             else if v.name == "metadata" { "meta" }
@@ -32,41 +25,32 @@ impl Renderer {
             else { "table" }
         }).unwrap_or("table");
         let hints = app.keymap.get_hints(tab);
-
-        // Use buffered writer to reduce flickering
-        let mut stdout = BufWriter::new(io::stdout());
-
         let theme = app.theme.clone();
+
         if let Some(view) = app.view_mut() {
-            // Get selection from view (clone to avoid borrow issues)
             let selected_cols = view.selected_cols.clone();
             let selected_rows = view.selected_rows.clone();
             let view_name = view.name.clone();
-            Self::render_table(view, rows, cols, &selected_cols, &selected_rows, decimals, &theme, &mut stdout)?;
+            Self::render_table(frame, view, area, &selected_cols, &selected_rows, decimals, &theme);
             if show_info {
-                Self::render_info_box(&view_name, stack_len, rows, cols, &hints, &theme, &mut stdout)?;
+                Self::render_info_box(frame, &view_name, stack_len, area, &hints, &theme);
             }
-            Self::render_status_bar(view, &message, rows, cols, &theme, &mut stdout)?;
+            Self::render_status_bar(frame, view, &message, area, &theme);
         } else {
-            Self::render_empty_message(&message, rows, cols, &mut stdout)?;
+            Self::render_empty_message(frame, &message, area);
         }
-
-        stdout.flush()?;
-        Ok(())
     }
 
-    /// Render the table data
-    fn render_table<W: Write>(view: &mut ViewState, rows: u16, cols: u16, selected_cols: &HashSet<usize>, selected_rows: &HashSet<usize>, decimals: usize, theme: &Theme, writer: &mut W) -> Result<()> {
+    /// Render table data
+    fn render_table(frame: &mut Frame, view: &mut ViewState, area: Rect, selected_cols: &HashSet<usize>, selected_rows: &HashSet<usize>, decimals: usize, theme: &Theme) {
         let df = &view.dataframe;
         let is_correlation = view.name == "correlation";
 
         // Calculate column widths if needed
         if view.state.need_widths() {
-            // Calculate base widths for all columns
             let widths: Vec<u16> = (0..df.width())
                 .map(|col_idx| Self::calculate_column_width(df, col_idx, &view.state, decimals))
                 .collect();
-
             view.state.col_widths = widths;
             view.state.widths_row = view.state.cr;
         }
@@ -74,21 +58,16 @@ impl Renderer {
         let state = &view.state;
 
         if df.height() == 0 || df.width() == 0 {
-            execute!(
-                writer,
-                cursor::MoveTo(0, 0),
-                Print("(empty table)")
-            )?;
-            return Ok(());
+            let buf = frame.buffer_mut();
+            buf.set_string(0, 0, "(empty table)", Style::default());
+            return;
         }
 
-        // Calculate row number width (0 if not showing row numbers)
+        // Row number width
         let row_num_width = if view.show_row_numbers {
             df.height().to_string().len().max(3) as u16
-        } else {
-            0
-        };
-        let screen_width = cols.saturating_sub(if row_num_width > 0 { row_num_width + 1 } else { 0 }) as i32;
+        } else { 0 };
+        let screen_width = area.width.saturating_sub(if row_num_width > 0 { row_num_width + 1 } else { 0 }) as i32;
 
         // Calculate xs - x position for each column (qtv style)
         let mut xs: Vec<i32> = Vec::with_capacity(df.width() + 1);
@@ -98,173 +77,174 @@ impl Renderer {
             xs.push(*xs.last().unwrap() + col_width + 1);
         }
 
-        // If cursor column right edge exceeds screen width, shift left
+        // Shift if cursor column exceeds screen
         if let Some(cursor_right) = xs.get(state.cc + 1).copied().filter(|&r| r > screen_width) {
             let shift = xs.iter().find(|&&x| x > cursor_right - screen_width).copied().unwrap_or(0);
-            for x in xs.iter_mut() {
-                *x -= shift;
-            }
+            for x in xs.iter_mut() { *x -= shift; }
         }
 
-        // Calculate visible area
-        let end_row = (state.r0 + (rows as usize).saturating_sub(2)).min(df.height());
+        // Visible area
+        let end_row = (state.r0 + (area.height as usize).saturating_sub(2)).min(df.height());
 
-        // Render column headers
-        Self::render_headers_xs(df, state, &xs, screen_width, row_num_width, selected_cols, theme, writer)?;
+        // Render headers
+        Self::render_headers_xs(frame, df, state, &xs, screen_width, row_num_width, selected_cols, theme, area);
 
         // Render data rows
         for row_idx in state.r0..end_row {
             let screen_row = (row_idx - state.r0 + 1) as u16;
-            execute!(writer, cursor::MoveTo(0, screen_row))?;
-
-            Self::render_row_xs(df, row_idx, state, &xs, screen_width, row_num_width, is_correlation, selected_cols, selected_rows, decimals, theme, writer)?;
+            Self::render_row_xs(frame, df, row_idx, state, &xs, screen_width, row_num_width, is_correlation, selected_cols, selected_rows, decimals, theme, area, screen_row);
         }
 
-        // Clear empty rows between data and status bar
-        for screen_row in ((end_row - state.r0 + 1) as u16)..(rows - 1) {
-            execute!(
-                writer,
-                cursor::MoveTo(0, screen_row),
-                terminal::Clear(terminal::ClearType::UntilNewLine)
-            )?;
+        // Clear empty rows
+        let buf = frame.buffer_mut();
+        for screen_row in ((end_row - state.r0 + 1) as u16)..(area.height - 1) {
+            for x in 0..area.width {
+                buf[(x, screen_row)].reset();
+            }
         }
-
-        Ok(())
     }
 
-    /// Render column headers using xs positions (qtv style)
-    fn render_headers_xs<W: Write>(df: &DataFrame, state: &TableState, xs: &[i32], screen_width: i32, row_num_width: u16, selected_cols: &HashSet<usize>, theme: &Theme, writer: &mut W) -> Result<()> {
-        execute!(
-            writer,
-            cursor::MoveTo(0, 0),
-            SetBackgroundColor(theme.header_bg),
-            SetForegroundColor(theme.header_fg),
-            SetAttribute(Attribute::Bold),
-        )?;
+    /// Render column headers
+    fn render_headers_xs(frame: &mut Frame, df: &DataFrame, state: &TableState, xs: &[i32], screen_width: i32, row_num_width: u16, selected_cols: &HashSet<usize>, theme: &Theme, area: Rect) {
+        let buf = frame.buffer_mut();
+        let header_style = Style::default().bg(to_rcolor(theme.header_bg)).fg(to_rcolor(theme.header_fg)).add_modifier(Modifier::BOLD);
 
-        // Render row number header (if showing row numbers)
+        // Fill header row with header style first
+        for x in 0..area.width { buf[(x, 0)].set_style(header_style); buf[(x, 0)].set_char(' '); }
+
+        let mut x_pos = 0u16;
+
+        // Row number header
         if row_num_width > 0 {
-            execute!(writer, Print(format!("{:>width$} ", "#", width = row_num_width as usize)))?;
+            let s = format!("{:>width$} ", "#", width = row_num_width as usize);
+            for (i, ch) in s.chars().enumerate() {
+                if x_pos + i as u16 >= area.width { break; }
+                buf[(x_pos + i as u16, 0)].set_char(ch);
+            }
+            x_pos += row_num_width + 1;
         }
 
         for (col_idx, col_name) in df.get_column_names().iter().enumerate() {
             let x = xs[col_idx];
             let next_x = xs.get(col_idx + 1).copied().unwrap_or(x);
-
-            // Skip if column is completely off-screen left
             if next_x <= 0 { continue; }
-            // Stop if column starts beyond screen
             if x >= screen_width { break; }
 
             let is_current = col_idx == state.cc;
             let is_selected = selected_cols.contains(&col_idx);
-            let col_width = state.col_widths.get(col_idx).copied().unwrap_or(10);
+            let col_width = state.col_widths.get(col_idx).copied().unwrap_or(10) as usize;
 
-            // Current column: cursor background; Selected column: select foreground
-            if is_current { execute!(writer, SetBackgroundColor(theme.cursor_bg), SetForegroundColor(theme.cursor_fg))?; }
-            else if is_selected { execute!(writer, SetForegroundColor(theme.select_fg))?; }
+            let style = if is_current {
+                Style::default().bg(to_rcolor(theme.cursor_bg)).fg(to_rcolor(theme.cursor_fg)).add_modifier(Modifier::BOLD)
+            } else if is_selected {
+                Style::default().bg(to_rcolor(theme.header_bg)).fg(to_rcolor(theme.select_fg)).add_modifier(Modifier::BOLD)
+            } else { header_style };
 
-            let display = format!("{:width$}", col_name, width = col_width as usize);
-            execute!(writer, Print(&display[..display.len().min(col_width as usize)]))?;
+            let start_x = x.max(0) as u16 + x_pos;
+            let display = format!("{:width$}", col_name, width = col_width);
+            let display = &display[..display.len().min(col_width)];
 
-            if is_current || is_selected {
-                execute!(writer, ResetColor)?;
-                // Re-apply header style after reset
-                execute!(writer, SetBackgroundColor(theme.header_bg), SetForegroundColor(theme.header_fg), SetAttribute(Attribute::Bold))?;
+            for (i, ch) in display.chars().enumerate() {
+                let px = start_x + i as u16;
+                if px >= area.width { break; }
+                buf[(px, 0)].set_char(ch).set_style(style);
             }
 
-            execute!(writer, Print(" "))?;
+            // Separator space
+            let sep_x = start_x + col_width as u16;
+            if sep_x < area.width {
+                buf[(sep_x, 0)].set_char(' ').set_style(header_style);
+            }
         }
-
-        // Reset attributes and clear to end of line
-        execute!(writer, SetAttribute(Attribute::Reset), terminal::Clear(terminal::ClearType::UntilNewLine))?;
-
-        Ok(())
     }
 
-    /// Render a single data row using xs positions (qtv style)
-    fn render_row_xs<W: Write>(df: &DataFrame, row_idx: usize, state: &TableState, xs: &[i32], screen_width: i32, row_num_width: u16, is_correlation: bool, selected_cols: &HashSet<usize>, selected_rows: &HashSet<usize>, decimals: usize, theme: &Theme, writer: &mut W) -> Result<()> {
+    /// Render a single data row
+    fn render_row_xs(frame: &mut Frame, df: &DataFrame, row_idx: usize, state: &TableState, xs: &[i32], screen_width: i32, row_num_width: u16, is_correlation: bool, selected_cols: &HashSet<usize>, selected_rows: &HashSet<usize>, decimals: usize, theme: &Theme, area: Rect, screen_row: u16) {
+        let buf = frame.buffer_mut();
         let is_cur_row = row_idx == state.cr;
         let is_sel_row = selected_rows.contains(&row_idx);
 
-        // Render row number (if showing row numbers)
+        // Clear row first
+        for x in 0..area.width { buf[(x, screen_row)].reset(); }
+
+        let mut x_pos = 0u16;
+
+        // Row number
         if row_num_width > 0 {
-            if is_cur_row { execute!(writer, SetForegroundColor(theme.row_cur_fg))?; }
-            else if is_sel_row { execute!(writer, SetForegroundColor(theme.row_num_fg))?; }
-            execute!(writer, Print(format!("{:>width$} ", row_idx, width = row_num_width as usize)))?;
-            if is_cur_row || is_sel_row { execute!(writer, ResetColor)?; }
+            let style = if is_cur_row { Style::default().fg(to_rcolor(theme.row_cur_fg)) }
+                       else if is_sel_row { Style::default().fg(to_rcolor(theme.row_num_fg)) }
+                       else { Style::default() };
+            let s = format!("{:>width$} ", row_idx, width = row_num_width as usize);
+            for (i, ch) in s.chars().enumerate() {
+                if x_pos + i as u16 >= area.width { break; }
+                buf[(x_pos + i as u16, screen_row)].set_char(ch).set_style(style);
+            }
+            x_pos += row_num_width + 1;
         }
 
         for col_idx in 0..df.width() {
             let x = xs[col_idx];
             let next_x = xs.get(col_idx + 1).copied().unwrap_or(x);
-            if next_x <= 0 { continue; }  // off-screen left
-            if x >= screen_width { break; }  // beyond screen
+            if next_x <= 0 { continue; }
+            if x >= screen_width { break; }
 
             let is_cur_col = col_idx == state.cc;
             let is_cur_cell = is_cur_row && is_cur_col;
             let is_sel = selected_cols.contains(&col_idx);
 
-            let col_width = state.col_widths.get(col_idx).copied().unwrap_or(10);
+            let col_width = state.col_widths.get(col_idx).copied().unwrap_or(10) as usize;
             let value = Self::format_value(df, col_idx, row_idx, decimals);
 
-            // Correlation color (skip first column which is row names)
+            // Correlation color
             let corr_color = if is_correlation && col_idx > 0 { Self::correlation_color(&value) } else { None };
 
-            if is_cur_cell {
-                execute!(writer, SetBackgroundColor(theme.cursor_bg), SetForegroundColor(theme.cursor_fg))?;
+            let style = if is_cur_cell {
+                Style::default().bg(to_rcolor(theme.cursor_bg)).fg(to_rcolor(theme.cursor_fg))
             } else if is_cur_col {
-                execute!(writer, SetBackgroundColor(Color::DarkGrey))?;
-                if let Some(fg) = corr_color { execute!(writer, SetForegroundColor(fg))?; }
-                else if is_sel { execute!(writer, SetForegroundColor(theme.select_fg))?; }
-                else if is_sel_row { execute!(writer, SetForegroundColor(theme.row_num_fg))?; }
+                let fg = corr_color.map(to_rcolor)
+                    .or_else(|| if is_sel { Some(to_rcolor(theme.select_fg)) } else { None })
+                    .or_else(|| if is_sel_row { Some(to_rcolor(theme.row_num_fg)) } else { None })
+                    .unwrap_or(RColor::Reset);
+                Style::default().bg(RColor::DarkGray).fg(fg)
             } else if is_sel_row {
-                execute!(writer, SetForegroundColor(theme.row_num_fg))?;
+                Style::default().fg(to_rcolor(theme.row_num_fg))
             } else if is_sel {
-                execute!(writer, SetForegroundColor(theme.select_fg))?;
-            } else if let Some(fg) = corr_color {
-                execute!(writer, SetForegroundColor(fg))?;
+                Style::default().fg(to_rcolor(theme.select_fg))
+            } else if let Some(c) = corr_color {
+                Style::default().fg(to_rcolor(c))
             } else if is_cur_row {
-                execute!(writer, SetForegroundColor(theme.row_cur_fg))?;
+                Style::default().fg(to_rcolor(theme.row_cur_fg))
+            } else { Style::default() };
+
+            let start_x = x.max(0) as u16 + x_pos;
+            let display = format!("{:width$}", value, width = col_width);
+            let display = &display[..display.len().min(col_width)];
+
+            for (i, ch) in display.chars().enumerate() {
+                let px = start_x + i as u16;
+                if px >= area.width { break; }
+                buf[(px, screen_row)].set_char(ch).set_style(style);
             }
 
-            let display = format!("{:width$}", value, width = col_width as usize);
-            execute!(writer, Print(&display[..display.len().min(col_width as usize)]))?;
-
-            if is_cur_cell || is_cur_col || is_cur_row || corr_color.is_some() || is_sel || is_sel_row {
-                execute!(writer, ResetColor)?;
-            }
-            execute!(writer, Print(" "))?;
+            // Separator
+            let sep_x = start_x + col_width as u16;
+            if sep_x < area.width { buf[(sep_x, screen_row)].set_char(' '); }
         }
-
-        execute!(writer, terminal::Clear(terminal::ClearType::UntilNewLine))?;
-        Ok(())
     }
 
-    /// Get color for correlation value using smooth RGB gradient
-    fn correlation_color(value: &str) -> Option<Color> {
+    /// Get color for correlation value
+    fn correlation_color(value: &str) -> Option<crossterm::style::Color> {
+        use crossterm::style::Color;
         let v: f64 = value.parse().ok()?;
         let v = v.clamp(-1.0, 1.0);
 
-        // Diverging colormap: Red (-1) -> Gray (0) -> Green (+1)
         let (r, g, b) = if v < 0.0 {
-            // Negative: interpolate from red to gray
-            let t = (v + 1.0) as f32; // 0 to 1 as v goes from -1 to 0
-            (
-                255,
-                (180.0 * t) as u8,      // 0 -> 180
-                (180.0 * t) as u8,      // 0 -> 180
-            )
+            let t = (v + 1.0) as f32;
+            (255, (180.0 * t) as u8, (180.0 * t) as u8)
         } else {
-            // Positive: interpolate from gray to green
-            let t = v as f32; // 0 to 1 as v goes from 0 to 1
-            (
-                (180.0 * (1.0 - t)) as u8,  // 180 -> 0
-                (180.0 + 75.0 * t) as u8,   // 180 -> 255
-                (180.0 * (1.0 - t)) as u8,  // 180 -> 0
-            )
+            let t = v as f32;
+            ((180.0 * (1.0 - t)) as u8, (180.0 + 75.0 * t) as u8, (180.0 * (1.0 - t)) as u8)
         };
-
         Some(Color::Rgb { r, g, b })
     }
 
@@ -298,14 +278,12 @@ impl Renderer {
         }
     }
 
-    /// Calculate column width by sampling data around current row
+    /// Calculate column width
     fn calculate_column_width(df: &DataFrame, col_idx: usize, state: &TableState, decimals: usize) -> u16 {
         const MAX_WIDTH: usize = 30;
         const MIN_WIDTH: usize = 3;
 
         let mut max_width = df.get_column_names()[col_idx].len();
-
-        // Sample 2-3 pages around current row for performance
         let sample_size = ((state.viewport.0.saturating_sub(2) as usize) * 3).max(100);
         let start_row = state.cr.saturating_sub(sample_size / 2);
         let end_row = (start_row + sample_size).min(df.height());
@@ -313,17 +291,15 @@ impl Renderer {
         for row_idx in start_row..end_row {
             let value = Self::format_value(df, col_idx, row_idx, decimals);
             max_width = max_width.max(value.len());
-
             if max_width >= MAX_WIDTH { break; }
         }
 
         max_width.max(MIN_WIDTH).min(MAX_WIDTH) as u16
     }
 
-    /// Format number with commas (e.g., 1000000 -> "1,000,000")
+    /// Format number with commas
     fn commify(n: usize) -> String { Self::commify_str(&n.to_string()) }
 
-    /// Format integer string with commas
     fn commify_str(s: &str) -> String {
         let (neg, s) = if s.starts_with('-') { (true, &s[1..]) } else { (false, s) };
         let mut result = String::new();
@@ -335,38 +311,29 @@ impl Renderer {
         result.chars().rev().collect()
     }
 
-    /// Format float string with commas in integer part
     fn commify_float(s: &str) -> String {
         if let Some(dot) = s.find('.') {
             format!("{}{}", Self::commify_str(&s[..dot]), &s[dot..])
-        } else {
-            Self::commify_str(s)
-        }
+        } else { Self::commify_str(s) }
     }
 
-    /// Calculate column statistics for status bar
+    /// Calculate column statistics
     fn column_stats(df: &DataFrame, col_idx: usize) -> String {
         let col = df.get_columns()[col_idx].as_materialized_series();
         let len = col.len();
-        if len == 0 {
-            return String::new();
-        }
+        if len == 0 { return String::new(); }
 
-        // Count nulls (including empty strings for String type)
         let null_count = if col.dtype() == &DataType::String {
             col.str().unwrap().into_iter()
                 .filter(|v| v.is_none() || v.map(|s| s.is_empty()).unwrap_or(false))
                 .count()
-        } else {
-            col.null_count()
-        };
+        } else { col.null_count() };
         let null_pct = 100.0 * null_count as f64 / len as f64;
 
         match col.dtype() {
             DataType::Int8 | DataType::Int16 | DataType::Int32 | DataType::Int64
             | DataType::UInt8 | DataType::UInt16 | DataType::UInt32 | DataType::UInt64
             | DataType::Float32 | DataType::Float64 => {
-                // Numerical: min, mean, max, std
                 let col_f64 = col.cast(&DataType::Float64).ok();
                 if let Some(c) = col_f64 {
                     let min = c.min::<f64>().ok().flatten().unwrap_or(f64::NAN);
@@ -378,14 +345,10 @@ impl Renderer {
                     } else {
                         format!("[{:.2},{:.2},{:.2}] σ{:.2}", min, mean, max, std)
                     }
-                } else {
-                    String::new()
-                }
+                } else { String::new() }
             }
             _ => {
-                // Categorical: distinct count, mode (most frequent value)
                 let n_unique = col.n_unique().unwrap_or(0);
-                // Get mode by value_counts and taking first
                 let mode = col.value_counts(true, false, "cnt".into(), false)
                     .ok()
                     .and_then(|vc| vc.column(col.name().as_str()).ok().cloned())
@@ -401,87 +364,113 @@ impl Renderer {
         }
     }
 
-    /// Render info box at bottom right corner (like Kakoune)
-    fn render_info_box<W: Write>(_view_name: &str, stack_len: usize, rows: u16, cols: u16, keys: &[(String, &'static str)], theme: &Theme, writer: &mut W) -> Result<()> {
+    /// Render info box using ratatui widgets
+    fn render_info_box(frame: &mut Frame, _view_name: &str, stack_len: usize, area: Rect, keys: &[(String, &'static str)], theme: &Theme) {
+        use ratatui::widgets::{Block, Borders, Paragraph, Clear};
+        use ratatui::text::{Line, Span};
+
         let max_desc_len = keys.iter().map(|(_, d)| d.len()).max().unwrap_or(10);
-        let box_width = max_desc_len + 11;  // key(5) + spaces(4) + borders(2)
-        let box_height = keys.len() + 2;    // border top/bottom
+        let box_width = (max_desc_len + 11) as u16;
+        let box_height = (keys.len() + 2) as u16;
 
-        // Position: bottom right, above status bar
-        let box_x = cols.saturating_sub(box_width as u16 + 1);
-        let box_y = rows.saturating_sub(box_height as u16 + 1);
+        let box_x = area.width.saturating_sub(box_width + 1);
+        let box_y = area.height.saturating_sub(box_height + 1);
+        let box_area = Rect::new(box_x, box_y, box_width, box_height);
 
-        execute!(writer, SetForegroundColor(theme.info_border_fg))?;
+        // Clear area first
+        frame.render_widget(Clear, box_area);
 
-        // Top border with view info
-        let title = format!(" [{}] ", if stack_len > 1 { format!("#{}", stack_len) } else { "tv".to_string() });
-        let top_border = format!("┌{}{}┐", title, "─".repeat(box_width.saturating_sub(title.len() + 2)));
-        execute!(writer, cursor::MoveTo(box_x, box_y), Print(&top_border))?;
+        // Block with border and title
+        let title = if stack_len > 1 { format!(" [#{}] ", stack_len) } else { " [tv] ".to_string() };
+        let border_style = Style::default().fg(to_rcolor(theme.info_border_fg));
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(border_style)
+            .title(title);
 
-        // Content rows
-        for (i, (key, desc)) in keys.iter().enumerate() {
-            let row = box_y + 1 + i as u16;
-            execute!(writer, cursor::MoveTo(box_x, row))?;
-            execute!(writer, SetForegroundColor(theme.info_border_fg), Print("│ "))?;
-            execute!(writer, SetForegroundColor(theme.info_key_fg), Print(format!("{:>5}", key)))?;
-            execute!(writer, SetForegroundColor(Color::White), Print(format!(" {:width$}", desc, width = box_width - 9)))?;
-            execute!(writer, SetForegroundColor(theme.info_border_fg), Print(" │"))?;
-        }
+        // Build styled lines for content
+        let key_style = Style::default().fg(to_rcolor(theme.info_key_fg));
+        let text_style = Style::default().fg(RColor::White);
+        let lines: Vec<Line> = keys.iter().map(|(key, desc)| {
+            Line::from(vec![
+                Span::styled(format!("{:>5}", key), key_style),
+                Span::raw(" "),
+                Span::styled(*desc, text_style),
+            ])
+        }).collect();
 
-        // Bottom border
-        execute!(writer, SetForegroundColor(theme.info_border_fg))?;
-        let bottom_border = format!("└{}┘", "─".repeat(box_width - 2));
-        execute!(writer, cursor::MoveTo(box_x, box_y + box_height as u16 - 1), Print(&bottom_border))?;
-
-        execute!(writer, ResetColor)?;
-        Ok(())
+        let para = Paragraph::new(lines).block(block);
+        frame.render_widget(para, box_area);
     }
 
-    /// Render status bar at the bottom (left: msg/file, middle: col stats, right: row/total)
-    fn render_status_bar<W: Write>(view: &ViewState, message: &str, rows: u16, cols: u16, theme: &Theme, writer: &mut W) -> Result<()> {
-        execute!(writer, cursor::MoveTo(0, rows - 1))?;
+    /// Render status bar
+    fn render_status_bar(frame: &mut Frame, view: &ViewState, message: &str, area: Rect, theme: &Theme) {
+        let row = area.height - 1;
+        let buf = frame.buffer_mut();
+        let style = Style::default().bg(to_rcolor(theme.status_bg)).fg(to_rcolor(theme.status_fg));
+
+        // Fill status bar
+        for x in 0..area.width { buf[(x, row)].set_style(style); buf[(x, row)].set_char(' '); }
 
         let total_str = Self::commify(view.rows());
 
-        // Left side: message or filename
         let left = if !message.is_empty() { message.to_string() }
         else if view.name.starts_with("Freq:") || view.name == "metadata" { view.name.clone() }
         else { view.filename.as_deref().unwrap_or("(no file)").to_string() };
 
-        // Column statistics
         let col_stats = if view.cols() > 0 { Self::column_stats(&view.dataframe, view.state.cc) } else { String::new() };
 
-        // Right side: stats + row/total
         let right = if col_stats.is_empty() { format!("{}/{}", view.state.cr, total_str) }
         else { format!("{} {}/{}", col_stats, view.state.cr, total_str) };
 
-        let padding = (cols as usize).saturating_sub(left.len() + right.len()).max(1);
+        let padding = (area.width as usize).saturating_sub(left.len() + right.len()).max(1);
         let status = format!("{}{:width$}{}", left, "", right, width = padding);
 
-        execute!(
-            writer,
-            SetBackgroundColor(theme.status_bg),
-            SetForegroundColor(theme.status_fg),
-            Print(&status[..status.len().min(cols as usize)]),
-            ResetColor
-        )?;
-
-        Ok(())
+        for (i, ch) in status.chars().enumerate() {
+            if i >= area.width as usize { break; }
+            buf[(i as u16, row)].set_char(ch);
+        }
     }
 
-    /// Render message when no table is loaded
-    fn render_empty_message<W: Write>(message: &str, rows: u16, _cols: u16, writer: &mut W) -> Result<()> {
-        execute!(
-            writer,
-            cursor::MoveTo(0, rows / 2),
-            Print(message)
-        )?;
-        Ok(())
+    /// Render empty message
+    fn render_empty_message(frame: &mut Frame, message: &str, area: Rect) {
+        let buf = frame.buffer_mut();
+        let y = area.height / 2;
+        for (i, ch) in message.chars().enumerate() {
+            if i >= area.width as usize { break; }
+            buf[(i as u16, y)].set_char(ch);
+        }
     }
 
     #[cfg(test)]
     pub fn test_format_value(df: &DataFrame, col_idx: usize, row_idx: usize, decimals: usize) -> String {
         Self::format_value(df, col_idx, row_idx, decimals)
+    }
+}
+
+/// Convert crossterm Color to ratatui Color
+fn to_rcolor(c: crossterm::style::Color) -> RColor {
+    use crossterm::style::Color;
+    match c {
+        Color::Reset => RColor::Reset,
+        Color::Black => RColor::Black,
+        Color::DarkGrey => RColor::DarkGray,
+        Color::Red => RColor::Red,
+        Color::DarkRed => RColor::Red,
+        Color::Green => RColor::Green,
+        Color::DarkGreen => RColor::Green,
+        Color::Yellow => RColor::Yellow,
+        Color::DarkYellow => RColor::Yellow,
+        Color::Blue => RColor::Blue,
+        Color::DarkBlue => RColor::Blue,
+        Color::Magenta => RColor::Magenta,
+        Color::DarkMagenta => RColor::Magenta,
+        Color::Cyan => RColor::Cyan,
+        Color::DarkCyan => RColor::Cyan,
+        Color::White => RColor::White,
+        Color::Grey => RColor::Gray,
+        Color::Rgb { r, g, b } => RColor::Rgb(r, g, b),
+        Color::AnsiValue(v) => RColor::Indexed(v),
     }
 }
 
@@ -491,21 +480,17 @@ mod tests {
 
     #[test]
     fn test_null_not_commified() {
-        // Create DataFrame with null values in integer and float columns
         let df = df! {
             "int_col" => &[Some(1000000i64), None, Some(2000000i64)],
             "float_col" => &[Some(1234.567f64), None, Some(9876.543f64)],
         }.unwrap();
 
-        // Test integer null
         let int_null = Renderer::test_format_value(&df, 0, 1, 3);
         assert_eq!(int_null, "null", "Integer null should be 'null', not 'n,ull'");
 
-        // Test float null
         let float_null = Renderer::test_format_value(&df, 1, 1, 3);
         assert_eq!(float_null, "null", "Float null should be 'null', not 'n,ull'");
 
-        // Verify non-null values are still commified
         let int_val = Renderer::test_format_value(&df, 0, 0, 3);
         assert_eq!(int_val, "1,000,000", "Integer should be commified");
 
