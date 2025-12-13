@@ -14,6 +14,39 @@ use std::thread;
 const MAX_PREVIEW_ROWS: usize = 100_000;  // preview row limit
 const BG_CHUNK_ROWS: usize = 100_000;  // rows per background chunk
 
+/// Find which parquet file has schema mismatch by comparing all files
+fn find_schema_mismatch(pattern: &str) -> Option<anyhow::Error> {
+    // Expand glob pattern using shell
+    let output = std::process::Command::new("sh")
+        .args(["-c", &format!("ls -1 {} 2>/dev/null", pattern)])
+        .output().ok()?;
+    let paths: Vec<&str> = std::str::from_utf8(&output.stdout).ok()?
+        .lines().filter(|l| !l.is_empty()).collect();
+    if paths.len() < 2 { return None; }
+
+    // Get schema from first file
+    let first = paths[0];
+    let base_schema = ParquetReader::new(std::fs::File::open(first).ok()?).schema().ok()?;
+
+    // Compare with rest
+    for path in &paths[1..] {
+        if let Ok(file) = std::fs::File::open(path) {
+            if let Ok(schema) = ParquetReader::new(file).schema() {
+                for (name, dtype) in schema.iter() {
+                    let name_str = name.as_str();
+                    if let Some((_, base_dtype)) = base_schema.iter().find(|(n, _)| n.as_str() == name_str) {
+                        if dtype != base_dtype {
+                            return Some(anyhow!("Schema mismatch for '{}': {} has {:?}, {} has {:?}",
+                                name_str, first, base_dtype.dtype(), path, dtype.dtype()));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Load file command (CSV, Parquet, or gzipped CSV)
 /// Supports glob patterns for parquet files (e.g., "data/*.parquet")
 pub struct From {
@@ -85,7 +118,11 @@ impl From {
         let lf = LazyFrame::scan_parquet(pattern, args)
             .map_err(|e| anyhow!("Failed to scan parquet: {}", e))?;
         let df = lf.limit(MAX_PREVIEW_ROWS as u32).collect()
-            .map_err(|e| anyhow!("Schema mismatch in parquet files: {}", e))?;
+            .map_err(|e| {
+                if e.to_string().contains("mismatch") {
+                    find_schema_mismatch(pattern).unwrap_or_else(|| anyhow!("{}", e))
+                } else { anyhow!("{}", e) }
+            })?;
         if df.height() == 0 { return Err(anyhow!("No data found matching pattern")); }
         let df = convert_epoch_cols(df);
         app.msg(format!("Preview: {} rows, {} cols from {}", df.height(), df.width(), pattern));
