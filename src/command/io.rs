@@ -20,9 +20,9 @@ impl Command for Load {
         let path = Path::new(&self.file_path);
         if !path.exists() { return Err(anyhow!("File not found: {}", self.file_path)); }
 
-        // Check for .csv.gz or .gz extension
+        // Check for .gz extension (csv.gz, tsv.gz, or plain .gz)
         let fname = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
-        let is_gz = fname.ends_with(".csv.gz") || fname.ends_with(".tsv.gz");
+        let is_gz = fname.ends_with(".gz");
 
         if is_gz {
             let df = self.load_csv_gz(path)?;
