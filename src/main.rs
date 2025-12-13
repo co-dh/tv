@@ -221,7 +221,7 @@ fn on_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
             app.show_info = !app.show_info;
         }
         KeyCode::Char('.') => {
-            app.float_decimals = (app.float_decimals + 1).min(10);
+            app.float_decimals = (app.float_decimals + 1).min(17);
             if let Some(v) = app.view_mut() { v.state.col_widths.clear(); }
             app.msg(format!("Float decimals: {}", app.float_decimals));
         }
