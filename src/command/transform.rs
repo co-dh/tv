@@ -71,6 +71,54 @@ impl Command for RenameCol {
     fn to_str(&self) -> String { format!("rename {} {}", self.old_name, self.new_name) }
 }
 
+/// Aggregate by column
+pub struct Agg { pub col: String, pub func: String }
+
+impl Command for Agg {
+    fn exec(&mut self, app: &mut AppContext) -> Result<()> {
+        let (agg_df, filename) = {
+            let v = app.req()?;
+            let grouped = v.dataframe.clone().lazy().group_by([col(&self.col)]);
+            let result = match self.func.as_str() {
+                "count" => grouped.agg([col("*").count().alias("count")]),
+                "sum" => grouped.agg([col("*").sum()]),
+                "mean" => grouped.agg([col("*").mean()]),
+                "min" => grouped.agg([col("*").min()]),
+                "max" => grouped.agg([col("*").max()]),
+                "std" => grouped.agg([col("*").std(1)]),
+                _ => return Err(anyhow::anyhow!("Unknown aggregation: {}", self.func)),
+            };
+            (result.collect()?, v.filename.clone())
+        };
+        let id = app.next_id();
+        app.stack.push(crate::state::ViewState::new(id, format!("{}:{}", self.func, self.col), agg_df, filename));
+        Ok(())
+    }
+    fn to_str(&self) -> String { format!("agg {} {}", self.col, self.func) }
+    fn record(&self) -> bool { false }
+}
+
+/// Filter by values (SQL IN clause) - used by frequency view
+pub struct FilterIn { pub col: String, pub values: Vec<String>, pub filename: Option<String> }
+
+impl Command for FilterIn {
+    fn exec(&mut self, app: &mut AppContext) -> Result<()> {
+        let df = app.req()?.dataframe.clone();
+        let is_str = matches!(df.column(&self.col)?.dtype(), DataType::String);
+        let vals = self.values.iter().map(|v| if is_str { format!("'{}'", v) } else { v.clone() }).collect::<Vec<_>>().join(",");
+        let mut ctx = polars::sql::SQLContext::new();
+        ctx.register("df", df.lazy());
+        let filtered = ctx.execute(&format!("SELECT * FROM df WHERE {} IN ({})", self.col, vals))?.collect()?;
+        let id = app.next_id();
+        let name = if self.values.len() == 1 { format!("{}={}", self.col, self.values[0]) }
+                   else { format!("{}∈{{{}}}", self.col, self.values.len()) };
+        app.stack.push(crate::state::ViewState::new(id, name, filtered, self.filename.clone()));
+        Ok(())
+    }
+    fn to_str(&self) -> String { format!("filter_in {} {:?}", self.col, self.values) }
+    fn record(&self) -> bool { false }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

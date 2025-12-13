@@ -103,6 +103,7 @@ Filtering pushes a new view onto the stack. Press `q` to return.
 | `L` | Load file |
 | `S` | Save to file |
 | `l` | List current directory |
+| `r` | List directory recursively |
 
 ### Other
 

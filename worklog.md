@@ -51,10 +51,16 @@
 | `widths_calc_row` | `widths_row` |
 
 ### Halstead Metrics
-| Metric | Start | After Style | After Silent | After Polars | After SQL | Unified | No Regex | Polars Corr | Total Change |
-|--------|-------|-------------|--------------|--------------|-----------|---------|----------|-------------|--------------|
-| Length | 12,664 | 12,427 | 12,122 | 11,698 | 11,003 | 10,638 | 9,904 | 9,622 | -3,042 (-24.0%) |
-| Bugs | 20.808 | 20.525 | 19.950 | 19.054 | 17.897 | 16.997 | 15.557 | 14.764 | -6.044 (-29.0%) |
+| Metric | Start | After Style | After Silent | After Polars | After SQL | Unified | No Regex | Polars Corr | Commands | Total Change |
+|--------|-------|-------------|--------------|--------------|-----------|---------|----------|-------------|----------|--------------|
+| Length | 12,664 | 12,427 | 12,122 | 11,698 | 11,003 | 10,638 | 9,904 | 9,622 | 10,284 | -2,380 (-18.8%) |
+| Bugs | 20.808 | 20.525 | 19.950 | 19.054 | 17.897 | 16.997 | 15.557 | 14.764 | 16.166 | -4.642 (-22.3%) |
+
+### Architecture
+- Only command executor can modify stack (push/pop/swap)
+- Key handlers send commands, not direct stack manipulation
+- New commands: Pop, Swap, Dup, Ls, Lr, Agg, FilterIn
+- New module: `src/os.rs` for directory operations
 
 ### Line Count
 - 11 files changed

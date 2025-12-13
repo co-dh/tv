@@ -79,6 +79,63 @@ fn test_filter_string_equality() {
     assert!(output.contains("(3 rows)"), "b='x' should match 3 rows");
 }
 
+#[test]
+fn test_filter_between() {
+    let id = unique_id();
+    let csv = setup_test_csv(id);
+
+    let output = run_script(&format!("load {}\nfilter a BETWEEN 2 AND 4\n", csv), id);
+    assert!(output.contains("(3 rows)"), "BETWEEN 2 AND 4 should match 3 rows");
+}
+
+#[test]
+fn test_filter_and() {
+    let id = unique_id();
+    let csv = setup_test_csv(id);
+
+    let output = run_script(&format!("load {}\nfilter a >= 2 AND a <= 4\n", csv), id);
+    assert!(output.contains("(3 rows)"), "a>=2 AND a<=4 should match 3 rows");
+}
+
+#[test]
+fn test_filter_or() {
+    let id = unique_id();
+    let csv = setup_test_csv(id);
+
+    let output = run_script(&format!("load {}\nfilter a = 1 OR a = 5\n", csv), id);
+    assert!(output.contains("(2 rows)"), "a=1 OR a=5 should match 2 rows");
+}
+
+#[test]
+fn test_filter_like_starts_with() {
+    let id = unique_id();
+    let path = format!("/tmp/tv_test_like_{}.csv", id);
+    fs::write(&path, "name,val\napple,1\nbanana,2\napricot,3\nblueberry,4\n").unwrap();
+
+    let output = run_script(&format!("load {}\nfilter name LIKE 'a%'\n", path), id);
+    assert!(output.contains("(2 rows)"), "LIKE 'a%' should match apple, apricot");
+}
+
+#[test]
+fn test_filter_like_ends_with() {
+    let id = unique_id();
+    let path = format!("/tmp/tv_test_like2_{}.csv", id);
+    fs::write(&path, "name,val\napple,1\nbanana,2\npineapple,3\ngrape,4\n").unwrap();
+
+    let output = run_script(&format!("load {}\nfilter name LIKE '%apple'\n", path), id);
+    assert!(output.contains("(2 rows)"), "LIKE '%apple' should match apple, pineapple");
+}
+
+#[test]
+fn test_filter_like_contains() {
+    let id = unique_id();
+    let path = format!("/tmp/tv_test_like3_{}.csv", id);
+    fs::write(&path, "name,val\napple,1\nbanana,2\npineapple,3\ngrape,4\n").unwrap();
+
+    let output = run_script(&format!("load {}\nfilter name LIKE '%an%'\n", path), id);
+    assert!(output.contains("(1 rows)"), "LIKE '%an%' should match banana");
+}
+
 fn setup_test_csv_with_nulls(id: usize) -> String {
     let path = format!("/tmp/tv_test_nulls_{}.csv", id);
     fs::write(&path, "a,b,c,d\n1,x,,constant\n2,y,,constant\n3,x,,constant\n,z,,constant\n5,x,,constant\n").unwrap();

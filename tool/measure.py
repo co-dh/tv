@@ -3,7 +3,7 @@
 import json, subprocess
 
 files = [
-    "./src/main.rs", "./src/app.rs", "./src/state.rs",
+    "./src/main.rs", "./src/app.rs", "./src/state.rs", "./src/os.rs",
     "./src/command/transform.rs", "./src/command/view.rs",
     "./src/command/io.rs", "./src/picker.rs",
     "./src/command/mod.rs", "./src/command/executor.rs"

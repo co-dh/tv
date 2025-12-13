@@ -1,5 +1,6 @@
 mod app;
 mod command;
+mod os;
 mod picker;
 mod render;
 mod state;
@@ -8,8 +9,8 @@ use anyhow::Result;
 use app::AppContext;
 use command::executor::CommandExecutor;
 use command::io::{Load, Save};
-use command::transform::{DelCol, Filter, RenameCol, Select, Sort};
-use command::view::{Correlation, Frequency, Metadata};
+use command::transform::{Agg, DelCol, Filter, FilterIn, RenameCol, Select, Sort};
+use command::view::{Correlation, Dup, Frequency, Lr, Ls, Metadata, Pop, Swap};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use crossterm::{cursor, execute, style::Print, terminal};
 use render::{Renderer, Terminal};
@@ -68,7 +69,7 @@ fn main() -> Result<()> {
 
         // Handle events
         if let Event::Key(key) = event::read()? {
-            if !handle_key(&mut app, key)? {
+            if !on_key(&mut app, key)? {
                 break;
             }
         }
@@ -89,7 +90,7 @@ fn run_commands(commands: &str) -> Result<()> {
             continue;
         }
 
-        if let Some(cmd) = parse_command(cmd_str, &app) {
+        if let Some(cmd) = parse(cmd_str, &app) {
             if let Err(e) = CommandExecutor::exec(&mut app, cmd) {
                 eprintln!("Error executing '{}': {}", cmd_str, e);
             }
@@ -98,7 +99,7 @@ fn run_commands(commands: &str) -> Result<()> {
         }
     }
 
-    print_table(&app);
+    print(&app);
     Ok(())
 }
 
@@ -127,7 +128,7 @@ fn run_script(script_path: &str) -> Result<()> {
             }
 
             // Parse and execute command
-            if let Some(cmd) = parse_command(cmd_str, &app) {
+            if let Some(cmd) = parse(cmd_str, &app) {
                 if let Err(e) = CommandExecutor::exec(&mut app, cmd) {
                     eprintln!("Error executing '{}': {}", cmd_str, e);
                 }
@@ -138,13 +139,13 @@ fn run_script(script_path: &str) -> Result<()> {
     }
 
     // Print the final state
-    print_table(&app);
+    print(&app);
 
     Ok(())
 }
 
 /// Print table to stdout (for script mode)
-fn print_table(app: &AppContext) {
+fn print(app: &AppContext) {
     if let Some(view) = app.view() {
         println!("=== {} ({} rows) ===", view.name, view.dataframe.height());
         println!("{}", view.dataframe);
@@ -154,7 +155,7 @@ fn print_table(app: &AppContext) {
 }
 
 /// Parse a text command into a Command object
-fn parse_command(line: &str, _app: &AppContext) -> Option<Box<dyn command::Command>> {
+fn parse(line: &str, _app: &AppContext) -> Option<Box<dyn command::Command>> {
     let parts: Vec<&str> = line.splitn(2, ' ').collect();
     let arg = parts.get(1).map(|s| s.trim()).unwrap_or("");
 
@@ -188,16 +189,14 @@ fn parse_command(line: &str, _app: &AppContext) -> Option<Box<dyn command::Comma
 
 /// Handle keyboard input
 /// Returns false to exit the application
-fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
+fn on_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
     match key.code {
         KeyCode::Char('q') => {
             // Quit if no view or only one view
             if !app.has_view() || app.stack.len() == 1 {
                 return Ok(false);
             }
-            // Otherwise pop from stack and clear message
-            app.stack.pop();
-            app.message.clear();
+            let _ = CommandExecutor::exec(app, Box::new(Pop));
         }
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             // Ctrl+C to force quit
@@ -221,7 +220,7 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
         }
         KeyCode::Char('L') => {
             // L: Load file
-            if let Some(file_path) = prompt_input(app, "Load file: ")? {
+            if let Some(file_path) = prompt(app, "Load file: ")? {
                 if let Err(e) = CommandExecutor::exec(app, Box::new(Load { file_path })) {
                     app.err(e);
                 }
@@ -231,7 +230,7 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
             // S: Save file
             if !app.has_view() {
                 app.no_table();
-            } else if let Some(file_path) = prompt_input(app, "Save to: ")? {
+            } else if let Some(file_path) = prompt(app, "Save to: ")? {
                 if let Err(e) = CommandExecutor::exec(app, Box::new(Save { file_path })) {
                     app.err(e);
                 }
@@ -258,7 +257,7 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                             view.dataframe.get_columns()[0]
                                 .get(row)
                                 .ok()
-                                .map(|v| strip_quotes(&v.to_string()))
+                                .map(|v| unquote(&v.to_string()))
                         })
                         .collect();
                     (true, parent_id, col_names)
@@ -287,9 +286,9 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                     if let Some(pid) = parent_id {
                         if let Some(parent) = app.stack.find_mut(pid) {
                             for c in &col_names { let _ = parent.dataframe.drop_in_place(c); }
-                            app.stack.pop();
                         }
                     }
+                    let _ = CommandExecutor::exec(app, Box::new(Pop));
                 } else if !col_names.is_empty() {
                     let _ = CommandExecutor::exec(app, Box::new(DelCol { col_names: col_names }));
                     if let Some(v) = app.view_mut() { v.selected_cols.clear(); }
@@ -300,10 +299,10 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
             // /: Search with SQL WHERE expression
             if let Some(view) = app.view() {
                 if let Some(col_name) = view.state.cur_col(&view.dataframe) {
-                    let items = get_sql_hints(&view.dataframe, &col_name, view.state.cr);
+                    let items = hints(&view.dataframe, &col_name, view.state.cr);
 
                     if let Ok(Some(expr)) = picker::input(items, "Search> ") {
-                        let matches = find_sql(&view.dataframe, &expr);
+                        let matches = find(&view.dataframe, &expr);
                         app.search.col_name = None;
                         app.search.value = Some(expr.clone());
 
@@ -324,7 +323,7 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
             // \: Filter rows with SQL WHERE expression
             if let Some(view) = app.view() {
                 if let Some(col_name) = view.state.cur_col(&view.dataframe) {
-                    let items = get_sql_hints(&view.dataframe, &col_name, view.state.cr);
+                    let items = hints(&view.dataframe, &col_name, view.state.cr);
 
                     if let Ok(Some(expr)) = picker::input(items, "WHERE> ") {
                         if let Err(e) = CommandExecutor::exec(app, Box::new(Filter { expr })) {
@@ -340,7 +339,7 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
             // n: Find next match
             if let Some(expr) = app.search.value.clone() {
                 if let Some(view) = app.view_mut() {
-                    let matches = find_sql(&view.dataframe, &expr);
+                    let matches = find(&view.dataframe, &expr);
                     let cur = view.state.cr;
                     if let Some(&pos) = matches.iter().find(|&&i| i > cur) {
                         view.state.cr = pos;
@@ -357,7 +356,7 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
             // N: Find previous match
             if let Some(expr) = app.search.value.clone() {
                 if let Some(view) = app.view_mut() {
-                    let matches = find_sql(&view.dataframe, &expr);
+                    let matches = find(&view.dataframe, &expr);
                     let cur = view.state.cr;
                     if let Some(&pos) = matches.iter().rev().find(|&&i| i < cur) {
                         view.state.cr = pos;
@@ -377,7 +376,7 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                     let col = &view.dataframe.get_columns()[view.state.cc];
                     if let Ok(value) = col.get(view.state.cr) {
                         let is_str = matches!(col.dtype(), polars::prelude::DataType::String);
-                        let val = strip_quotes(&value.to_string());
+                        let val = unquote(&value.to_string());
                         let expr = if is_str { format!("{} = '{}'", col_name, val) } else { format!("{} = {}", col_name, val) };
                         app.search.col_name = None;
                         app.search.value = Some(expr.clone());
@@ -390,7 +389,7 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
             // s: Select columns
             if !app.has_view() {
                 app.no_table();
-            } else if let Some(cols_str) = prompt_input(app, "Select columns (comma-separated): ")? {
+            } else if let Some(cols_str) = prompt(app, "Select columns (comma-separated): ")? {
                 if let Err(e) = CommandExecutor::exec(app, Box::new(Select {
                     col_names: cols_str.split(',').map(|s| s.trim().to_string()).collect()
                 })) {
@@ -440,7 +439,7 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
             // ^: Rename current column
             if let Some(view) = app.view() {
                 if let Some(old_name) = view.state.cur_col(&view.dataframe) {
-                    if let Some(new_name) = prompt_input(app, &format!("Rename '{}' to: ", old_name))? {
+                    if let Some(new_name) = prompt(app, &format!("Rename '{}' to: ", old_name))? {
                         if let Err(e) = CommandExecutor::exec(app, Box::new(RenameCol { old_name, new_name })) {
                             app.err(e);
                         }
@@ -464,7 +463,7 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                             view.dataframe.get_columns()[0]
                                 .get(row)
                                 .ok()
-                                .map(|v| strip_quotes(&v.to_string()))
+                                .map(|v| unquote(&v.to_string()))
                         })
                         .collect();
 
@@ -478,29 +477,11 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                 }
             });
 
-            if let Some((parent_id, freq_col, values, parent_filename)) = filter_info {
+            if let Some((_parent_id, freq_col, values, parent_filename)) = filter_info {
                 if values.is_empty() {
                     app.msg("No values to filter".to_string());
-                } else if let Some(parent) = app.stack.find(parent_id) {
-                    let parent_df = parent.dataframe.clone();
-
-                    match filter_by_values(&parent_df, &freq_col, &values) {
-                        Ok(filtered_df) => {
-                            let id = app.next_id();
-                            
-                            app.stack.push(state::ViewState::new(
-                                id,
-                                if values.len() == 1 {
-                                    format!("{}={}", freq_col, values[0])
-                                } else {
-                                    format!("{}∈{{{}}}", freq_col, values.len())
-                                },
-                                filtered_df,
-                                parent_filename,
-                            ));
-                        }
-                        Err(e) => app.err(e),
-                    }
+                } else {
+                    let _ = CommandExecutor::exec(app, Box::new(FilterIn { col: freq_col, values, filename: parent_filename }));
                 }
             }
         }
@@ -564,59 +545,41 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
         KeyCode::Char('b') => {
             // b: Aggregate by current column
             if let Some(view) = app.view() {
-                if let Some(col_name) = view.state.cur_col(&view.dataframe) {
-                    if let Ok(Some(agg_fn)) = picker::pick(vec![
-                        "count".to_string(), "sum".to_string(), "mean".to_string(),
-                        "min".to_string(), "max".to_string(), "std".to_string(),
+                if let Some(col) = view.state.cur_col(&view.dataframe) {
+                    if let Ok(Some(func)) = picker::pick(vec![
+                        "count".into(), "sum".into(), "mean".into(), "min".into(), "max".into(), "std".into(),
                     ], "Aggregate: ") {
-                        let filename = view.filename.clone();
-                        match aggregate_by(&view.dataframe, &col_name, &agg_fn) {
-                            Ok(agg_df) => {
-                                let id = app.next_id();
-                                
-                                app.stack.push(state::ViewState::new(id, format!("{}:{}", agg_fn, col_name), agg_df, filename));
-                            }
-                            Err(e) => app.err(e),
+                        if let Err(e) = CommandExecutor::exec(app, Box::new(Agg { col, func })) {
+                            app.err(e);
                         }
                     }
                 }
             }
         }
         KeyCode::Char('T') => {
-            // T: Duplicate current view on stack
-            if let Some(view) = app.view() {
-                let mut new_view = view.clone();
-                new_view.name = format!("{} (copy)", view.name);
-                new_view.id = app.next_id();
-                app.stack.push(new_view);
-                
+            // T: Duplicate current view
+            if app.has_view() {
+                let _ = CommandExecutor::exec(app, Box::new(Dup));
             }
         }
         KeyCode::Char('W') => {
-            // W: Swap with previous view on stack
-            if app.stack.len() >= 2 {
-                app.stack.swap();
-                
-            } else {
-                app.msg("Need at least 2 views to swap".to_string());
+            // W: Swap top two views
+            if let Err(e) = CommandExecutor::exec(app, Box::new(Swap)) {
+                app.err(e);
             }
         }
         KeyCode::Char('l') => {
             // l: Directory listing
             let dir = std::env::current_dir().unwrap_or_default();
-            match list_directory(&dir) {
-                Ok(df) => {
-                    let id = app.next_id();
-                    let new_view = state::ViewState::new(
-                        id,
-                        format!("ls:{}", dir.display()),
-                        df,
-                        None,
-                    );
-                    app.stack.push(new_view);
-                    
-                }
-                Err(e) => app.err(e),
+            if let Err(e) = CommandExecutor::exec(app, Box::new(Ls { dir })) {
+                app.err(e);
+            }
+        }
+        KeyCode::Char('r') => {
+            // r: Recursive directory listing
+            let dir = std::env::current_dir().unwrap_or_default();
+            if let Err(e) = CommandExecutor::exec(app, Box::new(Lr { dir })) {
+                app.err(e);
             }
         }
         KeyCode::Char('C') => {
@@ -633,7 +596,7 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
         }
         KeyCode::Char(':') => {
             // :: Jump to row number
-            if let Some(input) = prompt_input(app, "Go to row: ")? {
+            if let Some(input) = prompt(app, "Go to row: ")? {
                 if let Ok(row) = input.parse::<usize>() {
                     if let Some(view) = app.view_mut() {
                         let max_rows = view.rows();
@@ -852,7 +815,7 @@ fn handle_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
 }
 
 /// Strip quotes from polars string values
-fn strip_quotes(s: &str) -> String {
+fn unquote(s: &str) -> String {
     if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
         s[1..s.len()-1].to_string()
     } else {
@@ -861,13 +824,13 @@ fn strip_quotes(s: &str) -> String {
 }
 
 /// Get SQL hints for search/filter: LIKE patterns (%) + unique values with quotes
-fn get_sql_hints(df: &polars::prelude::DataFrame, col_name: &str, row: usize) -> Vec<String> {
+fn hints(df: &polars::prelude::DataFrame, col_name: &str, row: usize) -> Vec<String> {
     let mut items = Vec::new();
     if let Ok(col) = df.column(col_name) {
         let is_str = matches!(col.dtype(), polars::prelude::DataType::String);
         if is_str {
             if let Ok(val) = col.get(row) {
-                let v = strip_quotes(&val.to_string());
+                let v = unquote(&val.to_string());
                 if v.len() >= 2 {
                     items.push(format!("{} LIKE '{}%'", col_name, &v[..2]));
                     items.push(format!("{} LIKE '%{}'", col_name, &v[v.len()-2..]));
@@ -877,7 +840,7 @@ fn get_sql_hints(df: &polars::prelude::DataFrame, col_name: &str, row: usize) ->
         if let Ok(uniq) = col.unique() {
             for i in 0..uniq.len() {
                 if let Ok(v) = uniq.get(i) {
-                    let val = strip_quotes(&v.to_string());
+                    let val = unquote(&v.to_string());
                     if is_str {
                         items.push(format!("{} = '{}'", col_name, val));
                     } else {
@@ -891,7 +854,7 @@ fn get_sql_hints(df: &polars::prelude::DataFrame, col_name: &str, row: usize) ->
 }
 
 /// Find rows matching SQL WHERE expression, returns row indices
-fn find_sql(df: &polars::prelude::DataFrame, expr: &str) -> Vec<usize> {
+fn find(df: &polars::prelude::DataFrame, expr: &str) -> Vec<usize> {
     use polars::prelude::*;
     let mut ctx = polars::sql::SQLContext::new();
     let with_idx = df.clone().lazy().with_row_index("__idx__", None);
@@ -907,73 +870,9 @@ fn find_sql(df: &polars::prelude::DataFrame, expr: &str) -> Vec<usize> {
         .unwrap_or_default()
 }
 
-/// Filter DataFrame by matching any of the given values in a column (SQL IN)
-fn filter_by_values(df: &polars::prelude::DataFrame, c: &str, values: &[String]) -> anyhow::Result<polars::prelude::DataFrame> {
-    use polars::prelude::*;
-    let is_str = matches!(df.column(c)?.dtype(), DataType::String);
-    let vals = values.iter().map(|v| if is_str { format!("'{}'", v) } else { v.clone() }).collect::<Vec<_>>().join(",");
-    let mut ctx = polars::sql::SQLContext::new();
-    ctx.register("df", df.clone().lazy());
-    Ok(ctx.execute(&format!("SELECT * FROM df WHERE {} IN ({})", c, vals))?.collect()?)
-}
-
-/// Aggregate dataframe by column
-fn aggregate_by(df: &polars::prelude::DataFrame, col_name: &str, agg_fn: &str) -> anyhow::Result<polars::prelude::DataFrame> {
-    use polars::prelude::*;
-
-    let grouped = df.clone().lazy().group_by([col(col_name)]);
-
-    let result = match agg_fn {
-        "count" => grouped.agg([col("*").count().alias("count")]),
-        "sum" => grouped.agg([col("*").sum()]),
-        "mean" => grouped.agg([col("*").mean()]),
-        "min" => grouped.agg([col("*").min()]),
-        "max" => grouped.agg([col("*").max()]),
-        "std" => grouped.agg([col("*").std(1)]),
-        _ => return Err(anyhow::anyhow!("Unknown aggregation function")),
-    };
-
-    Ok(result.collect()?)
-}
-
-/// List directory contents as a DataFrame
-fn list_directory(dir: &std::path::Path) -> anyhow::Result<polars::prelude::DataFrame> {
-    use polars::prelude::*;
-    use std::os::unix::fs::MetadataExt;
-
-    let mut names: Vec<String> = Vec::new();
-    let mut sizes: Vec<u64> = Vec::new();
-    let mut modified: Vec<String> = Vec::new();
-    let mut is_dir: Vec<bool> = Vec::new();
-
-    for entry in std::fs::read_dir(dir)? {
-        let entry = entry?;
-        let meta = entry.metadata()?;
-        let name = entry.file_name().to_string_lossy().to_string();
-
-        names.push(name);
-        sizes.push(meta.size());
-        is_dir.push(meta.is_dir());
-
-        // Format modification time
-        modified.push(chrono::DateTime::from_timestamp(meta.mtime(), 0)
-            .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
-            .unwrap_or_default());
-    }
-
-    let df = DataFrame::new(vec![
-        Series::new("name".into(), names).into(),
-        Series::new("size".into(), sizes).into(),
-        Series::new("modified".into(), modified).into(),
-        Series::new("dir".into(), is_dir).into(),
-    ])?;
-
-    Ok(df)
-}
-
 /// Prompt user for input
 /// Returns None if user cancels (Esc)
-fn prompt_input(app: &mut AppContext, prompt: &str) -> Result<Option<String>> {
+fn prompt(app: &mut AppContext, prompt: &str) -> Result<Option<String>> {
     // Render current screen first
     Renderer::render(app)?;
 
@@ -1036,17 +935,17 @@ mod tests {
     }
 
     #[test]
-    fn test_find_sql_exact() {
+    fn test_find_exact() {
         let df = make_test_df();
-        assert_eq!(find_sql(&df, "name = 'banana'"), vec![1]);
-        assert_eq!(find_sql(&df, "name = 'notfound'"), vec![]);
+        assert_eq!(find(&df, "name = 'banana'"), vec![1]);
+        assert_eq!(find(&df, "name = 'notfound'"), vec![]);
     }
 
     #[test]
-    fn test_find_sql_like() {
+    fn test_find_like() {
         let df = make_test_df();
-        assert_eq!(find_sql(&df, "name LIKE 'b%'"), vec![1, 5]);  // banana, blueberry
-        assert_eq!(find_sql(&df, "name LIKE '%rry'"), vec![2, 5]);  // cherry, blueberry
-        assert_eq!(find_sql(&df, "name LIKE '%apple%'"), vec![0, 3]);  // apple, pineapple
+        assert_eq!(find(&df, "name LIKE 'b%'"), vec![1, 5]);  // banana, blueberry
+        assert_eq!(find(&df, "name LIKE '%rry'"), vec![2, 5]);  // cherry, blueberry
+        assert_eq!(find(&df, "name LIKE '%apple%'"), vec![0, 3]);  // apple, pineapple
     }
 }
