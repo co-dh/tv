@@ -102,8 +102,18 @@ Filtering pushes a new view onto the stack. Press `q` to return.
 |-----|--------|
 | `L` | Load file |
 | `S` | Save to file |
-| `l` | List current directory |
-| `r` | List directory recursively |
+| `l` | List current directory (name, size, modified, dir) |
+| `r` | List directory recursively (path, size, modified, dir) |
+
+### Display
+
+| Key | Action |
+|-----|--------|
+| `I` | Toggle info box |
+| `,` | Decrease float decimal places |
+| `.` | Increase float decimal places |
+
+Numbers display with comma separators (e.g., 1,000,000). Floats show 3 decimal places by default.
 
 ### Other
 
