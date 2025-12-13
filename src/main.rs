@@ -220,6 +220,14 @@ fn on_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
             // I: Toggle info box
             app.show_info = !app.show_info;
         }
+        KeyCode::Char('.') => {
+            app.float_decimals = (app.float_decimals + 1).min(10);
+            app.msg(format!("Float decimals: {}", app.float_decimals));
+        }
+        KeyCode::Char(',') => {
+            app.float_decimals = app.float_decimals.saturating_sub(1);
+            app.msg(format!("Float decimals: {}", app.float_decimals));
+        }
         KeyCode::Char('L') => {
             // L: Load file
             if let Some(file_path) = prompt(app, "Load file: ")? {

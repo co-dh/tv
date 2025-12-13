@@ -21,6 +21,7 @@ impl Renderer {
         let message = app.message.clone();
         let stack_len = app.stack.len();
         let show_info = app.show_info;
+        let decimals = app.float_decimals;
 
         // Use buffered writer to reduce flickering
         let mut stdout = BufWriter::new(io::stdout());
@@ -30,7 +31,7 @@ impl Renderer {
             let selected_cols = view.selected_cols.clone();
             let selected_rows = view.selected_rows.clone();
             let view_name = view.name.clone();
-            Self::render_table(view, rows, cols, &selected_cols, &selected_rows, &mut stdout)?;
+            Self::render_table(view, rows, cols, &selected_cols, &selected_rows, decimals, &mut stdout)?;
             if show_info {
                 Self::render_info_box(&view_name, stack_len, rows, cols, &mut stdout)?;
             }
@@ -44,7 +45,7 @@ impl Renderer {
     }
 
     /// Render the table data
-    fn render_table<W: Write>(view: &mut ViewState, rows: u16, cols: u16, selected_cols: &HashSet<usize>, selected_rows: &HashSet<usize>, writer: &mut W) -> Result<()> {
+    fn render_table<W: Write>(view: &mut ViewState, rows: u16, cols: u16, selected_cols: &HashSet<usize>, selected_rows: &HashSet<usize>, decimals: usize, writer: &mut W) -> Result<()> {
         let df = &view.dataframe;
         let is_correlation = view.name == "correlation";
 
@@ -105,7 +106,7 @@ impl Renderer {
             let screen_row = (row_idx - state.r0 + 1) as u16;
             execute!(writer, cursor::MoveTo(0, screen_row))?;
 
-            Self::render_row_xs(df, row_idx, state, &xs, screen_width, row_num_width, is_correlation, selected_cols, selected_rows, writer)?;
+            Self::render_row_xs(df, row_idx, state, &xs, screen_width, row_num_width, is_correlation, selected_cols, selected_rows, decimals, writer)?;
         }
 
         // Clear empty rows between data and status bar
@@ -183,7 +184,7 @@ impl Renderer {
     }
 
     /// Render a single data row using xs positions (qtv style)
-    fn render_row_xs<W: Write>(df: &DataFrame, row_idx: usize, state: &TableState, xs: &[i32], screen_width: i32, row_num_width: u16, is_correlation: bool, selected_cols: &HashSet<usize>, selected_rows: &HashSet<usize>, writer: &mut W) -> Result<()> {
+    fn render_row_xs<W: Write>(df: &DataFrame, row_idx: usize, state: &TableState, xs: &[i32], screen_width: i32, row_num_width: u16, is_correlation: bool, selected_cols: &HashSet<usize>, selected_rows: &HashSet<usize>, decimals: usize, writer: &mut W) -> Result<()> {
         let is_current_row = row_idx == state.cr;
         let is_selected_row = selected_rows.contains(&row_idx);
 
@@ -218,7 +219,7 @@ impl Renderer {
             let is_selected = selected_cols.contains(&col_idx);
 
             let col_width = state.col_widths.get(col_idx).copied().unwrap_or(10);
-            let value = Self::format_value(df, col_idx, row_idx);
+            let value = Self::format_value(df, col_idx, row_idx, decimals);
 
             // Get correlation color if applicable (skip first column which is row names)
             let corr_color = if is_correlation && col_idx > 0 {
@@ -299,16 +300,31 @@ impl Renderer {
     }
 
     /// Format a single cell value
-    fn format_value(df: &DataFrame, col_idx: usize, row_idx: usize) -> String {
+    fn format_value(df: &DataFrame, col_idx: usize, row_idx: usize, decimals: usize) -> String {
         let col = df.get_columns()[col_idx].as_materialized_series();
-        if matches!(col.dtype(), DataType::String) {
-            col.str()
-                .ok()
-                .and_then(|s| s.get(row_idx))
-                .unwrap_or("null")
-                .to_string()
-        } else {
-            col.get(row_idx).map(|v| v.to_string()).unwrap_or_else(|_| "null".to_string())
+        match col.dtype() {
+            DataType::String => col.str().ok().and_then(|s| s.get(row_idx)).unwrap_or("null").to_string(),
+            DataType::Int8 | DataType::Int16 | DataType::Int32 | DataType::Int64 |
+            DataType::UInt8 | DataType::UInt16 | DataType::UInt32 | DataType::UInt64 => {
+                col.get(row_idx).map(|v| Self::commify_str(&v.to_string())).unwrap_or_else(|_| "null".to_string())
+            }
+            DataType::Float32 | DataType::Float64 => {
+                col.get(row_idx).map(|v| {
+                    let s = match v {
+                        AnyValue::Float32(f) => format!("{:.prec$}", f, prec = decimals),
+                        AnyValue::Float64(f) => format!("{:.prec$}", f, prec = decimals),
+                        _ => v.to_string(),
+                    };
+                    Self::commify_float(&s)
+                }).unwrap_or_else(|_| "null".to_string())
+            }
+            DataType::Datetime(_, _) => {
+                col.get(row_idx).map(|v| {
+                    let s = v.to_string();
+                    if s.len() >= 16 { s[..16].to_string() } else { s }
+                }).unwrap_or_else(|_| "null".to_string())
+            }
+            _ => col.get(row_idx).map(|v| v.to_string()).unwrap_or_else(|_| "null".to_string()),
         }
     }
 
@@ -324,9 +340,9 @@ impl Renderer {
         let start_row = state.cr.saturating_sub(sample_size / 2);
         let end_row = (start_row + sample_size).min(df.height());
 
-        // Check widths in the sample
+        // Check widths in the sample (use 3 decimals for width calc)
         for row_idx in start_row..end_row {
-            let value = Self::format_value(df, col_idx, row_idx);
+            let value = Self::format_value(df, col_idx, row_idx, 3);
             max_width = max_width.max(value.len());
 
             // Early exit if we hit max width
@@ -339,15 +355,27 @@ impl Renderer {
     }
 
     /// Format number with commas (e.g., 1000000 -> "1,000,000")
-    fn commify(n: usize) -> String {
+    fn commify(n: usize) -> String { Self::commify_str(&n.to_string()) }
+
+    /// Format integer string with commas
+    fn commify_str(s: &str) -> String {
+        let (neg, s) = if s.starts_with('-') { (true, &s[1..]) } else { (false, s) };
         let mut result = String::new();
-        for (i, c) in n.to_string().chars().rev().enumerate() {
-            if i > 0 && i % 3 == 0 {
-                result.push(',');
-            }
+        for (i, c) in s.chars().rev().enumerate() {
+            if i > 0 && i % 3 == 0 { result.push(','); }
             result.push(c);
         }
+        if neg { result.push('-'); }
         result.chars().rev().collect()
+    }
+
+    /// Format float string with commas in integer part
+    fn commify_float(s: &str) -> String {
+        if let Some(dot) = s.find('.') {
+            format!("{}{}", Self::commify_str(&s[..dot]), &s[dot..])
+        } else {
+            Self::commify_str(s)
+        }
     }
 
     /// Calculate column statistics for status bar
@@ -458,6 +486,7 @@ impl Renderer {
                 ("^U", "page up"),
                 ("L", "load file"),
                 ("S", "save file"),
+                (",/.", "decimals"),
                 ("q", "quit"),
             ]
         };

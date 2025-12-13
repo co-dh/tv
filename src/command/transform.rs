@@ -65,7 +65,9 @@ pub struct RenameCol { pub old_name: String, pub new_name: String }
 
 impl Command for RenameCol {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
-        app.req_mut()?.dataframe.rename(&self.old_name, self.new_name.as_str().into())?;
+        let v = app.req_mut()?;
+        v.dataframe.rename(&self.old_name, self.new_name.as_str().into())?;
+        v.state.col_widths.clear(); // force width recalc
         Ok(())
     }
     fn to_str(&self) -> String { format!("rename {} {}", self.old_name, self.new_name) }

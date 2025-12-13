@@ -20,6 +20,7 @@ pub struct AppContext {
     pub search: SearchState,       // search state
     pub bookmarks: Vec<usize>,     // bookmarked rows
     pub show_info: bool,           // toggle info box
+    pub float_decimals: usize,     // decimal places for floats
 }
 
 impl AppContext {
@@ -32,6 +33,7 @@ impl AppContext {
             search: SearchState::default(),
             bookmarks: Vec::new(),
             show_info: true,
+            float_decimals: 3,
         }
     }
 
