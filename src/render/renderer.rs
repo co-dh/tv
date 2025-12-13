@@ -285,27 +285,31 @@ impl Renderer {
         Ok(())
     }
 
-    /// Get color for correlation value
+    /// Get color for correlation value using smooth RGB gradient
     fn correlation_color(value: &str) -> Option<Color> {
         let v: f64 = value.parse().ok()?;
+        let v = v.clamp(-1.0, 1.0);
 
-        // Color based on correlation strength
-        // Strong positive: bright green
-        // Weak positive: dark green
-        // Near zero: gray
-        // Weak negative: dark red
-        // Strong negative: bright red
-        Some(if v >= 0.7 {
-            Color::Green
-        } else if v >= 0.3 {
-            Color::DarkGreen
-        } else if v > -0.3 {
-            Color::DarkGrey
-        } else if v > -0.7 {
-            Color::DarkRed
+        // Diverging colormap: Red (-1) -> Gray (0) -> Green (+1)
+        let (r, g, b) = if v < 0.0 {
+            // Negative: interpolate from red to gray
+            let t = (v + 1.0) as f32; // 0 to 1 as v goes from -1 to 0
+            (
+                255,
+                (180.0 * t) as u8,      // 0 -> 180
+                (180.0 * t) as u8,      // 0 -> 180
+            )
         } else {
-            Color::Red
-        })
+            // Positive: interpolate from gray to green
+            let t = v as f32; // 0 to 1 as v goes from 0 to 1
+            (
+                (180.0 * (1.0 - t)) as u8,  // 180 -> 0
+                (180.0 + 75.0 * t) as u8,   // 180 -> 255
+                (180.0 * (1.0 - t)) as u8,  // 180 -> 0
+            )
+        };
+
+        Some(Color::Rgb { r, g, b })
     }
 
     /// Format a single cell value
