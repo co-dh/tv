@@ -53,7 +53,7 @@ impl Renderer {
         if view.state.need_widths() {
             // Calculate base widths for all columns
             let widths: Vec<u16> = (0..df.width())
-                .map(|col_idx| Self::calculate_column_width(df, col_idx, &view.state))
+                .map(|col_idx| Self::calculate_column_width(df, col_idx, &view.state, decimals))
                 .collect();
 
             view.state.col_widths = widths;
@@ -330,7 +330,7 @@ impl Renderer {
     }
 
     /// Calculate column width by sampling data around current row
-    fn calculate_column_width(df: &DataFrame, col_idx: usize, state: &TableState) -> u16 {
+    fn calculate_column_width(df: &DataFrame, col_idx: usize, state: &TableState, decimals: usize) -> u16 {
         const MAX_WIDTH: usize = 30;
         const MIN_WIDTH: usize = 3;
 
@@ -341,15 +341,11 @@ impl Renderer {
         let start_row = state.cr.saturating_sub(sample_size / 2);
         let end_row = (start_row + sample_size).min(df.height());
 
-        // Check widths in the sample (use 3 decimals for width calc)
         for row_idx in start_row..end_row {
-            let value = Self::format_value(df, col_idx, row_idx, 3);
+            let value = Self::format_value(df, col_idx, row_idx, decimals);
             max_width = max_width.max(value.len());
 
-            // Early exit if we hit max width
-            if max_width >= MAX_WIDTH {
-                break;
-            }
+            if max_width >= MAX_WIDTH { break; }
         }
 
         max_width.max(MIN_WIDTH).min(MAX_WIDTH) as u16
