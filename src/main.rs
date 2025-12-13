@@ -327,7 +327,9 @@ fn on_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                 let cmd = plugins.handle(&name, "delete", app);
                 app.plugins = plugins;
                 if let Some(cmd) = cmd {
-                    let _ = CommandExecutor::exec(app, cmd);
+                    if let Err(e) = CommandExecutor::exec(app, cmd) {
+                        app.err(e);
+                    }
                 } else {
                     // Default table delete
                     let col_names: Vec<String> = app.view().map(|view| {
@@ -475,7 +477,9 @@ fn on_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                 let cmd = plugins.handle(&name, "enter", app);
                 app.plugins = plugins;
                 if let Some(cmd) = cmd {
-                    let _ = CommandExecutor::exec(app, cmd);
+                    if let Err(e) = CommandExecutor::exec(app, cmd) {
+                        app.err(e);
+                    }
                 }
             }
         }

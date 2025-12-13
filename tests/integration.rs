@@ -556,6 +556,28 @@ fn test_ls_sorted_by_name() {
     assert!(mango_pos < zebra_pos, "mango should come before zebra");
 }
 
+#[test]
+fn test_load_ragged_csv_truncates() {
+    let id = unique_id();
+    let path = format!("/tmp/tv_ragged_csv_{}.csv", id);
+    // Create csv with inconsistent columns - should truncate ragged lines
+    fs::write(&path, "a,b,c\n1,2\n3,4,5,6\n").unwrap();
+
+    let output = run_script(&format!("from {}\n", path), id);
+    // Should load with truncated ragged lines
+    assert!(output.contains("(2 rows)"),
+        "Ragged csv should load with truncation, got: {}", output);
+}
+
+#[test]
+fn test_load_nonexistent_file_error() {
+    let id = unique_id();
+    let output = run_script("from /nonexistent/path/file.csv\n", id);
+    // Should show "No table loaded" since file doesn't exist
+    assert!(output.contains("No table loaded"),
+        "Loading nonexistent file should result in no table");
+}
+
 // === meta tests (from test_meta.sh) ===
 
 #[test]

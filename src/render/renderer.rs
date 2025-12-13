@@ -4,6 +4,7 @@ use crate::theme::Theme;
 use polars::prelude::*;
 use ratatui::prelude::*;
 use ratatui::style::{Color as RColor, Modifier, Style};
+use ratatui::widgets::Tabs;
 use std::collections::HashSet;
 
 pub struct Renderer;
@@ -14,6 +15,7 @@ impl Renderer {
         let area = frame.area();
         let message = app.message.clone();
         let stack_len = app.stack.len();
+        let stack_names = app.stack.names();
         let show_info = app.show_info;
         let decimals = app.float_decimals;
 
@@ -30,6 +32,7 @@ impl Renderer {
             if show_info {
                 Self::render_info_box(frame, &view_name, stack_len, area, &hints, &theme);
             }
+            Self::render_tabs(frame, &stack_names, area, &theme);
             Self::render_status_bar(frame, view, &message, area, &theme);
         } else {
             Self::render_empty_message(frame, &message, area);
@@ -424,6 +427,20 @@ impl Renderer {
 
         let para = Paragraph::new(lines).block(block);
         frame.render_widget(para, box_area);
+    }
+
+    /// Render view stack as tabs
+    fn render_tabs(frame: &mut Frame, names: &[String], area: Rect, theme: &Theme) {
+        if names.len() <= 1 { return; }  // don't show tabs for single view
+        let row = area.height - 2;
+        let tab_area = Rect::new(0, row, area.width, 1);
+        let selected = names.len().saturating_sub(1);  // last is current
+        let tabs = Tabs::new(names.iter().map(|s| s.as_str()))
+            .select(selected)
+            .style(Style::default().fg(to_rcolor(theme.status_fg)))
+            .highlight_style(Style::default().fg(to_rcolor(theme.header_fg)).add_modifier(Modifier::BOLD))
+            .divider("│");
+        frame.render_widget(tabs, tab_area);
     }
 
     /// Render status bar

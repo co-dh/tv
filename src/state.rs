@@ -154,6 +154,11 @@ impl StateStack {
         let n = self.stack.len();
         if n >= 2 { self.stack.swap(n - 1, n - 2); }
     }
+
+    /// Get names of all views in stack
+    pub fn names(&self) -> Vec<String> {
+        self.stack.iter().map(|v| v.name.clone()).collect()
+    }
 }
 
 #[cfg(test)]
@@ -208,5 +213,18 @@ mod tests {
 
         state.center_if_needed();
         assert_eq!(state.r0, 0, "r0 should not change when cursor is at last visible row");
+    }
+
+    #[test]
+    fn test_stack_names() {
+        use polars::prelude::*;
+        let df = DataFrame::default();
+        let mut stack = StateStack::new();
+        stack.push(ViewState::new(0, "view1".into(), df.clone(), None));
+        stack.push(ViewState::new(1, "view2".into(), df.clone(), None));
+        stack.push(ViewState::new(2, "view3".into(), df, None));
+
+        let names = stack.names();
+        assert_eq!(names, vec!["view1", "view2", "view3"]);
     }
 }
