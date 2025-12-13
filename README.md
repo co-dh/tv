@@ -16,7 +16,7 @@ The binary will be at `./target/release/tv`.
 # Open a file
 tv data.csv
 tv data.parquet
-tv large.csv.gz  # streams first 1GB for preview
+tv large.csv.gz  # streams 1k rows instantly, continues loading in background
 
 # Run inline commands (PRQL/SQL syntax)
 tv -c "from data.csv | filter age > 30 | save filtered.parquet"
@@ -126,9 +126,11 @@ Numbers display with comma separators (e.g., 1,000,000). Floats show 3 decimal p
 | Key | Action |
 |-----|--------|
 | `Ctrl+C` | Force quit |
-| `Enter` | (In frequency view) Filter parent table by selected value(s) |
+| `Enter` | (In Freq view) Filter parent by selected value(s); (In Meta view) Focus/xkey selected column(s) |
 
 In Frequency view: use `Space` to select multiple values, then `Enter` to filter parent table by all selected values.
+
+In Meta view: `Enter` on single row focuses that column in parent; multiple selected rows applies `xkey` to move them to front with separator.
 
 ## Status Bar
 
@@ -183,6 +185,7 @@ tv --script myscript.txt
 | `corr` | Correlation matrix (all numeric columns) |
 | `delcol <col1,col2>` | Delete column(s) |
 | `select <col1,col2>` | Select columns |
+| `xkey <col1,col2>` | Move columns to front as key columns (with separator) |
 | `rename <old> <new>` | Rename column |
 | `quit` | Exit script |
 
@@ -218,13 +221,18 @@ tv --script myscript.txt
 tv supports streaming large `.csv.gz` files:
 
 ```bash
-# Load gzipped CSV (streams first 1GB for preview)
+# Load gzipped CSV (shows 1k rows instantly, streams more in background)
 tv large_data.csv.gz
 
 # Save to parquet (streams entire file, creates sequential chunks)
 # Creates: output_001.parquet, output_002.parquet, ...
 tv -c "from large.csv.gz | save output.parquet"
 ```
+
+Background streaming behavior:
+- Shows first 1,000 rows immediately for fast startup
+- Continues loading in background up to 10% of system memory (configurable via `gz_mem_pct` in `cfg/config.csv`)
+- Data automatically merges as it loads
 
 When saving a gzipped CSV to parquet:
 - Streams through the entire file using `zcat`
@@ -250,3 +258,7 @@ default,header_bg,#282832
 default,header_fg,#ffffff
 ...
 ```
+
+## Command History
+
+Commands are logged to `~/.tv/history`. This file records all commands executed through the command executor.

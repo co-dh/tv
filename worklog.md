@@ -1,5 +1,57 @@
 # Worklog
 
+## 2025-12-13: Performance, Rendering & xkey
+
+### Commits
+- `635250b` - Migrate renderer to ratatui for flicker-free updates
+- `7175298` - Add TAQ time format conversion (HHMMSSNNNNNNNN)
+- `2bd3ab9` - Auto-convert epoch integers to datetime in columns with time-like names
+- `68a0be0` - Fix streaming gz save with TAQ time columns
+- `5c5545f` - Add tests/data/ to gitignore for large test files
+
+### Changes
+- **Ratatui migration**: Replaced raw crossterm rendering with ratatui's diff-based terminal update
+  - Eliminates screen flicker when moving cursor
+  - Uses `Terminal<CrosstermBackend>` with `frame.draw()` API
+  - New `src/render/terminal.rs` for terminal lifecycle
+
+- **Background gz streaming**: Large .csv.gz files now stream in background
+  - Shows first 1,000 rows immediately
+  - Continues loading in background up to 10% of system memory
+  - Configurable via `gz_mem_pct` in `cfg/config.csv`
+  - Uses mpsc channels for thread communication
+
+- **Stats caching**: Column statistics cached to avoid expensive recomputation
+  - `n_unique()` and `value_counts()` only called when column changes
+  - Makes scrolling through 5M+ rows responsive
+
+- **Streaming save fix**: Fixed "could not find an appropriate format to parse times" error
+  - Don't use converted schema for streaming save
+  - Apply `convert_epoch_cols` per chunk during streaming
+
+- **xkey command**: Move columns to front as key columns
+  - `xkey col1,col2` reorders dataframe with specified columns first
+  - Draws vertical separator bar after key columns
+  - Selects the key columns
+  - In Meta view, Enter on multiple selected rows applies xkey
+
+- **Command history**: Log commands to `~/.tv/history`
+  - Creates `~/.tv/` directory if needed
+  - Appends commands via executor
+
+- **Delete feedback**: Shows "N columns deleted" message
+
+### Files Modified
+- `src/render/mod.rs` - new module with init/restore
+- `src/render/terminal.rs` - ratatui terminal lifecycle
+- `src/render/renderer.rs` - Frame-based rendering, stats cache
+- `src/command/io.rs` - background streaming, streaming save fix
+- `src/app.rs` - bg_loader field, merge_bg_data()
+- `src/state.rs` - stats_cache field
+- `src/os.rs` - mem_total() function
+- `src/main.rs` - polling loop with 100ms timeout
+- `cfg/config.csv` - gz_mem_pct setting
+
 ## 2025-12-12: Arthur Whitney Style Refactor
 
 ### Commits

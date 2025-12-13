@@ -8,9 +8,19 @@ pub struct DelCol { pub col_names: Vec<String> }
 
 impl Command for DelCol {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
-        let v = app.req_mut()?;
-        for c in &self.col_names { v.dataframe = v.dataframe.drop(c)?; }
-        if v.state.cc >= v.cols() && v.cols() > 0 { v.state.cc = v.cols() - 1; }
+        let n = self.col_names.len();
+        {
+            let v = app.req_mut()?;
+            // Count how many deleted cols are before separator
+            let sep_adjust = if let Some(sep) = v.col_separator {
+                let all: Vec<String> = v.dataframe.get_column_names().iter().map(|s| s.to_string()).collect();
+                self.col_names.iter().filter(|c| all.iter().position(|n| n == *c).map(|i| i < sep).unwrap_or(false)).count()
+            } else { 0 };
+            for c in &self.col_names { v.dataframe = v.dataframe.drop(c)?; }
+            if let Some(sep) = v.col_separator { v.col_separator = Some(sep.saturating_sub(sep_adjust)); }
+            if v.state.cc >= v.cols() && v.cols() > 0 { v.state.cc = v.cols() - 1; }
+        }
+        app.msg(format!("{} columns deleted", n));
         Ok(())
     }
     fn to_str(&self) -> String { format!("delcol {}", self.col_names.join(",")) }
@@ -121,6 +131,27 @@ impl Command for FilterIn {
     }
     fn to_str(&self) -> String { format!("filter_in {} {:?}", self.col, self.values) }
     fn record(&self) -> bool { false }
+}
+
+/// Move columns to front as key columns (with separator)
+pub struct Xkey { pub col_names: Vec<String> }
+
+impl Command for Xkey {
+    fn exec(&mut self, app: &mut AppContext) -> Result<()> {
+        let v = app.req_mut()?;
+        let all: Vec<String> = v.dataframe.get_column_names().iter().map(|s| s.to_string()).collect();
+        let rest: Vec<String> = all.iter().filter(|c| !self.col_names.contains(c)).cloned().collect();
+        let mut order = self.col_names.clone();
+        order.extend(rest);
+        v.dataframe = v.dataframe.select(&order)?;
+        v.selected_cols.clear();
+        for i in 0..self.col_names.len() { v.selected_cols.insert(i); }
+        v.state.cc = 0;
+        v.state.col_widths.clear();
+        v.col_separator = Some(self.col_names.len());
+        Ok(())
+    }
+    fn to_str(&self) -> String { format!("xkey {}", self.col_names.join(",")) }
 }
 
 /// Take first n rows (PRQL take)

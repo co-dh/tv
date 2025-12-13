@@ -12,7 +12,7 @@ use anyhow::Result;
 use app::AppContext;
 use command::executor::CommandExecutor;
 use command::io::{Load, Save};
-use command::transform::{Agg, DelCol, Filter, FilterIn, RenameCol, Select, Sort, Take};
+use command::transform::{Agg, DelCol, Filter, FilterIn, RenameCol, Select, Sort, Take, Xkey};
 use command::view::{Correlation, Df, Dup, Env, Frequency, Lr, Ls, Lsblk, Lsof, Metadata, Mounts, Pop, Ps, Swap, Tcp, Udp, Who};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use crossterm::{cursor, execute, style::Print, terminal};
@@ -68,13 +68,18 @@ fn main() -> Result<()> {
 
     // Main event loop
     loop {
+        // Merge any background-loaded data
+        app.merge_bg_data();
+
         // Render with ratatui diff-based update
         tui.draw(|frame| Renderer::render(frame, &mut app))?;
 
-        // Handle events
-        if let Event::Key(key) = event::read()? {
-            if !on_key(&mut app, key)? {
-                break;
+        // Poll for events with timeout (allows background data merge)
+        if event::poll(std::time::Duration::from_millis(100))? {
+            if let Event::Key(key) = event::read()? {
+                if !on_key(&mut app, key)? {
+                    break;
+                }
             }
         }
     }
@@ -192,6 +197,7 @@ fn parse(line: &str, _app: &AppContext) -> Option<Box<dyn command::Command>> {
         }
         "sortdesc" => Some(Box::new(Sort { col_name: arg.to_string(), descending: true })),
         "take" => arg.parse().ok().map(|n| Box::new(Take { n }) as Box<dyn command::Command>),
+        "xkey" => Some(Box::new(Xkey { col_names: arg.split(',').map(|s| s.trim().to_string()).collect() })),
         "rename" => {
             let rename_parts: Vec<&str> = arg.splitn(2, ' ').collect();
             if rename_parts.len() == 2 {
@@ -313,12 +319,20 @@ fn on_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
 
             if let Some((is_meta, parent_id, col_names)) = delete_info {
                 if is_meta {
+                    let n = col_names.len();
                     if let Some(pid) = parent_id {
                         if let Some(parent) = app.stack.find_mut(pid) {
+                            // Adjust col_separator for deleted cols
+                            if let Some(sep) = parent.col_separator {
+                                let all: Vec<String> = parent.dataframe.get_column_names().iter().map(|s| s.to_string()).collect();
+                                let adj = col_names.iter().filter(|c| all.iter().position(|n| n == *c).map(|i| i < sep).unwrap_or(false)).count();
+                                parent.col_separator = Some(sep.saturating_sub(adj));
+                            }
                             for c in &col_names { let _ = parent.dataframe.drop_in_place(c); }
                         }
                     }
                     let _ = CommandExecutor::exec(app, Box::new(Pop));
+                    app.msg(format!("{} columns deleted", n));
                 } else if !col_names.is_empty() {
                     let _ = CommandExecutor::exec(app, Box::new(DelCol { col_names: col_names }));
                     if let Some(v) = app.view_mut() { v.selected_cols.clear(); }
@@ -480,28 +494,50 @@ fn on_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
             }
         }
         KeyCode::Enter => {
-            // Enter: Pop freq view, filter parent with selected value(s)
-            let filter_info: Option<(String, Vec<String>, Option<String>)> = app.view().and_then(|view| {
-                if let (Some(_), Some(freq_col)) = (view.parent_id, view.freq_col.clone()) {
-                    let rows: Vec<usize> = if view.selected_rows.is_empty() { vec![view.state.cr] }
-                                           else { view.selected_rows.iter().copied().collect() };
-                    let values: Vec<String> = rows.iter()
-                        .filter_map(|&r| view.dataframe.get_columns()[0].get(r).ok().map(|v| unquote(&v.to_string())))
-                        .collect();
-                    Some((freq_col, values, view.filename.clone()))
-                } else { None }
-            });
-            if let Some((freq_col, values, filename)) = filter_info {
-                let _ = CommandExecutor::exec(app, Box::new(Pop));  // Pop freq view first
-                if !values.is_empty() {
-                    let _ = CommandExecutor::exec(app, Box::new(FilterIn { col: freq_col.clone(), values, filename }));
-                    // Focus on the freq column in filtered view
-                    if let Some(v) = app.view_mut() {
-                        if let Some(idx) = v.dataframe.get_column_names().iter().position(|c| c.as_str() == freq_col) {
-                            v.state.cc = idx;
+            // Enter: In meta view, pop and focus column; in freq view, filter parent
+            let view_info = app.view().map(|v| (v.name.clone(), v.parent_id, v.freq_col.clone()));
+            match view_info {
+                Some((name, Some(_pid), None)) if name == "metadata" => {
+                    // Meta view: get selected column names, pop, apply xkey
+                    let col_names: Vec<String> = app.view().map(|v| {
+                        let rows: Vec<usize> = if v.selected_rows.is_empty() { vec![v.state.cr] }
+                                               else { let mut r: Vec<_> = v.selected_rows.iter().copied().collect(); r.sort(); r };
+                        rows.iter().filter_map(|&r| v.dataframe.get_columns()[0].get(r).ok().map(|v| unquote(&v.to_string()))).collect()
+                    }).unwrap_or_default();
+                    let _ = CommandExecutor::exec(app, Box::new(Pop));
+                    if col_names.len() == 1 {
+                        // Single: just focus
+                        if let Some(v) = app.view_mut() {
+                            if let Some(idx) = v.dataframe.get_column_names().iter().position(|c| c.as_str() == col_names[0]) {
+                                v.state.cc = idx;
+                            }
+                        }
+                    } else if !col_names.is_empty() {
+                        // Multiple: use xkey command
+                        let _ = CommandExecutor::exec(app, Box::new(Xkey { col_names }));
+                    }
+                }
+                Some((_, Some(_), Some(freq_col))) => {
+                    // Freq view: filter parent with selected value(s)
+                    let (values, filename) = app.view().map(|view| {
+                        let rows: Vec<usize> = if view.selected_rows.is_empty() { vec![view.state.cr] }
+                                               else { view.selected_rows.iter().copied().collect() };
+                        let vals: Vec<String> = rows.iter()
+                            .filter_map(|&r| view.dataframe.get_columns()[0].get(r).ok().map(|v| unquote(&v.to_string())))
+                            .collect();
+                        (vals, view.filename.clone())
+                    }).unwrap_or_default();
+                    let _ = CommandExecutor::exec(app, Box::new(Pop));
+                    if !values.is_empty() {
+                        let _ = CommandExecutor::exec(app, Box::new(FilterIn { col: freq_col.clone(), values, filename }));
+                        if let Some(v) = app.view_mut() {
+                            if let Some(idx) = v.dataframe.get_column_names().iter().position(|c| c.as_str() == freq_col) {
+                                v.state.cc = idx;
+                            }
                         }
                     }
                 }
+                _ => {}
             }
         }
         KeyCode::Char('c') => {

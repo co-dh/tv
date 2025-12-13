@@ -2,9 +2,11 @@ use crate::keymap::KeyMap;
 use crate::state::{StateStack, ViewState};
 use crate::theme::Theme;
 use anyhow::{anyhow, Result};
+use polars::prelude::DataFrame;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::PathBuf;
+use std::sync::mpsc::Receiver;
 
 /// Search state for n/N
 #[derive(Clone, Default)]
@@ -25,15 +27,21 @@ pub struct AppContext {
     pub float_decimals: usize,     // decimal places for floats
     pub keymap: KeyMap,            // key bindings
     pub theme: Theme,              // color theme
+    pub bg_loader: Option<Receiver<DataFrame>>,  // background gz loader
 }
 
 impl AppContext {
     pub fn new() -> Self {
         let keymap = KeyMap::load(std::path::Path::new("cfg/key.csv")).unwrap_or_default();
         let theme = Theme::load_active();
+        // History file: ~/.tv/history
+        let history_file = dirs::home_dir()
+            .map(|h| h.join(".tv").join("history"))
+            .unwrap_or_else(|| PathBuf::from("history"));
+        if let Some(dir) = history_file.parent() { let _ = std::fs::create_dir_all(dir); }
         Self {
             stack: StateStack::new(),
-            history_file: PathBuf::from("commands.txt"),
+            history_file,
             message: String::new(),
             next_id: 0,
             search: SearchState::default(),
@@ -42,6 +50,40 @@ impl AppContext {
             float_decimals: 3,
             keymap,
             theme,
+            bg_loader: None,
+        }
+    }
+
+    /// Merge any available background data into current view
+    pub fn merge_bg_data(&mut self) {
+        use std::sync::mpsc::TryRecvError;
+        let Some(rx) = &self.bg_loader else { return };
+
+        // Collect all available chunks (non-blocking)
+        let mut chunks: Vec<DataFrame> = Vec::new();
+        loop {
+            match rx.try_recv() {
+                Ok(df) => chunks.push(df),
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => {
+                    self.bg_loader = None;
+                    break;
+                }
+            }
+        }
+
+        if chunks.is_empty() { return; }
+
+        // Merge into current view (vertical stack)
+        if let Some(view) = self.stack.cur_mut() {
+            let old_rows = view.dataframe.height();
+            for chunk in chunks {
+                let _ = view.dataframe.vstack_mut(&chunk);
+            }
+            let new_rows = view.dataframe.height();
+            if new_rows > old_rows {
+                view.state.col_widths.clear();  // recalc widths
+            }
         }
     }
 

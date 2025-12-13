@@ -86,13 +86,30 @@ impl Renderer {
         // Visible area
         let end_row = (state.r0 + (area.height as usize).saturating_sub(2)).min(df.height());
 
+        let col_sep = view.col_separator;
+
         // Render headers
-        Self::render_headers_xs(frame, df, state, &xs, screen_width, row_num_width, selected_cols, theme, area);
+        Self::render_headers_xs(frame, df, state, &xs, screen_width, row_num_width, selected_cols, col_sep, theme, area);
 
         // Render data rows
         for row_idx in state.r0..end_row {
             let screen_row = (row_idx - state.r0 + 1) as u16;
-            Self::render_row_xs(frame, df, row_idx, state, &xs, screen_width, row_num_width, is_correlation, selected_cols, selected_rows, decimals, theme, area, screen_row);
+            Self::render_row_xs(frame, df, row_idx, state, &xs, screen_width, row_num_width, is_correlation, selected_cols, selected_rows, col_sep, decimals, theme, area, screen_row);
+        }
+
+        // Draw separator bar if set
+        if let Some(sep_col) = col_sep {
+            if sep_col < df.width() {
+                let sep_x = xs.get(sep_col).copied().unwrap_or(0);
+                if sep_x > 0 && sep_x < screen_width {
+                    let px = (sep_x - 1) as u16 + row_num_width + if row_num_width > 0 { 1 } else { 0 };
+                    let buf = frame.buffer_mut();
+                    let sep_style = Style::default().fg(to_rcolor(theme.info_border_fg));
+                    for y in 0..(area.height - 1) {
+                        if px < area.width { buf[(px, y)].set_char('│').set_style(sep_style); }
+                    }
+                }
+            }
         }
 
         // Clear empty rows
@@ -105,7 +122,7 @@ impl Renderer {
     }
 
     /// Render column headers
-    fn render_headers_xs(frame: &mut Frame, df: &DataFrame, state: &TableState, xs: &[i32], screen_width: i32, row_num_width: u16, selected_cols: &HashSet<usize>, theme: &Theme, area: Rect) {
+    fn render_headers_xs(frame: &mut Frame, df: &DataFrame, state: &TableState, xs: &[i32], screen_width: i32, row_num_width: u16, selected_cols: &HashSet<usize>, _col_sep: Option<usize>, theme: &Theme, area: Rect) {
         let buf = frame.buffer_mut();
         let header_style = Style::default().bg(to_rcolor(theme.header_bg)).fg(to_rcolor(theme.header_fg)).add_modifier(Modifier::BOLD);
 
@@ -159,7 +176,7 @@ impl Renderer {
     }
 
     /// Render a single data row
-    fn render_row_xs(frame: &mut Frame, df: &DataFrame, row_idx: usize, state: &TableState, xs: &[i32], screen_width: i32, row_num_width: u16, is_correlation: bool, selected_cols: &HashSet<usize>, selected_rows: &HashSet<usize>, decimals: usize, theme: &Theme, area: Rect, screen_row: u16) {
+    fn render_row_xs(frame: &mut Frame, df: &DataFrame, row_idx: usize, state: &TableState, xs: &[i32], screen_width: i32, row_num_width: u16, is_correlation: bool, selected_cols: &HashSet<usize>, selected_rows: &HashSet<usize>, _col_sep: Option<usize>, decimals: usize, theme: &Theme, area: Rect, screen_row: u16) {
         let buf = frame.buffer_mut();
         let is_cur_row = row_idx == state.cr;
         let is_sel_row = selected_rows.contains(&row_idx);
@@ -404,7 +421,7 @@ impl Renderer {
     }
 
     /// Render status bar
-    fn render_status_bar(frame: &mut Frame, view: &ViewState, message: &str, area: Rect, theme: &Theme) {
+    fn render_status_bar(frame: &mut Frame, view: &mut ViewState, message: &str, area: Rect, theme: &Theme) {
         let row = area.height - 1;
         let buf = frame.buffer_mut();
         let style = Style::default().bg(to_rcolor(theme.status_bg)).fg(to_rcolor(theme.status_fg));
@@ -418,7 +435,22 @@ impl Renderer {
         else if view.name.starts_with("Freq:") || view.name == "metadata" { view.name.clone() }
         else { view.filename.as_deref().unwrap_or("(no file)").to_string() };
 
-        let col_stats = if view.cols() > 0 { Self::column_stats(&view.dataframe, view.state.cc) } else { String::new() };
+        // Use cached stats if column unchanged
+        let col_stats = if view.cols() > 0 {
+            let cc = view.state.cc;
+            if let Some((cached_cc, ref s)) = view.stats_cache {
+                if cached_cc == cc { s.clone() }
+                else {
+                    let s = Self::column_stats(&view.dataframe, cc);
+                    view.stats_cache = Some((cc, s.clone()));
+                    s
+                }
+            } else {
+                let s = Self::column_stats(&view.dataframe, cc);
+                view.stats_cache = Some((cc, s.clone()));
+                s
+            }
+        } else { String::new() };
 
         let right = if col_stats.is_empty() { format!("{}/{}", view.state.cr, total_str) }
         else { format!("{} {}/{}", col_stats, view.state.cr, total_str) };

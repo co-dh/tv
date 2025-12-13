@@ -396,3 +396,16 @@ pub fn env() -> anyhow::Result<DataFrame> {
         Series::new("value".into(), values).into(),
     ])?)
 }
+
+/// Get total system memory in bytes from /proc/meminfo
+pub fn mem_total() -> u64 {
+    fs::read_to_string("/proc/meminfo").ok()
+        .and_then(|s| {
+            s.lines()
+                .find(|l| l.starts_with("MemTotal:"))
+                .and_then(|l| l.split_whitespace().nth(1))
+                .and_then(|v| v.parse::<u64>().ok())
+                .map(|kb| kb * 1024)
+        })
+        .unwrap_or(8 * 1024 * 1024 * 1024)  // default 8GB
+}

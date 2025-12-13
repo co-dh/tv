@@ -1,13 +1,18 @@
 use crate::app::AppContext;
 use crate::command::Command;
+use crate::os;
 use crate::state::ViewState;
+use crate::theme::load_config_value;
 use anyhow::{anyhow, Result};
 use polars::prelude::*;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
-use std::process::{Command as Cmd, Stdio};
+use std::process::{ChildStdout, Command as Cmd, Stdio};
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::thread;
 
 const MAX_PREVIEW_ROWS: usize = 1000;  // preview row limit
+const BG_CHUNK_ROWS: usize = 100_000;  // rows per background chunk
 
 /// Load file command (CSV, Parquet, or gzipped CSV)
 pub struct Load {
@@ -24,12 +29,14 @@ impl Command for Load {
         let is_gz = fname.ends_with(".gz");
 
         if is_gz {
-            let df = convert_epoch_cols(self.load_csv_gz(path)?);
+            let (df, bg_rx) = self.load_csv_gz_streaming(path)?;
+            let df = convert_epoch_cols(df);
             if df.height() == 0 { return Err(anyhow!("File is empty")); }
             app.stack = crate::state::StateStack::init(ViewState::new_gz(
                 app.next_id(), self.file_path.clone(), df,
                 Some(self.file_path.clone()), self.file_path.clone(),
             ));
+            app.bg_loader = bg_rx;
         } else {
             let df = match path.extension().and_then(|s| s.to_str()) {
                 Some("csv") => convert_epoch_cols(self.load_csv(path)?),
@@ -65,8 +72,8 @@ impl Load {
             .map_err(|e| anyhow!("Failed to read Parquet: {}", e))
     }
 
-    /// Load first N rows from gzipped CSV using zcat, auto-detect delimiter
-    fn load_csv_gz(&self, path: &Path) -> Result<DataFrame> {
+    /// Load preview rows, spawn background thread to continue loading
+    fn load_csv_gz_streaming(&self, path: &Path) -> Result<(DataFrame, Option<Receiver<DataFrame>>)> {
         let mut child = Cmd::new("zcat")
             .arg(path)
             .stdout(Stdio::piped())
@@ -81,28 +88,105 @@ impl Load {
         let mut header = String::new();
         reader.read_line(&mut header)?;
         let sep = detect_sep(&header);
+        let header_bytes = header.as_bytes().to_vec();
 
-        // Read up to MAX_PREVIEW_ROWS lines
+        // Read preview rows
         let mut buf = header.into_bytes();
         for _ in 0..MAX_PREVIEW_ROWS {
             let mut line = String::new();
-            if reader.read_line(&mut line)? == 0 { break; }
+            if reader.read_line(&mut line)? == 0 {
+                // File fully read, no background needed
+                let _ = child.wait();
+                let cursor = std::io::Cursor::new(buf);
+                let df = CsvReadOptions::default()
+                    .with_has_header(true)
+                    .with_infer_schema_length(Some(500))
+                    .map_parse_options(|o| o.with_separator(sep))
+                    .into_reader_with_file_handle(cursor)
+                    .finish()
+                    .map_err(|e| anyhow!("Failed to parse: {}", e))?;
+                return Ok((df, None));
+            }
             buf.extend_from_slice(line.as_bytes());
         }
 
-        let _ = child.kill();
-        let _ = child.wait();
-
-        // Parse with detected separator
+        // Parse preview
         let cursor = std::io::Cursor::new(buf);
-        CsvReadOptions::default()
+        let df = CsvReadOptions::default()
             .with_has_header(true)
             .with_infer_schema_length(Some(500))
             .map_parse_options(|o| o.with_separator(sep))
             .into_reader_with_file_handle(cursor)
             .finish()
-            .map_err(|e| anyhow!("Failed to parse: {}", e))
+            .map_err(|e| anyhow!("Failed to parse: {}", e))?;
+
+        // Get memory limit from config
+        let mem_pct: u64 = load_config_value("gz_mem_pct")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(10);
+        let mem_limit = os::mem_total() * mem_pct / 100;
+
+        // Spawn background loader
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            bg_stream_csv(reader, header_bytes, sep, mem_limit, tx, child);
+        });
+
+        Ok((df, Some(rx)))
     }
+}
+
+/// Background thread: stream CSV chunks until memory limit
+fn bg_stream_csv(
+    mut reader: BufReader<ChildStdout>,
+    header: Vec<u8>,
+    sep: u8,
+    mem_limit: u64,
+    tx: Sender<DataFrame>,
+    mut child: std::process::Child,
+) {
+    let mut total_bytes = 0u64;
+
+    loop {
+        let mut chunk_buf = header.clone();
+        let mut lines = 0usize;
+
+        // Read chunk
+        while lines < BG_CHUNK_ROWS {
+            let mut line = String::new();
+            match reader.read_line(&mut line) {
+                Ok(0) => break,  // EOF
+                Ok(n) => {
+                    chunk_buf.extend_from_slice(line.as_bytes());
+                    total_bytes += n as u64;
+                    lines += 1;
+                }
+                Err(_) => break,
+            }
+        }
+
+        if lines == 0 { break; }  // no more data
+
+        // Parse chunk
+        let cursor = std::io::Cursor::new(chunk_buf);
+        let df = CsvReadOptions::default()
+            .with_has_header(true)
+            .with_infer_schema_length(Some(100))
+            .map_parse_options(|o| o.with_separator(sep))
+            .into_reader_with_file_handle(cursor)
+            .finish();
+
+        if let Ok(df) = df {
+            let df = convert_epoch_cols(df);
+            if tx.send(df).is_err() { break; }  // receiver dropped
+        }
+
+        // Check memory limit (rough estimate: ~2x raw size for DataFrame)
+        if total_bytes * 2 > mem_limit { break; }
+    }
+
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 /// Detect separator by counting occurrences in header line

@@ -73,6 +73,8 @@ pub struct ViewState {
     pub selected_cols: HashSet<usize>,
     pub selected_rows: HashSet<usize>,
     pub gz_source: Option<String>,  // original .csv.gz path for streaming save
+    pub stats_cache: Option<(usize, String)>,  // (col_idx, stats) cache
+    pub col_separator: Option<usize>,  // draw separator bar after this column index
 }
 
 impl ViewState {
@@ -81,6 +83,7 @@ impl ViewState {
             id, name, dataframe: df, state: TableState::new(), history: Vec::new(),
             filename, show_row_numbers: false, parent_id: None, freq_col: None,
             selected_cols: HashSet::new(), selected_rows: HashSet::new(), gz_source: None,
+            stats_cache: None, col_separator: None,
         }
     }
 
@@ -89,6 +92,7 @@ impl ViewState {
             id, name, dataframe: df, state: TableState::new(), history: Vec::new(),
             filename, show_row_numbers: false, parent_id: None, freq_col: None,
             selected_cols: HashSet::new(), selected_rows: HashSet::new(), gz_source: Some(gz),
+            stats_cache: None, col_separator: None,
         }
     }
 
@@ -97,6 +101,7 @@ impl ViewState {
             id, name, dataframe: df, state: TableState::new(), history: Vec::new(),
             filename: None, show_row_numbers: false, parent_id: Some(pid), freq_col: Some(col),
             selected_cols: HashSet::new(), selected_rows: HashSet::new(), gz_source: None,
+            stats_cache: None, col_separator: None,
         }
     }
 

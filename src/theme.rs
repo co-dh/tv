@@ -108,7 +108,7 @@ fn load_themes(path: &Path) -> HashMap<String, Theme> {
 }
 
 /// Load a config value from cfg/config.csv
-fn load_config_value(key: &str) -> Option<String> {
+pub fn load_config_value(key: &str) -> Option<String> {
     let content = fs::read_to_string("cfg/config.csv").ok()?;
     for line in content.lines().skip(1) {
         let parts: Vec<&str> = line.split(',').collect();
