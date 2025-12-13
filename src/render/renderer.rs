@@ -28,11 +28,14 @@ impl Renderer {
             let selected_cols = view.selected_cols.clone();
             let selected_rows = view.selected_rows.clone();
             let view_name = view.name.clone();
-            Self::render_table(frame, view, area, &selected_cols, &selected_rows, decimals, &theme);
+            let show_tabs = stack_names.len() > 1;
+            Self::render_table(frame, view, area, &selected_cols, &selected_rows, decimals, &theme, show_tabs);
             if show_info {
                 Self::render_info_box(frame, &view_name, stack_len, area, &hints, &theme);
             }
-            Self::render_tabs(frame, &stack_names, area, &theme);
+            if show_tabs {
+                Self::render_tabs(frame, &stack_names, area, &theme);
+            }
             Self::render_status_bar(frame, view, &message, area, &theme);
         } else {
             Self::render_empty_message(frame, &message, area);
@@ -40,7 +43,7 @@ impl Renderer {
     }
 
     /// Render table data
-    fn render_table(frame: &mut Frame, view: &mut ViewState, area: Rect, selected_cols: &HashSet<usize>, selected_rows: &HashSet<usize>, decimals: usize, theme: &Theme) {
+    fn render_table(frame: &mut Frame, view: &mut ViewState, area: Rect, selected_cols: &HashSet<usize>, selected_rows: &HashSet<usize>, decimals: usize, theme: &Theme, show_tabs: bool) {
         let df = &view.dataframe;
         let is_correlation = view.name == "correlation";
 
@@ -81,8 +84,9 @@ impl Renderer {
             for x in xs.iter_mut() { *x -= shift; }
         }
 
-        // Visible area
-        let end_row = (state.r0 + (area.height as usize).saturating_sub(2)).min(df.height());
+        // Visible area (reserve 2 rows for header+status, +1 if tabs shown)
+        let bottom_reserve = if show_tabs { 3 } else { 2 };
+        let end_row = (state.r0 + (area.height as usize).saturating_sub(bottom_reserve)).min(df.height());
 
         let col_sep = view.col_separator;
 
@@ -431,7 +435,6 @@ impl Renderer {
 
     /// Render view stack as tabs
     fn render_tabs(frame: &mut Frame, names: &[String], area: Rect, theme: &Theme) {
-        if names.len() <= 1 { return; }  // don't show tabs for single view
         let row = area.height - 2;
         let tab_area = Rect::new(0, row, area.width, 1);
         let selected = names.len().saturating_sub(1);  // last is current

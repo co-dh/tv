@@ -50,29 +50,25 @@ pub fn ls(dir: &Path) -> anyhow::Result<DataFrame> {
 
 /// List directory recursively as DataFrame
 pub fn lr(dir: &Path) -> anyhow::Result<DataFrame> {
+    use std::process::Command;
+    // rg --files respects .gitignore
+    let out = Command::new("rg").args(["--files"]).current_dir(dir).output()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+
     let mut paths: Vec<String> = Vec::new();
     let mut sizes: Vec<u64> = Vec::new();
     let mut modified: Vec<i64> = Vec::new();
-    let mut is_dir: Vec<&'static str> = Vec::new();
 
-    fn walk(dir: &Path, base: &Path, paths: &mut Vec<String>, sizes: &mut Vec<u64>, modified: &mut Vec<i64>, is_dir: &mut Vec<&'static str>) {
-        if let Ok(entries) = std::fs::read_dir(dir) {
-            let mut entries: Vec<_> = entries.flatten().collect();
-            entries.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
-            for entry in entries {
-                if let Ok(m) = entry.metadata() {
-                    let p = entry.path();
-                    paths.push(p.strip_prefix(base).unwrap_or(&p).to_string_lossy().into());
-                    sizes.push(m.size());
-                    is_dir.push(if m.is_dir() { "x" } else { "" });
-                    modified.push(m.mtime() * 1_000_000); // microseconds
-                    if m.is_dir() { walk(&p, base, paths, sizes, modified, is_dir); }
-                }
-            }
+    let mut files: Vec<&str> = text.lines().collect();
+    files.sort();
+    for p in files {
+        let full = dir.join(p);
+        if let Ok(m) = full.metadata() {
+            paths.push(p.to_string());
+            sizes.push(m.size());
+            modified.push(m.mtime() * 1_000_000); // microseconds
         }
     }
-
-    walk(dir, dir, &mut paths, &mut sizes, &mut modified, &mut is_dir);
 
     let modified_series = Series::new("modified".into(), modified)
         .cast(&DataType::Datetime(TimeUnit::Microseconds, None))?;
@@ -81,7 +77,6 @@ pub fn lr(dir: &Path) -> anyhow::Result<DataFrame> {
         Series::new("path".into(), paths).into(),
         Series::new("size".into(), sizes).into(),
         modified_series.into(),
-        Series::new("dir".into(), is_dir).into(),
     ])?)
 }
 

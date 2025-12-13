@@ -6,6 +6,15 @@
 
 # Todo
 
+## Folder View FZF Direct Action
+- In Folder view, fzf selection should directly execute Enter action
+- Currently: select in fzf, return to folder, then Enter again
+- Should: select in fzf, immediately open the file
+
+## Tab Bar Not Visible
+- Tab bar showing view stack is not visible to user
+- Investigate why tabs are not rendering
+
 ## Plugin Architecture
 - Investigate nushell plugin architecture - modularize view functionality into single files for dynamic add/remove
 

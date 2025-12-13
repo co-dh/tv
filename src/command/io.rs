@@ -73,8 +73,9 @@ impl Command for From {
             let (df, bg_rx) = self.load_csv_gz_streaming(path)?;
             let df = convert_epoch_cols(df);
             if df.height() == 0 { return Err(anyhow!("File is empty")); }
-            app.stack = crate::state::StateStack::init(ViewState::new_gz(
-                app.next_id(), self.file_path.clone(), df,
+            let id = app.next_id();
+            app.stack.push(ViewState::new_gz(
+                id, self.file_path.clone(), df,
                 Some(self.file_path.clone()), self.file_path.clone(),
             ));
             app.bg_loader = bg_rx;
@@ -86,8 +87,9 @@ impl Command for From {
                 None => return Err(anyhow!("Could not determine file type")),
             };
             if df.height() == 0 { return Err(anyhow!("File is empty")); }
-            app.stack = crate::state::StateStack::init(ViewState::new(
-                app.next_id(), self.file_path.clone(), df, Some(self.file_path.clone()),
+            let id = app.next_id();
+            app.stack.push(ViewState::new(
+                id, self.file_path.clone(), df, Some(self.file_path.clone()),
             ));
         }
         Ok(())

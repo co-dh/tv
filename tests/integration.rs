@@ -1071,6 +1071,34 @@ fn test_parquet_time_roundtrip() {
     
     // Should be Time type
     assert!(matches!(loaded.column("event_time").unwrap().dtype(), DataType::Time),
-        "Time column should remain Time after parquet roundtrip, got {:?}", 
+        "Time column should remain Time after parquet roundtrip, got {:?}",
         loaded.column("event_time").unwrap().dtype());
+}
+
+#[test]
+fn test_folder_open_csv_stack() {
+    // When opening a csv from folder view, stack should have 2 views
+    // Pop should return to folder, not quit
+    let id = unique_id();
+    let dir = format!("/tmp/tv_folder_test_{}", id);
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(format!("{}/test.csv", dir), "a,b\n1,2\n3,4\n").unwrap();
+
+    // Test with pop - should return to folder
+    let script_path = format!("/tmp/tv_test_script_{}.txt", id);
+    let script = format!("ls {}\nfrom {}/test.csv\npop\n", dir, dir);
+    fs::write(&script_path, &script).unwrap();
+
+    let output = Command::new("./target/release/tv")
+        .arg("--script")
+        .arg(&script_path)
+        .output()
+        .expect("failed to execute tv");
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+    // After pop, should be back at ls view (not quit)
+    assert!(stdout.contains(&format!("=== ls:{}", dir)),
+        "After pop from csv, should return to folder view.\nstdout: {}\nstderr: {}", stdout, stderr);
 }

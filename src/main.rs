@@ -215,6 +215,7 @@ fn parse(line: &str, app: &AppContext) -> Option<Box<dyn command::Command>> {
         "clear_sel" => return Some(Box::new(ClearSel)),
         "sel_all" => return Some(Box::new(SelAll)),
         "sel_rows" => return Some(Box::new(SelRows { expr: arg.to_string() })),
+        "pop" => return Some(Box::new(Pop)),
         _ => {}
     }
 
@@ -693,7 +694,7 @@ fn hints(df: &polars::prelude::DataFrame, col_name: &str, row: usize) -> Vec<Str
 
     // Distinct values first (default)
     if let Ok(uniq) = col.unique() {
-        for i in 0..uniq.len().min(50) {
+        for i in 0..uniq.len() {
             if let Ok(v) = uniq.get(i) {
                 let val = unquote(&v.to_string());
                 if val == "null" { continue; }
@@ -896,10 +897,10 @@ mod tests {
     }
 
     #[test]
-    fn test_hints_distinct_limit() {
-        let df = df! { "val" => (0..100).collect::<Vec<i32>>() }.unwrap();
+    fn test_hints_no_limit() {
+        let df = df! { "val" => (0..600).collect::<Vec<i32>>() }.unwrap();
         let h = hints(&df, "val", 0);
-        // Should limit to 50 distinct values
-        assert!(h.len() <= 50, "Should limit distinct values to 50");
+        // All distinct values returned
+        assert_eq!(h.len(), 600, "All distinct values should be returned");
     }
 }
