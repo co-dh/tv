@@ -36,3 +36,29 @@ impl ViewKind {
         else { ViewKind::Table }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_view_kind_from_name() {
+        assert_eq!(ViewKind::from_name("metadata"), ViewKind::Meta);
+        assert_eq!(ViewKind::from_name("Freq:col1"), ViewKind::Freq);
+        assert_eq!(ViewKind::from_name("Freq:another"), ViewKind::Freq);
+        assert_eq!(ViewKind::from_name("correlation"), ViewKind::Corr);
+        assert_eq!(ViewKind::from_name("ls"), ViewKind::Folder);
+        assert_eq!(ViewKind::from_name("lr"), ViewKind::Folder);
+        assert_eq!(ViewKind::from_name("data.csv"), ViewKind::Table);
+        assert_eq!(ViewKind::from_name("my_table"), ViewKind::Table);
+    }
+
+    #[test]
+    fn test_view_kind_tab() {
+        assert_eq!(ViewKind::Table.tab(), "table");
+        assert_eq!(ViewKind::Meta.tab(), "meta");
+        assert_eq!(ViewKind::Freq.tab(), "freq");
+        assert_eq!(ViewKind::Folder.tab(), "folder");
+        assert_eq!(ViewKind::Corr.tab(), "corr");
+    }
+}
