@@ -365,3 +365,178 @@ fn test_freq_then_filter_workflow() {
     assert!(filter_output.contains("(3 rows)"), "Should filter to 3 rows where b='x'");
     assert!(filter_output.contains("b"), "Filtered view should have column b");
 }
+
+// === Additional filter tests (from test_string_filter.sh) ===
+
+fn setup_strings_csv(id: usize) -> String {
+    let path = format!("/tmp/tv_test_strings_{}.csv", id);
+    fs::write(&path, "name,value\napple,10\nbanana,20\ncherry,30\npineapple,40\ngrape,50\nblueberry,60\n").unwrap();
+    path
+}
+
+#[test]
+fn test_filter_numeric_gt() {
+    let id = unique_id();
+    let csv = setup_strings_csv(id);
+    let output = run_script(&format!("load {} | filter value > 30\n", csv), id);
+    assert!(output.contains("(3 rows)"), "value > 30 should match 3 rows");
+}
+
+#[test]
+fn test_filter_numeric_gte() {
+    let id = unique_id();
+    let csv = setup_strings_csv(id);
+    let output = run_script(&format!("load {} | filter value >= 30\n", csv), id);
+    assert!(output.contains("(4 rows)"), "value >= 30 should match 4 rows");
+}
+
+#[test]
+fn test_filter_numeric_lt() {
+    let id = unique_id();
+    let csv = setup_strings_csv(id);
+    let output = run_script(&format!("load {} | filter value < 30\n", csv), id);
+    assert!(output.contains("(2 rows)"), "value < 30 should match 2 rows");
+}
+
+#[test]
+fn test_filter_numeric_lte() {
+    let id = unique_id();
+    let csv = setup_strings_csv(id);
+    let output = run_script(&format!("load {} | filter value <= 30\n", csv), id);
+    assert!(output.contains("(3 rows)"), "value <= 30 should match 3 rows");
+}
+
+#[test]
+fn test_filter_combined_string_and_numeric() {
+    let id = unique_id();
+    let csv = setup_strings_csv(id);
+    let output = run_script(&format!("load {} | filter name LIKE 'b%' AND value > 30\n", csv), id);
+    assert!(output.contains("(1 rows)"), "name LIKE 'b%' AND value > 30 should match 1 row (blueberry)");
+}
+
+// === Command tests (from test_commands.sh) ===
+
+fn setup_full_csv(id: usize) -> String {
+    let path = format!("/tmp/tv_test_full_{}.csv", id);
+    fs::write(&path, "name,city,value,score\nAlice,NYC,100,85\nBob,LA,200,90\nCarol,NYC,150,75\nDave,Chicago,300,95\nEve,LA,250,80\nFrank,NYC,175,\n").unwrap();
+    path
+}
+
+#[test]
+fn test_save_command() {
+    let id = unique_id();
+    let csv = setup_full_csv(id);
+    let out_path = format!("/tmp/tv_test_out_{}.csv", id);
+    run_script(&format!("load {} | save {}\n", csv, out_path), id);
+    assert!(std::path::Path::new(&out_path).exists(), "save should create output file");
+}
+
+#[test]
+fn test_freq_city() {
+    let id = unique_id();
+    let csv = setup_full_csv(id);
+    let output = run_script(&format!("load {} | freq city\n", csv), id);
+    assert!(output.contains("(3 rows)"), "freq city should have 3 unique values");
+}
+
+#[test]
+fn test_filter_numeric_value() {
+    let id = unique_id();
+    let csv = setup_full_csv(id);
+    let output = run_script(&format!("load {} | filter value > 200\n", csv), id);
+    assert!(output.contains("(2 rows)"), "value > 200 should match 2 rows");
+}
+
+#[test]
+fn test_filter_string_city() {
+    let id = unique_id();
+    let csv = setup_full_csv(id);
+    let output = run_script(&format!("load {} | filter city = 'NYC'\n", csv), id);
+    assert!(output.contains("(3 rows)"), "city = 'NYC' should match 3 rows");
+}
+
+#[test]
+fn test_select_removes_columns() {
+    let id = unique_id();
+    let csv = setup_full_csv(id);
+    let output = run_script(&format!("load {} | sel name,city\n", csv), id);
+    assert!(output.contains("name"), "Should have column name");
+    assert!(!output.contains("value"), "Should not have column value");
+}
+
+#[test]
+fn test_delcol_multi() {
+    let id = unique_id();
+    let csv = setup_full_csv(id);
+    let output = run_script(&format!("load {} | delcol city,score\n", csv), id);
+    assert!(!output.contains("city"), "Should not have column city");
+    assert!(!output.contains("score"), "Should not have column score");
+    assert!(output.contains("name"), "Should still have column name");
+}
+
+#[test]
+fn test_pipe_chain() {
+    let id = unique_id();
+    let csv = setup_full_csv(id);
+    let output = run_script(&format!("load {} | filter city = 'NYC' | sort value | sel name,value\n", csv), id);
+    assert!(output.contains("(3 rows)"), "Pipe chain should work");
+}
+
+// === ls/lr tests (from test_ls.sh) ===
+
+#[test]
+fn test_ls_shows_directory() {
+    let id = unique_id();
+    let dir = format!("/tmp/tv_test_dir_{}", id);
+    fs::create_dir_all(format!("{}/subdir", dir)).unwrap();
+    fs::write(format!("{}/file.txt", dir), "test").unwrap();
+
+    let output = run_script(&format!("ls {}\n", dir), id);
+    assert!(output.contains("subdir"), "ls should show subdir");
+    assert!(output.contains("file.txt"), "ls should show file");
+}
+
+#[test]
+fn test_ls_dir_column_x_for_dirs() {
+    let id = unique_id();
+    let dir = format!("/tmp/tv_test_dir2_{}", id);
+    fs::create_dir_all(format!("{}/subdir", dir)).unwrap();
+    fs::write(format!("{}/file.txt", dir), "test").unwrap();
+
+    let output = run_script(&format!("ls {}\n", dir), id);
+    // subdir line should contain 'x' in dir column
+    for line in output.lines() {
+        if line.contains("subdir") {
+            assert!(line.contains("x"), "dir column should be 'x' for directories");
+        }
+    }
+}
+
+#[test]
+fn test_lr_recursive() {
+    let id = unique_id();
+    let dir = format!("/tmp/tv_test_dir3_{}", id);
+    fs::create_dir_all(format!("{}/subdir", dir)).unwrap();
+    fs::write(format!("{}/subdir/nested.txt", dir), "test").unwrap();
+
+    let output = run_script(&format!("lr {}\n", dir), id);
+    assert!(output.contains("subdir"), "lr should show subdir");
+    assert!(output.contains("nested.txt"), "lr should show nested file");
+}
+
+// === meta tests (from test_meta.sh) ===
+
+#[test]
+fn test_meta_empty_not_dash() {
+    let id = unique_id();
+    let path = format!("/tmp/tv_test_meta_{}.csv", id);
+    fs::write(&path, "num,str,empty\n1,apple,\n2,banana,\n3,,\n").unwrap();
+
+    let output = run_script(&format!("load {} | meta\n", path), id);
+    // String columns should have empty median/sigma, not "-"
+    // Check that there's no " - " pattern (dash surrounded by spaces)
+    let str_line = output.lines().find(|l| l.contains("│ str"));
+    if let Some(line) = str_line {
+        assert!(!line.contains(" - "), "str row should not contain '-' for empty values");
+    }
+}
