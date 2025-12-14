@@ -1,5 +1,5 @@
 //! Gzipped CSV streaming helpers
-use super::convert::{apply_schema, convert_epoch_cols, convert_types};
+use super::convert::{convert_epoch_cols, apply_schema, convert_types};
 use super::csv::{detect_sep, parse_buf};
 use anyhow::{anyhow, Result};
 use polars::prelude::*;
@@ -10,12 +10,11 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use std::sync::Arc;
 
-const MAX_PREVIEW_ROWS: usize = 100_000;
-const BG_CHUNK_ROWS: usize = 100_000;
-const CHUNK_ROWS: usize = 1_000_000;
+const MIN_ROWS: usize = 1_000;      // min rows before showing table
+const CHUNK_ROWS: usize = 100_000;  // rows per background chunk
 const FIRST_CHUNK_ROWS: usize = 100_000;
 
-/// Load gz file with streaming: returns preview + background loader channel
+/// Load gz file with streaming: returns initial chunk + background loader
 pub fn load_streaming(path: &Path, mem_limit: u64) -> Result<(DataFrame, Option<Receiver<DataFrame>>)> {
     let mut child = Command::new("zcat")
         .arg(path)
@@ -25,55 +24,69 @@ pub fn load_streaming(path: &Path, mem_limit: u64) -> Result<(DataFrame, Option<
         .map_err(|e| anyhow!("Failed to spawn zcat: {}", e))?;
 
     let stdout = child.stdout.take().ok_or_else(|| anyhow!("No stdout"))?;
-    let mut reader = BufReader::new(stdout);
+    let mut reader = BufReader::with_capacity(8 * 1024 * 1024, stdout);
 
-    // Read header to detect delimiter
+    // Read header
     let mut header = String::new();
     reader.read_line(&mut header)?;
     let sep = detect_sep(&header);
     let header_bytes = header.as_bytes().to_vec();
 
-    // Read preview rows
-    let mut buf = header.into_bytes();
-    for _ in 0..MAX_PREVIEW_ROWS {
+    // Read first chunk (at least MIN_ROWS)
+    let mut buf = header.clone().into_bytes();
+    let mut lines = 0usize;
+    let mut total_bytes = 0u64;
+    while lines < MIN_ROWS.max(CHUNK_ROWS) {
         let mut line = String::new();
-        if reader.read_line(&mut line)? == 0 {
-            let _ = child.wait();
-            return Ok((parse_buf(buf, sep, 500)?, None));
+        match reader.read_line(&mut line) {
+            Ok(0) => break, // EOF
+            Ok(n) => {
+                buf.extend_from_slice(line.as_bytes());
+                total_bytes += n as u64;
+                lines += 1;
+            }
+            Err(_) => break,
         }
-        buf.extend_from_slice(line.as_bytes());
     }
 
-    let df = parse_buf(buf, sep, 500)?;
+    if lines == 0 { return Err(anyhow!("Empty file")); }
 
-    // Spawn background loader
+    let df = convert_epoch_cols(parse_buf(buf, sep, 500)?);
+
+    // If EOF or already at mem limit, no background loading
+    if lines < CHUNK_ROWS || total_bytes * 2 > mem_limit {
+        let _ = child.wait();
+        return Ok((df, None));
+    }
+
+    // Continue loading in background
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
-        bg_stream_csv(reader, header_bytes, sep, mem_limit, tx, child);
+        stream_chunks(reader, header_bytes, sep, mem_limit, total_bytes, tx, child);
     });
 
     Ok((df, Some(rx)))
 }
 
-/// Background thread: stream CSV chunks until memory limit
-fn bg_stream_csv(
+/// Background: stream remaining chunks until mem limit
+fn stream_chunks(
     mut reader: BufReader<ChildStdout>,
     header: Vec<u8>,
     sep: u8,
     mem_limit: u64,
+    mut total_bytes: u64,
     tx: Sender<DataFrame>,
     mut child: Child,
 ) {
-    let mut total_bytes = 0u64;
     loop {
-        let mut chunk_buf = header.clone();
+        let mut buf = header.clone();
         let mut lines = 0usize;
-        while lines < BG_CHUNK_ROWS {
+        while lines < CHUNK_ROWS {
             let mut line = String::new();
             match reader.read_line(&mut line) {
                 Ok(0) => break,
                 Ok(n) => {
-                    chunk_buf.extend_from_slice(line.as_bytes());
+                    buf.extend_from_slice(line.as_bytes());
                     total_bytes += n as u64;
                     lines += 1;
                 }
@@ -81,9 +94,8 @@ fn bg_stream_csv(
             }
         }
         if lines == 0 { break; }
-        if let Ok(df) = parse_buf(chunk_buf, sep, 100) {
-            let df = convert_epoch_cols(df);
-            if tx.send(df).is_err() { break; }
+        if let Ok(df) = parse_buf(buf, sep, 100) {
+            if tx.send(convert_epoch_cols(df)).is_err() { break; }
         }
         if total_bytes * 2 > mem_limit { break; }
     }

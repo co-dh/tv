@@ -470,7 +470,6 @@ impl Renderer {
         for x in 0..area.width { buf[(x, row)].set_style(style); buf[(x, row)].set_char(' '); }
 
         let total_str = Self::commify(view.rows());
-        let loading = if is_loading { " [Loading...]" } else { "" };
 
         let left = if !message.is_empty() { message.to_string() }
         else if view.name.starts_with("Freq:") || view.name == "metadata" {
@@ -479,7 +478,7 @@ impl Renderer {
             let pr = view.parent_rows.map(|n| format!(" ({})", Self::commify(n))).unwrap_or_default();
             format!("{} <- {}{}", view.name, pn, pr)
         }
-        else { format!("{}{}", view.filename.as_deref().unwrap_or("(no file)"), loading) };
+        else { view.filename.as_deref().unwrap_or("(no file)").to_string() };
 
         // Use cached stats if column unchanged
         let col_stats = if view.cols() > 0 {
@@ -498,8 +497,9 @@ impl Renderer {
             }
         } else { String::new() };
 
-        let right = if col_stats.is_empty() { format!("{}/{}", view.state.cr, total_str) }
-        else { format!("{} {}/{}", col_stats, view.state.cr, total_str) };
+        let partial = if is_loading { " Partial" } else { "" };
+        let right = if col_stats.is_empty() { format!("{}/{}{}", view.state.cr, total_str, partial) }
+        else { format!("{} {}/{}{}", col_stats, view.state.cr, total_str, partial) };
 
         let padding = (area.width as usize).saturating_sub(left.len() + right.len()).max(1);
         let status = format!("{}{:width$}{}", left, "", right, width = padding);
