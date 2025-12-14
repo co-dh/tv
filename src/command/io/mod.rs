@@ -69,15 +69,21 @@ impl Command for From {
             ));
             app.bg_loader = bg_rx;
         } else {
-            let df = match path.extension().and_then(|s| s.to_str()) {
-                Some("csv") => convert_epoch_cols(csv::load(path)?),
-                Some("parquet") => convert_epoch_cols(parquet::load(path)?),
+            let (df, disk_rows) = match path.extension().and_then(|s| s.to_str()) {
+                Some("csv") => (convert_epoch_cols(csv::load(path)?), None),
+                Some("parquet") => {
+                    let (df, total) = parquet::load(path, MAX_PREVIEW_ROWS as u32)?;
+                    let dr = if total > df.height() { Some(total) } else { None };
+                    (convert_epoch_cols(df), dr)
+                }
                 Some(ext) => return Err(anyhow!("Unsupported file format: {}", ext)),
                 None => return Err(anyhow!("Could not determine file type")),
             };
             if df.height() == 0 { return Err(anyhow!("File is empty")); }
             let id = app.next_id();
-            app.stack.push(ViewState::new(id, self.file_path.clone(), df, Some(self.file_path.clone())));
+            let mut view = ViewState::new(id, self.file_path.clone(), df, Some(self.file_path.clone()));
+            view.disk_rows = disk_rows;
+            app.stack.push(view);
         }
         Ok(())
     }

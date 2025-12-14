@@ -89,6 +89,7 @@ pub struct ViewState {
     pub col_separator: Option<usize>,  // draw separator bar after this column index
     pub meta_cache: Option<DataFrame>, // cached metadata stats for this view
     pub partial: bool,  // gz file not fully loaded (hit memory limit)
+    pub disk_rows: Option<usize>,  // total rows on disk (for large parquet files)
 }
 
 impl ViewState {
@@ -97,7 +98,7 @@ impl ViewState {
             id, name, dataframe: df, state: TableState::new(), history: Vec::new(),
             filename, show_row_numbers: false, parent_id: None, parent_rows: None, parent_name: None, freq_col: None,
             selected_cols: HashSet::new(), selected_rows: HashSet::new(), gz_source: None,
-            stats_cache: None, col_separator: None, meta_cache: None, partial: false,
+            stats_cache: None, col_separator: None, meta_cache: None, partial: false, disk_rows: None,
         }
     }
 
@@ -106,7 +107,7 @@ impl ViewState {
             id, name, dataframe: df, state: TableState::new(), history: Vec::new(),
             filename, show_row_numbers: false, parent_id: None, parent_rows: None, parent_name: None, freq_col: None,
             selected_cols: HashSet::new(), selected_rows: HashSet::new(), gz_source: Some(gz),
-            stats_cache: None, col_separator: None, meta_cache: None, partial,
+            stats_cache: None, col_separator: None, meta_cache: None, partial, disk_rows: None,
         }
     }
 
@@ -116,7 +117,7 @@ impl ViewState {
             id, name, dataframe: df, state: TableState::new(), history: Vec::new(),
             filename: None, show_row_numbers: false, parent_id: Some(pid), parent_rows: Some(prows), parent_name: Some(pname), freq_col: None,
             selected_cols: HashSet::new(), selected_rows: HashSet::new(), gz_source: None,
-            stats_cache: None, col_separator: None, meta_cache: None, partial: false,
+            stats_cache: None, col_separator: None, meta_cache: None, partial: false, disk_rows: None,
         }
     }
 
@@ -126,7 +127,7 @@ impl ViewState {
             id, name, dataframe: df, state: TableState::new(), history: Vec::new(),
             filename: None, show_row_numbers: false, parent_id: Some(pid), parent_rows: Some(prows), parent_name: Some(pname), freq_col: Some(col),
             selected_cols: HashSet::new(), selected_rows: HashSet::new(), gz_source: None,
-            stats_cache: None, col_separator: None, meta_cache: None, partial: false,
+            stats_cache: None, col_separator: None, meta_cache: None, partial: false, disk_rows: None,
         }
     }
 

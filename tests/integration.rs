@@ -868,58 +868,28 @@ fn test_epoch_us_conversion() {
     assert!(output.contains("2023-12-13"), "Should show correct date");
 }
 
-#[test]
-fn test_taq_time_conversion() {
-    let id = unique_id();
-    let path = format!("/tmp/tv_taq_test_{}.csv", id);
-    // TAQ format: HHMMSSNNNNNNNN (03:59:00.085993578)
-    fs::write(&path, "Time,Value\n035900085993578,100\n143000000000000,200\n").unwrap();
-    let output = run_script(&format!("from {}\n", path), id);
-    assert!(output.contains("time"), "Should convert TAQ format to time type");
-    assert!(output.contains("03:59:00"), "Should show correct time");
-}
+// =============================================================================
+// Parquet disk operations (filter/freq should use disk, not memory preview)
+// =============================================================================
 
 #[test]
-fn test_gz_taq_save_parquet() {
-    use std::process::Command;
-    let id = unique_id();
-    // Create CSV with TAQ time format
-    let csv_path = format!("/tmp/tv_taq_gz_{}.csv", id);
-    let gz_path = format!("/tmp/tv_taq_gz_{}.csv.gz", id);
-    let out_path = format!("/tmp/tv_taq_out_{}.parquet", id);
-    // Streaming save creates {prefix}_001.parquet
-    let chunk_path = format!("/tmp/tv_taq_out_{}_001.parquet", id);
-    fs::write(&csv_path, "Time|Value\n035900085993578|100\n143000000000000|200\n120000000000000|300\n").unwrap();
-    // Gzip the file
-    Command::new("gzip").arg("-f").arg(&csv_path).output().unwrap();
-    // Load gz and save to parquet (streaming creates chunked files)
-    run_script(&format!("from {} | save {}\n", gz_path, out_path), id);
-    // Load parquet chunk and verify time conversion
-    let output = run_script(&format!("from {}\n", chunk_path), id);
-    assert!(output.contains("time"), "Parquet should have time type");
-    assert!(output.contains("03:59:00"), "Should preserve TAQ time in parquet");
-}
-
-#[test]
-fn test_parquet_load_int_to_time() {
+fn test_parquet_filter_uses_disk() {
     use polars::prelude::*;
     let id = unique_id();
-    // Create parquet with integer columns having time-like names
-    let pq_path = format!("/tmp/tv_pq_int_time_{}.parquet", id);
+    let path = format!("/tmp/tv_pq_filter_{}.parquet", id);
+    // Create parquet: 200k rows, symbol A (first 100k), B (rest 100k)
+    // Memory preview loads only 100k rows, so only A visible in memory
+    let n = 200_000usize;
     let df = df! {
-        "event_time" => &[035900085993578i64, 143000000000000, 120000000000000],  // TAQ format
-        "created_at" => &[1702483200i64, 1702483260, 1702483320],  // epoch seconds
-        "value" => &[100i64, 200, 300],
+        "symbol" => (0..n).map(|i| if i < n/2 { "A" } else { "B" }).collect::<Vec<&str>>()
     }.unwrap();
-    ParquetWriter::new(std::fs::File::create(&pq_path).unwrap())
+    ParquetWriter::new(std::fs::File::create(&path).unwrap())
         .finish(&mut df.clone()).unwrap();
 
-    // Load parquet - should convert int columns with time-like names
-    let output = run_script(&format!("from {}\nmeta\n", pq_path), id);
-    // event_time should be Time type (TAQ format)
-    assert!(output.contains("Time"), "event_time should be converted to Time type");
-    // created_at should be Datetime (epoch seconds)
-    assert!(output.contains("Datetime"), "created_at should be converted to Datetime type");
+    // Filter for B - should find 100k rows from DISK, not 0 from memory
+    let output = run_script(&format!("from {}\nfilter \"symbol\" = 'B'\n", path), id);
+    assert!(output.contains("100000 rows") || output.contains("100,000 rows") || output.contains("(100000") || output.contains("(100,000"),
+        "Filter should find 100000 B rows from disk, got: {}", output);
 }
 
 // =============================================================================

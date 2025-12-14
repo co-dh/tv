@@ -9,7 +9,7 @@ pub fn fzf(items: Vec<String>, prompt: &str) -> Result<Option<String>> {
     execute!(std::io::stdout(), cursor::Show)?;
 
     let mut child = Command::new("fzf")
-        .args(["--prompt", prompt, "--layout=reverse", "--height=50%"])
+        .args(["--prompt", prompt, "--layout=reverse", "--height=50%", "--no-sort"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()?;

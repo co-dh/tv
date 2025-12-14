@@ -35,14 +35,27 @@ impl Command for Filter {
         if app.is_loading() { return Err(anyhow!("Wait for loading to complete")); }
         let (filtered, filename) = {
             let v = app.req()?;
-            // Clone and rechunk to consolidate all chunks into single contiguous buffer
-            let mut df = v.dataframe.clone();
-            df.rechunk_mut();
             let where_clause = crate::prql::filter_to_sql(&self.expr)?;
             let sql = format!("SELECT * FROM df WHERE {}", where_clause);
             let mut ctx = polars::sql::SQLContext::new();
-            ctx.register("df", df.lazy());
-            (ctx.execute(&sql)?.collect()?, v.filename.clone())
+            // For parquet files, filter against disk not memory
+            if let Some(ref path) = v.filename {
+                if path.ends_with(".parquet") {
+                    let args = ScanArgsParquet::default();
+                    ctx.register("df", LazyFrame::scan_parquet(path, args)?);
+                    (ctx.execute(&sql)?.collect()?, v.filename.clone())
+                } else {
+                    let mut df = v.dataframe.clone();
+                    df.rechunk_mut();
+                    ctx.register("df", df.lazy());
+                    (ctx.execute(&sql)?.collect()?, v.filename.clone())
+                }
+            } else {
+                let mut df = v.dataframe.clone();
+                df.rechunk_mut();
+                ctx.register("df", df.lazy());
+                (ctx.execute(&sql)?.collect()?, v.filename.clone())
+            }
         };
         let id = app.next_id();
         app.stack.push(crate::state::ViewState::new(id, self.expr.clone(), filtered, filename));
@@ -168,6 +181,30 @@ impl Command for Take {
         Ok(())
     }
     fn to_str(&self) -> String { format!("take {}", self.n) }
+}
+
+/// Convert TAQ integer column to Time type (HHMMSSNNNNNNNN format)
+pub struct ToTime { pub col_name: String }
+
+impl Command for ToTime {
+    fn exec(&mut self, app: &mut AppContext) -> Result<()> {
+        use crate::command::io::convert::{is_taq_time, taq_to_ns};
+        let v = app.req_mut()?;
+        let c = v.dataframe.column(&self.col_name)?;
+        if !c.dtype().is_integer() { return Err(anyhow!("Column must be integer type")); }
+        let i64_s = c.cast(&DataType::Int64)?;
+        let i64_ca = i64_s.i64()?;
+        // Check first non-null value is TAQ format
+        let first = i64_ca.into_iter().flatten().next().ok_or_else(|| anyhow!("Column is empty"))?;
+        if !is_taq_time(first) { return Err(anyhow!("Value {} doesn't look like TAQ time (HHMMSSNNNNNNNN)", first)); }
+        // Convert to nanoseconds since midnight, then to Time
+        let ns: Vec<Option<i64>> = i64_ca.into_iter().map(|v| v.map(taq_to_ns)).collect();
+        let time_s = Series::new(self.col_name.as_str().into(), ns).cast(&DataType::Time)?;
+        v.dataframe.replace(&self.col_name, time_s)?;
+        v.state.col_widths.clear();
+        Ok(())
+    }
+    fn to_str(&self) -> String { format!("to_time {}", self.col_name) }
 }
 
 #[cfg(test)]

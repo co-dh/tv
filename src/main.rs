@@ -16,7 +16,7 @@ use app::AppContext;
 use command::executor::CommandExecutor;
 use command::io::{From, Save};
 use command::nav::{Goto, GotoCol, ToggleInfo, Decimals, ToggleSel, ClearSel, SelAll, SelRows};
-use command::transform::{Agg, DelCol, Filter, RenameCol, Select, Sort, Take, Xkey};
+use command::transform::{Agg, DelCol, Filter, RenameCol, Select, Sort, Take, ToTime, Xkey};
 use command::view::{Dup, Pop, Swap};
 use plugin::corr::Correlation;
 use plugin::freq::Frequency;
@@ -197,6 +197,7 @@ fn parse(line: &str, app: &AppContext) -> Option<Box<dyn command::Command>> {
         }
         "sort_desc" | "sortdesc" => return Some(Box::new(Sort { col_name: arg.to_string(), descending: true })),
         "take" => return arg.parse().ok().map(|n| Box::new(Take { n }) as Box<dyn command::Command>),
+        "to_time" => return Some(Box::new(ToTime { col_name: arg.to_string() })),
         "xkey" => return Some(Box::new(Xkey { col_names: arg.split(',').map(|s| s.trim().to_string()).collect() })),
         "rename" => {
             let rename_parts: Vec<&str> = arg.splitn(2, ' ').collect();
@@ -517,7 +518,8 @@ fn handle_cmd(app: &mut AppContext, cmd: &str) -> Result<bool> {
 fn do_search(app: &mut AppContext) -> Result<()> {
     let info = app.view().and_then(|v| {
         let col_name = v.state.cur_col(&v.dataframe)?;
-        Some((hints(&v.dataframe, &col_name, v.state.cr), col_name, v.name.starts_with("ls")))
+        let file = v.filename.as_deref();
+        Some((hints(&v.dataframe, &col_name, v.state.cr, file), col_name, v.name.starts_with("ls")))
     });
     if let Some((hint_list, col_name, is_folder)) = info {
         let expr_opt = picker::fzf_edit(hint_list, "Search> ");
@@ -549,7 +551,8 @@ fn do_filter(app: &mut AppContext) -> Result<()> {
         let col_name = v.state.cur_col(&v.dataframe)?;
         let is_str = v.dataframe.column(&col_name).ok()
             .map(|c| matches!(c.dtype(), polars::prelude::DataType::String)).unwrap_or(false);
-        Some((hints(&v.dataframe, &col_name, v.state.cr), col_name, is_str))
+        let file = v.filename.as_deref();
+        Some((hints(&v.dataframe, &col_name, v.state.cr, file), col_name, is_str))
     });
     if let Some((hint_list, col_name, is_str)) = info {
         let expr_opt = picker::fzf_edit(hint_list, "WHERE> ");
@@ -640,7 +643,7 @@ fn unquote(s: &str) -> String {
 }
 
 /// Generate filter hints: distinct values first, PRQL hints if cfg prql_hints=true
-fn hints(df: &polars::prelude::DataFrame, col_name: &str, row: usize) -> Vec<String> {
+fn hints(df: &polars::prelude::DataFrame, col_name: &str, row: usize, file: Option<&str>) -> Vec<String> {
     use polars::prelude::DataType;
     let mut items = Vec::new();
     let Ok(col) = df.column(col_name) else { return items };
@@ -648,8 +651,12 @@ fn hints(df: &polars::prelude::DataFrame, col_name: &str, row: usize) -> Vec<Str
     let is_str = matches!(dtype, DataType::String);
     let is_datetime = matches!(dtype, DataType::Date | DataType::Datetime(_, _) | DataType::Time);
 
-    // Distinct values first (default)
-    if let Ok(uniq) = col.unique() {
+    // Distinct values: from disk for parquet, else from memory
+    if let Some(path) = file.filter(|f| f.ends_with(".parquet")) {
+        if let Ok(vals) = command::io::parquet::distinct(std::path::Path::new(path), col_name) {
+            items.extend(vals.into_iter().map(|v| unquote(&v)).filter(|v| v != "null"));
+        }
+    } else if let Ok(uniq) = col.unique() {
         for i in 0..uniq.len() {
             if let Ok(v) = uniq.get(i) {
                 let val = unquote(&v.to_string());
@@ -658,6 +665,9 @@ fn hints(df: &polars::prelude::DataFrame, col_name: &str, row: usize) -> Vec<Str
             }
         }
     }
+
+    // Sort distinct values
+    items.sort();
 
     // PRQL hints only if enabled in cfg/config.csv
     if theme::load_config_value("prql_hints").map(|v| v == "true").unwrap_or(false) {
@@ -824,7 +834,7 @@ mod tests {
     #[test]
     fn test_hints_string() {
         let df = df! { "name" => &["apple", "banana"] }.unwrap();
-        let h = hints(&df, "name", 0);
+        let h = hints(&df, "name", 0, None);
         // Default: distinct values only (no PRQL hints unless cfg enabled)
         assert!(h.iter().any(|s| s == "apple"), "Should have distinct value apple");
         assert!(h.iter().any(|s| s == "banana"), "Should have distinct value banana");
@@ -838,7 +848,7 @@ mod tests {
                 chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap()
             }).collect::<Vec<_>>()
         }.unwrap();
-        let h = hints(&df, "dt", 0);
+        let h = hints(&df, "dt", 0, None);
         // Default: distinct date values
         assert!(h.iter().any(|s| s.contains("2025-01-15")), "Should have distinct date value");
     }
@@ -846,7 +856,7 @@ mod tests {
     #[test]
     fn test_hints_numeric() {
         let df = df! { "val" => &[1, 2, 3] }.unwrap();
-        let h = hints(&df, "val", 0);
+        let h = hints(&df, "val", 0, None);
         // Default: distinct values
         assert!(h.iter().any(|s| s == "1"), "Should have distinct value 1");
         assert!(h.iter().any(|s| s == "2"), "Should have distinct value 2");
@@ -855,7 +865,7 @@ mod tests {
     #[test]
     fn test_hints_no_limit() {
         let df = df! { "val" => (0..600).collect::<Vec<i32>>() }.unwrap();
-        let h = hints(&df, "val", 0);
+        let h = hints(&df, "val", 0, None);
         // All distinct values returned
         assert_eq!(h.len(), 600, "All distinct values should be returned");
     }
