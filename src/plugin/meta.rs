@@ -66,10 +66,9 @@ impl Command for Metadata {
              view.meta_cache.clone(), view.dataframe.clone(), view.col_separator, view.parquet_path.clone())
         };
 
-        // For lazy parquet, get column names from disk
+        // Get column names from parquet (backend) or in-memory DataFrame
         let col_names: Vec<String> = if let Some(ref path) = pq_path {
-            parquet::schema(Path::new(path))?
-                .into_iter().map(|(name, _)| name).collect()
+            app.backend.cols(path)?
         } else {
             df.get_column_names().iter().map(|s| s.to_string()).collect()
         };
@@ -88,7 +87,7 @@ impl Command for Metadata {
 
         // Lazy parquet: always background compute from disk
         if let Some(path) = pq_path {
-            let dtypes = parquet::schema(Path::new(&path))?;
+            let dtypes = app.backend.schema(&path)?;
             let n = col_names.len();
             let placeholder = DataFrame::new(vec![
                 Series::new("column".into(), col_names).into(),
@@ -295,10 +294,11 @@ fn compute_stats_grouped(df: &DataFrame, keys: &[String]) -> Result<DataFrame> {
 
 /// Compute stats from parquet file on disk (lazy)
 fn compute_stats_from_parquet(path: &str) -> Result<DataFrame> {
+    use crate::backend::{Backend, Polars};
     use polars::prelude::{ScanArgsParquet, PlPath};
     let args = ScanArgsParquet::default();
     let lazy = LazyFrame::scan_parquet(PlPath::new(path), args).map_err(|e| anyhow!("{}", e))?;
-    let schema = parquet::schema(Path::new(path))?;
+    let schema = Polars.schema(path)?;
     let (rows, _) = parquet::metadata(Path::new(path))?;
     let n = rows as f64;
 

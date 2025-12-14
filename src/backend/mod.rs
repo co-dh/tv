@@ -20,6 +20,10 @@ pub enum BackendType { #[default] Polars, DuckApi, DuckCli }
 
 /// Backend interface for data operations
 pub trait Backend: Send + Sync {
+    /// Get column names from parquet file
+    fn cols(&self, path: &str) -> Result<Vec<String>>;
+    /// Get schema (column name, type) from parquet file
+    fn schema(&self, path: &str) -> Result<Vec<(String, String)>>;
     /// Frequency count from parquet file
     fn freq(&self, path: &str, col: &str) -> Result<DataFrame>;
     /// Filter parquet file by SQL WHERE clause

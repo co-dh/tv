@@ -4,14 +4,12 @@
 use crate::app::AppContext;
 use crate::command::Command;
 use crate::command::executor::CommandExecutor;
-use crate::command::io::parquet;
 use crate::command::transform::FilterIn;
 use crate::command::view::Pop;
 use crate::plugin::Plugin;
 use crate::state::ViewState;
 use anyhow::{anyhow, Result};
 use polars::prelude::*;
-use std::path::Path;
 
 pub struct FreqPlugin;
 
@@ -73,10 +71,11 @@ impl Command for Frequency {
         let parent_rows = view.rows();  // disk_rows for parquet
         let parent_name = view.name.clone();
 
-        // For lazy parquet, get column names from disk
-        let col_names: Vec<String> = if let Some(ref path) = view.parquet_path {
-            parquet::schema(Path::new(path))?
-                .into_iter().map(|(name, _)| name).collect()
+        // Get column names from parquet (backend) or in-memory DataFrame
+        let pq_path = view.filename.as_ref().filter(|p| p.ends_with(".parquet"))
+            .or(view.parquet_path.as_ref());
+        let col_names: Vec<String> = if let Some(path) = pq_path {
+            app.backend.cols(path)?
         } else {
             view.dataframe.get_column_names().iter().map(|s| s.to_string()).collect()
         };
@@ -89,10 +88,6 @@ impl Command for Frequency {
         let key_cols: Vec<String> = view.col_separator.map(|sep| {
             col_names[..sep].iter().filter(|c| *c != &self.col_name).cloned().collect()
         }).unwrap_or_default();
-
-        // Get parquet path: either filename or lazy parquet_path
-        let pq_path = view.filename.as_ref().filter(|p| p.ends_with(".parquet"))
-            .or(view.parquet_path.as_ref());
 
         // Use backend for all freq operations
         let result = if let Some(path) = pq_path {

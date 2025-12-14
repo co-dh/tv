@@ -34,14 +34,6 @@ pub fn fetch_rows(path: &Path, offset: usize, limit: usize) -> Result<DataFrame>
         .map_err(|e| anyhow!("Fetch: {}", e))
 }
 
-/// Get schema (column names and types) from parquet without loading data
-pub fn schema(path: &Path) -> Result<Vec<(String, String)>> {
-    let file = std::fs::File::open(path).map_err(|e| anyhow!("Open: {}", e))?;
-    let schema = ParquetReader::new(file).schema()
-        .map_err(|e| anyhow!("Schema: {}", e))?;
-    Ok(schema.iter().map(|(n, f)| (n.to_string(), format!("{:?}", f.dtype()))).collect())
-}
-
 /// Get distinct values for a column from parquet file on disk (lazy, no full load)
 pub fn distinct(path: &Path, name: &str) -> Result<Vec<String>> {
     let args = ScanArgsParquet::default();

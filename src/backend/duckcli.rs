@@ -24,6 +24,23 @@ impl DuckCli {
 }
 
 impl Backend for DuckCli {
+    /// Get column names from parquet using duckdb CLI
+    fn cols(&self, path: &str) -> Result<Vec<String>> {
+        Ok(self.schema(path)?.into_iter().map(|(n, _)| n).collect())
+    }
+
+    /// Get schema (column name, type) from parquet using duckdb CLI
+    fn schema(&self, path: &str) -> Result<Vec<(String, String)>> {
+        let df = self.query(&format!("DESCRIBE SELECT * FROM '{}'", path))?;
+        let names = df.column("column_name")?;
+        let types = df.column("column_type")?;
+        Ok((0..names.len()).filter_map(|i| {
+            let n = names.get(i).ok()?.to_string().trim_matches('"').to_string();
+            let t = types.get(i).ok()?.to_string().trim_matches('"').to_string();
+            Some((n, t))
+        }).collect())
+    }
+
     /// Freq from parquet using duckdb CLI
     fn freq(&self, path: &str, col: &str) -> Result<DataFrame> {
         self.query(&format!(

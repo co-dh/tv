@@ -6,6 +6,18 @@ use polars::prelude::*;
 pub struct Polars;
 
 impl Backend for Polars {
+    /// Get column names from parquet file
+    fn cols(&self, path: &str) -> Result<Vec<String>> {
+        Ok(self.schema(path)?.into_iter().map(|(n, _)| n).collect())
+    }
+
+    /// Get schema (column name, type) from parquet file
+    fn schema(&self, path: &str) -> Result<Vec<(String, String)>> {
+        let file = std::fs::File::open(path)?;
+        let schema = ParquetReader::new(file).schema()?;
+        Ok(schema.iter().map(|(n, f)| (n.to_string(), format!("{:?}", f.dtype()))).collect())
+    }
+
     /// Freq from parquet using streaming engine
     fn freq(&self, path: &str, name: &str) -> Result<DataFrame> {
         LazyFrame::scan_parquet(PlPath::new(path), ScanArgsParquet::default())?

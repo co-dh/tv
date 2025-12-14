@@ -7,6 +7,16 @@ pub struct Memory;
 
 impl Backend for Memory {
     /// Not supported for memory backend (no file path)
+    fn cols(&self, _path: &str) -> Result<Vec<String>> {
+        Err(anyhow!("Memory backend does not support file operations"))
+    }
+
+    /// Not supported for memory backend (no file path)
+    fn schema(&self, _path: &str) -> Result<Vec<(String, String)>> {
+        Err(anyhow!("Memory backend does not support file operations"))
+    }
+
+    /// Not supported for memory backend (no file path)
     fn freq(&self, _path: &str, _col: &str) -> Result<DataFrame> {
         Err(anyhow!("Memory backend does not support file operations"))
     }
