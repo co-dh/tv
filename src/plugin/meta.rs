@@ -3,12 +3,14 @@
 use crate::app::AppContext;
 use crate::command::Command;
 use crate::command::executor::CommandExecutor;
+use crate::command::io::parquet;
 use crate::command::transform::Xkey;
 use crate::command::view::Pop;
 use crate::plugin::Plugin;
 use crate::state::ViewState;
 use anyhow::{anyhow, Result};
 use polars::prelude::*;
+use std::path::Path;
 
 pub struct MetaPlugin;
 
@@ -58,15 +60,15 @@ impl Command for Metadata {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         // Block meta while gz is still loading
         if app.is_loading() { return Err(anyhow!("Wait for loading to complete")); }
-        let (parent_id, parent_col, parent_rows, parent_name, cached, df, col_sep, parquet) = {
+        let (parent_id, parent_col, parent_rows, parent_name, cached, df, col_sep, pq_path) = {
             let view = app.req()?;
             (view.id, view.state.cc, view.rows(), view.name.clone(),
              view.meta_cache.clone(), view.dataframe.clone(), view.col_separator, view.parquet_path.clone())
         };
 
         // For lazy parquet, get column names from disk
-        let col_names: Vec<String> = if let Some(ref path) = parquet {
-            crate::command::io::parquet::schema(std::path::Path::new(path))?
+        let col_names: Vec<String> = if let Some(ref path) = pq_path {
+            parquet::schema(Path::new(path))?
                 .into_iter().map(|(name, _)| name).collect()
         } else {
             df.get_column_names().iter().map(|s| s.to_string()).collect()
@@ -85,8 +87,8 @@ impl Command for Metadata {
         }
 
         // Lazy parquet: always background compute from disk
-        if let Some(path) = parquet {
-            let dtypes = crate::command::io::parquet::schema(std::path::Path::new(&path))?;
+        if let Some(path) = pq_path {
+            let dtypes = parquet::schema(Path::new(&path))?;
             let n = col_names.len();
             let placeholder = DataFrame::new(vec![
                 Series::new("column".into(), col_names).into(),
@@ -296,8 +298,8 @@ fn compute_stats_from_parquet(path: &str) -> Result<DataFrame> {
     use polars::prelude::ScanArgsParquet;
     let args = ScanArgsParquet::default();
     let lazy = LazyFrame::scan_parquet(path, args).map_err(|e| anyhow!("{}", e))?;
-    let schema = crate::command::io::parquet::schema(std::path::Path::new(path))?;
-    let (rows, _) = crate::command::io::parquet::metadata(std::path::Path::new(path))?;
+    let schema = parquet::schema(Path::new(path))?;
+    let (rows, _) = parquet::metadata(Path::new(path))?;
     let n = rows as f64;
 
     let cols: Vec<String> = schema.iter().map(|(name, _)| name.clone()).collect();

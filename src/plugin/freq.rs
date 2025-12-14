@@ -4,12 +4,14 @@
 use crate::app::AppContext;
 use crate::command::Command;
 use crate::command::executor::CommandExecutor;
+use crate::command::io::parquet;
 use crate::command::transform::FilterIn;
 use crate::command::view::Pop;
 use crate::plugin::Plugin;
 use crate::state::ViewState;
 use anyhow::{anyhow, Result};
 use polars::prelude::*;
+use std::path::Path;
 
 pub struct FreqPlugin;
 
@@ -73,7 +75,7 @@ impl Command for Frequency {
 
         // For lazy parquet, get column names from disk
         let col_names: Vec<String> = if let Some(ref path) = view.parquet_path {
-            crate::command::io::parquet::schema(std::path::Path::new(path))?
+            parquet::schema(Path::new(path))?
                 .into_iter().map(|(name, _)| name).collect()
         } else {
             view.dataframe.get_column_names().iter().map(|s| s.to_string()).collect()
@@ -90,7 +92,7 @@ impl Command for Frequency {
 
         let result = if let Some(ref path) = view.parquet_path {
             // Lazy parquet: freq from disk
-            let freq = crate::command::io::parquet::freq_from_disk(std::path::Path::new(path), &self.col_name)?;
+            let freq = parquet::freq_from_disk(Path::new(path), &self.col_name)?;
             add_freq_cols(freq)?
         } else if key_cols.is_empty() {
             // Simple value_counts
