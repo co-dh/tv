@@ -1,5 +1,44 @@
 # Worklog
 
+## 2025-12-14: Consolidate I/O into Backend
+
+### Analysis
+- `io/parquet.rs` duplicated `backend/polars.rs` (both read parquet metadata, use LazyFrame)
+- `csv.rs` (57 lines): detect_sep, parse_buf, load, save
+- `gz.rs` (284 lines): background streaming, memory-limited loading, gz→parquet conversion
+
+### Decision
+- Move parquet functions to Backend trait (metadata, fetch_rows, distinct, save)
+- Move CSV functions to backend/polars.rs (detect_sep, load_csv, save_csv, parse_csv_buf)
+- Move gz.rs to backend/gz.rs as Gz backend (refuses expensive ops on partial data)
+- Remove csv.rs - polars handles CSV natively
+- Let polars fail on ragged lines (no more truncate_ragged_lines)
+
+### Changes
+- Backend trait: +4 methods (metadata, fetch_rows, distinct, save)
+- `backend/polars.rs`: +CSV functions (detect_sep, load_csv, save_csv, parse_csv_buf)
+- `backend/gz.rs`: Gz backend - refuses freq/filter/distinct on partial (memory-limited) data
+- Deleted `io/parquet.rs`, `io/csv.rs`, `io/gz.rs`
+- ViewState::backend() returns Gz when gz_source is set
+
+### Architecture
+```
+src/backend/
+├── mod.rs      - Backend trait (8 methods)
+├── polars.rs   - Polars impl + CSV/parquet helpers
+├── gz.rs       - Gz backend (streaming load, refuses expensive ops if partial)
+└── memory.rs   - In-memory impl
+
+src/command/io/
+├── mod.rs      - From/Save commands
+└── convert.rs  - epoch conversion
+```
+
+### Todo
+- Investigate: can polars scan_csv from zcat pipe/fifo? If so, merge gz into polars
+
+---
+
 ## 2025-12-14: Simplify to Polars-only Backend
 
 ### Benchmark Results (8 threads, 3.7GB parquet)

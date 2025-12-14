@@ -13,6 +13,7 @@ mod theme;
 
 use anyhow::Result;
 use app::AppContext;
+use backend::Backend;
 use command::executor::CommandExecutor;
 use command::io::{From, Save};
 use command::nav::{Goto, GotoCol, ToggleInfo, Decimals, ToggleSel, ClearSel, SelAll, SelRows};
@@ -169,7 +170,7 @@ fn print(app: &AppContext) {
         println!("=== {} ({} rows) ===", view.name, view.rows());
         // For lazy parquet, fetch first 50 rows to print
         if let Some(ref path) = view.parquet_path {
-            if let Ok(df) = command::io::parquet::fetch_rows(std::path::Path::new(path), 0, 50) {
+            if let Ok(df) = backend::Polars.fetch_rows(path, 0, 50) {
                 println!("{}", df);
             }
         } else {
@@ -658,7 +659,7 @@ fn hints(df: &polars::prelude::DataFrame, col_name: &str, row: usize, file: Opti
 
     // Distinct values: from disk for parquet, else from memory
     if let Some(path) = file.filter(|f| f.ends_with(".parquet")) {
-        if let Ok(vals) = command::io::parquet::distinct(std::path::Path::new(path), col_name) {
+        if let Ok(vals) = backend::Polars.distinct(path, col_name) {
             items.extend(vals.into_iter().map(|v| unquote(&v)).filter(|v| v != "null"));
         }
     } else if let Ok(uniq) = col.unique() {

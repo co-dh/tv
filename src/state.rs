@@ -1,4 +1,4 @@
-use crate::backend::{Backend, Memory, Polars};
+use crate::backend::{Backend, Gz, Memory, Polars};
 use polars::prelude::*;
 use std::collections::HashSet;
 
@@ -92,13 +92,16 @@ pub struct ViewState {
     pub partial: bool,  // gz file not fully loaded (hit memory limit)
     pub disk_rows: Option<usize>,  // total rows on disk (for large parquet files)
     pub parquet_path: Option<String>,  // lazy parquet source (no in-memory df)
+    pub col_names: Vec<String>,  // cached column names (for parquet views)
 }
 
 impl ViewState {
-    /// Get backend for this view (Polars for parquet, Memory for in-memory)
+    /// Get backend for this view (Polars for parquet, Gz for gzip, Memory for in-memory)
     pub fn backend(&self) -> Box<dyn Backend + '_> {
         if self.parquet_path.is_some() {
             Box::new(Polars)
+        } else if self.gz_source.is_some() {
+            Box::new(Gz { df: &self.dataframe, partial: self.partial })
         } else {
             Box::new(Memory(&self.dataframe, self.key_cols()))
         }
@@ -124,17 +127,17 @@ impl ViewState {
             id, name, dataframe: df, state: TableState::new(), history: Vec::new(),
             filename, show_row_numbers: false, parent_id: None, parent_rows: None, parent_name: None, freq_col: None,
             selected_cols: HashSet::new(), selected_rows: HashSet::new(), gz_source: None,
-            stats_cache: None, col_separator: None, meta_cache: None, partial: false, disk_rows: None, parquet_path: None,
+            stats_cache: None, col_separator: None, meta_cache: None, partial: false, disk_rows: None, parquet_path: None, col_names: Vec::new(),
         }
     }
 
     /// Create lazy parquet view (no in-memory dataframe, all ops go to disk)
-    pub fn new_parquet(id: usize, name: String, path: String, total_rows: usize) -> Self {
+    pub fn new_parquet(id: usize, name: String, path: String, total_rows: usize, cols: Vec<String>) -> Self {
         Self {
             id, name, dataframe: DataFrame::empty(), state: TableState::new(), history: Vec::new(),
             filename: Some(path.clone()), show_row_numbers: false, parent_id: None, parent_rows: None, parent_name: None, freq_col: None,
             selected_cols: HashSet::new(), selected_rows: HashSet::new(), gz_source: None,
-            stats_cache: None, col_separator: None, meta_cache: None, partial: false, disk_rows: Some(total_rows), parquet_path: Some(path),
+            stats_cache: None, col_separator: None, meta_cache: None, partial: false, disk_rows: Some(total_rows), parquet_path: Some(path), col_names: cols,
         }
     }
 
@@ -143,7 +146,7 @@ impl ViewState {
             id, name, dataframe: df, state: TableState::new(), history: Vec::new(),
             filename, show_row_numbers: false, parent_id: None, parent_rows: None, parent_name: None, freq_col: None,
             selected_cols: HashSet::new(), selected_rows: HashSet::new(), gz_source: Some(gz),
-            stats_cache: None, col_separator: None, meta_cache: None, partial, disk_rows: None, parquet_path: None,
+            stats_cache: None, col_separator: None, meta_cache: None, partial, disk_rows: None, parquet_path: None, col_names: Vec::new(),
         }
     }
 
@@ -153,7 +156,7 @@ impl ViewState {
             id, name, dataframe: df, state: TableState::new(), history: Vec::new(),
             filename: None, show_row_numbers: false, parent_id: Some(pid), parent_rows: Some(prows), parent_name: Some(pname), freq_col: None,
             selected_cols: HashSet::new(), selected_rows: HashSet::new(), gz_source: None,
-            stats_cache: None, col_separator: None, meta_cache: None, partial: false, disk_rows: None, parquet_path: None,
+            stats_cache: None, col_separator: None, meta_cache: None, partial: false, disk_rows: None, parquet_path: None, col_names: Vec::new(),
         }
     }
 
@@ -163,14 +166,20 @@ impl ViewState {
             id, name, dataframe: df, state: TableState::new(), history: Vec::new(),
             filename: None, show_row_numbers: false, parent_id: Some(pid), parent_rows: Some(prows), parent_name: Some(pname), freq_col: Some(col),
             selected_cols: HashSet::new(), selected_rows: HashSet::new(), gz_source: None,
-            stats_cache: None, col_separator: None, meta_cache: None, partial: false, disk_rows: None, parquet_path: None,
+            stats_cache: None, col_separator: None, meta_cache: None, partial: false, disk_rows: None, parquet_path: None, col_names: Vec::new(),
         }
     }
 
     pub fn add_hist(&mut self, cmd: String) { self.history.push(cmd); }
     /// Row count: from disk_rows for parquet, else dataframe height
     pub fn rows(&self) -> usize { self.disk_rows.unwrap_or_else(|| self.dataframe.height()) }
-    pub fn cols(&self) -> usize { self.dataframe.width() }
+    /// Column count: from col_names for parquet, else dataframe width
+    pub fn cols(&self) -> usize { if self.col_names.is_empty() { self.dataframe.width() } else { self.col_names.len() } }
+    /// Get column name by index (works for both parquet and in-memory views)
+    pub fn col_name(&self, idx: usize) -> Option<String> {
+        if !self.col_names.is_empty() { self.col_names.get(idx).cloned() }
+        else { self.dataframe.get_column_names().get(idx).map(|s| s.to_string()) }
+    }
     /// Check if view uses row selection (meta/freq) vs column selection (table)
     pub fn is_row_sel(&self) -> bool { self.name == "metadata" || self.name.starts_with("Freq:") }
 }

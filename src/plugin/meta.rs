@@ -3,14 +3,12 @@
 use crate::app::AppContext;
 use crate::command::Command;
 use crate::command::executor::CommandExecutor;
-use crate::command::io::parquet;
 use crate::command::transform::Xkey;
 use crate::command::view::Pop;
 use crate::plugin::Plugin;
 use crate::state::ViewState;
 use anyhow::{anyhow, Result};
 use polars::prelude::*;
-use std::path::Path;
 
 pub struct MetaPlugin;
 
@@ -294,7 +292,7 @@ fn compute_stats_from_parquet(path: &str) -> Result<DataFrame> {
     let args = ScanArgsParquet::default();
     let lazy = LazyFrame::scan_parquet(PlPath::new(path), args).map_err(|e| anyhow!("{}", e))?;
     let schema = Polars.schema(path)?;
-    let (rows, _) = parquet::metadata(Path::new(path))?;
+    let (rows, _) = Polars.metadata(path)?;
     let n = rows as f64;
 
     let cols: Vec<String> = schema.iter().map(|(name, _)| name.clone()).collect();

@@ -1,10 +1,8 @@
 //! File I/O commands (load/save CSV, Parquet, gz)
 pub mod convert;
-pub mod csv;
-pub mod gz;
-pub mod parquet;
 
 use crate::app::AppContext;
+use crate::backend::{gz, polars as pq, Backend, Polars};
 use crate::command::Command;
 use crate::os;
 use crate::state::ViewState;
@@ -26,7 +24,7 @@ impl Command for From {
 
         // Glob pattern for parquet
         if p.contains('*') || p.contains('?') {
-            let df = parquet::load_glob(p, MAX_PREVIEW_ROWS as u32)?;
+            let df = pq::load_glob(p, MAX_PREVIEW_ROWS as u32)?;
             if df.height() == 0 { return Err(anyhow!("No data found matching pattern")); }
             let df = convert_epoch_cols(df);
             app.msg(format!("Preview: {} rows, {} cols from {}", df.height(), df.width(), p));
@@ -59,17 +57,17 @@ impl Command for From {
         } else {
             match path.extension().and_then(|s| s.to_str()) {
                 Some("csv") => {
-                    let df = convert_epoch_cols(csv::load(path)?);
+                    let df = convert_epoch_cols(pq::load_csv(path)?);
                     if df.height() == 0 { return Err(anyhow!("File is empty")); }
                     let id = app.next_id();
                     app.stack.push(ViewState::new(id, self.file_path.clone(), df, Some(self.file_path.clone())));
                 }
                 Some("parquet") => {
                     // Lazy parquet: no in-memory DataFrame, all ops go to disk
-                    let (rows, _cols) = parquet::metadata(path)?;
+                    let (rows, cols) = Polars.metadata(p)?;
                     if rows == 0 { return Err(anyhow!("File is empty")); }
                     let id = app.next_id();
-                    app.stack.push(ViewState::new_parquet(id, self.file_path.clone(), self.file_path.clone(), rows));
+                    app.stack.push(ViewState::new_parquet(id, self.file_path.clone(), self.file_path.clone(), rows, cols));
                 }
                 Some(ext) => return Err(anyhow!("Unsupported file format: {}", ext)),
                 None => return Err(anyhow!("Could not determine file type")),
@@ -105,9 +103,9 @@ impl Command for Save {
         match path.extension().and_then(|s| s.to_str()) {
             Some("parquet") | None => {
                 let df = convert_epoch_cols(view.dataframe.clone());
-                parquet::save(&df, path)?;
+                Polars.save(&df, path)?;
             }
-            Some("csv") => csv::save(&view.dataframe, path)?,
+            Some("csv") => pq::save_csv(&view.dataframe, path)?,
             Some(ext) => return Err(anyhow!("Unsupported save format: {}", ext)),
         }
         Ok(())

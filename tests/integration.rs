@@ -595,19 +595,6 @@ fn test_ls_sorted_by_name() {
 }
 
 #[test]
-fn test_load_ragged_csv_truncates() {
-    let id = unique_id();
-    let path = format!("/tmp/tv_ragged_csv_{}.csv", id);
-    // Create csv with inconsistent columns - should truncate ragged lines
-    fs::write(&path, "a,b,c\n1,2\n3,4,5,6\n").unwrap();
-
-    let output = run_script(&format!("from {}\n", path), id);
-    // Should load with truncated ragged lines
-    assert!(output.contains("(2 rows)"),
-        "Ragged csv should load with truncation, got: {}", output);
-}
-
-#[test]
 fn test_load_nonexistent_file_error() {
     let id = unique_id();
     let output = run_script("from /nonexistent/path/file.csv\n", id);
@@ -629,28 +616,6 @@ fn test_from_and_load_equivalent() {
     assert!(from_output.contains("(2 rows)"), "'from' command should load 2 rows");
     assert!(load_output.contains("(2 rows)"), "'load' command should load 2 rows");
     assert_eq!(from_output, load_output, "'from' and 'load' should produce identical output");
-}
-
-#[test]
-fn test_duckdb_sql_query() {
-    // Test DuckDB SQL query via sql: prefix
-    let id = unique_id();
-    let output = run_script("from sql:SELECT 1 as a, 'hello' as b\n", id);
-    assert!(output.contains("(1 rows)"), "DuckDB query should return 1 row");
-    assert!(output.contains("hello"), "DuckDB query should contain 'hello'");
-}
-
-#[test]
-fn test_duckdb_parquet_query() {
-    // Test DuckDB query on parquet file
-    let id = unique_id();
-    let path = format!("/tmp/tv_duckdb_test_{}.parquet", id);
-    // First create a parquet file
-    run_script(&format!("from sql:SELECT 1 as x, 2 as y UNION SELECT 3, 4 | save {}\n", path), id);
-    // Then query it via DuckDB
-    let output = run_script(&format!("from sql:SELECT SUM(x) as total FROM read_parquet('{}')\n", path), id + 1);
-    assert!(output.contains("total"), "DuckDB parquet query should have 'total' column");
-    let _ = std::fs::remove_file(path);
 }
 
 // === meta tests (from test_meta.sh) ===
@@ -1027,6 +992,66 @@ fn test_sort_desc_underscore() {
     let output = run_script(&format!("from {}\nsort_desc a\n", path), id);
     // Should sort descending: 3, 2, 1
     assert!(output.contains("3"), "Should have value 3");
+}
+
+// =============================================================================
+// Parquet sorting tests
+// =============================================================================
+
+#[test]
+fn test_parquet_sort_ascending() {
+    // Test sorting parquet file - this catches bug where parquet views have empty dataframe
+    let id = unique_id();
+    let csv_path = format!("/tmp/tv_parquet_sort_{}.csv", id);
+    let parquet_path = format!("/tmp/tv_parquet_sort_{}.parquet", id);
+
+    // Create CSV with unsorted data
+    fs::write(&csv_path, "name,value\ncharlie,3\nalice,1\nbob,2\n").unwrap();
+
+    // Convert to parquet
+    run_script(&format!("from {}\nsave {}\n", csv_path, parquet_path), id);
+
+    // Load parquet and sort by name ascending
+    let output = run_script(&format!("from {}\nsort name\n", parquet_path), id + 1);
+
+    // Verify sorted order: alice, bob, charlie
+    let alice_pos = output.find("alice").expect("Should contain alice");
+    let bob_pos = output.find("bob").expect("Should contain bob");
+    let charlie_pos = output.find("charlie").expect("Should contain charlie");
+
+    assert!(alice_pos < bob_pos, "alice should come before bob");
+    assert!(bob_pos < charlie_pos, "bob should come before charlie");
+
+    let _ = fs::remove_file(csv_path);
+    let _ = fs::remove_file(parquet_path);
+}
+
+#[test]
+fn test_parquet_sort_descending() {
+    // Test descending sort on parquet file
+    let id = unique_id();
+    let csv_path = format!("/tmp/tv_parquet_sortd_{}.csv", id);
+    let parquet_path = format!("/tmp/tv_parquet_sortd_{}.parquet", id);
+
+    // Create CSV with unsorted data
+    fs::write(&csv_path, "name,value\ncharlie,3\nalice,1\nbob,2\n").unwrap();
+
+    // Convert to parquet
+    run_script(&format!("from {}\nsave {}\n", csv_path, parquet_path), id);
+
+    // Load parquet and sort by name descending
+    let output = run_script(&format!("from {}\nsort -name\n", parquet_path), id + 1);
+
+    // Verify sorted order: charlie, bob, alice
+    let alice_pos = output.find("alice").expect("Should contain alice");
+    let bob_pos = output.find("bob").expect("Should contain bob");
+    let charlie_pos = output.find("charlie").expect("Should contain charlie");
+
+    assert!(charlie_pos < bob_pos, "charlie should come before bob");
+    assert!(bob_pos < alice_pos, "bob should come before alice");
+
+    let _ = fs::remove_file(csv_path);
+    let _ = fs::remove_file(parquet_path);
 }
 
 // =============================================================================

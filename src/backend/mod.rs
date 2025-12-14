@@ -1,17 +1,21 @@
-//! Backend trait for data operations on parquet files and in-memory DataFrames.
+//! Backend trait for data operations.
 //!
 //! # Backends
-//! - `Polars`: Native polars streaming engine for parquet files
-//! - `Memory`: In-memory DataFrame operations (for ls, ps, csv, etc.)
+//! - `Polars`: Streaming engine for parquet files
+//! - `Memory`: In-memory DataFrame (ls, ps, csv)
+//! - `Gz`: Streaming gzipped CSV with memory limits
 
-mod polars;
+pub mod polars;
 mod memory;
+pub mod gz;
 
 pub use polars::Polars;
 pub use memory::Memory;
+pub use gz::Gz;
 
 use anyhow::Result;
 use ::polars::prelude::DataFrame;
+use std::path::Path;
 
 /// Backend interface for data operations.
 /// All methods take a path (ignored by Memory backend).
@@ -21,6 +25,18 @@ pub trait Backend: Send + Sync {
 
     /// Get schema as (column_name, type_string) pairs.
     fn schema(&self, path: &str) -> Result<Vec<(String, String)>>;
+
+    /// Get metadata: (row_count, column_names)
+    fn metadata(&self, path: &str) -> Result<(usize, Vec<String>)>;
+
+    /// Fetch rows for viewport (offset, limit)
+    fn fetch_rows(&self, path: &str, offset: usize, limit: usize) -> Result<DataFrame>;
+
+    /// Get distinct values for a column
+    fn distinct(&self, path: &str, col: &str) -> Result<Vec<String>>;
+
+    /// Save dataframe to parquet
+    fn save(&self, df: &DataFrame, path: &Path) -> Result<()>;
 
     /// Compute frequency counts for a column, sorted descending.
     /// Returns DataFrame with [col, Cnt] columns.
