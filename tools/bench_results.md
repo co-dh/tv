@@ -1,40 +1,46 @@
-# Benchmark Results
+# Benchmark: tests/data/nyse/1.parquet
+Size: 3.7G, Rows: └──────────────┘
+Threads: 1 2 4 8 16
 
-## 2025-12-14: Polars vs DuckDB Backend
 
-**Test file:** tests/data/nyse/1.parquet (3.7G, 304M rows, 11k symbols)
+### freq Symbol
+| Backend      |   1T |   2T |   4T |   8T |  16T |
+|--------------|------|------|------|------|------|
+| polars       | 2.067s | 1.172s | 0.731s | 0.576s | 0.659s |
+| duckapi      | 2.064s | 1.186s | 0.732s | 0.574s | 0.674s |
+| duckcli      | 2.062s | 1.213s | 0.772s | 0.758s | 0.818s |
+| duckdb raw   | 0.548s | 0.296s | 0.178s | 0.127s | 0.111s |
 
-### Single Process
+### filter Symbol='AAPL'
+| Backend      |   1T |   2T |   4T |   8T |  16T |
+|--------------|------|------|------|------|------|
+| polars       | 0.269s | 0.230s | 0.212s | 0.196s | 0.195s |
+| duckapi      | 0.271s | 0.230s | 0.211s | 0.195s | 0.192s |
+| duckcli      | 0.266s | 0.224s | 0.202s | 0.194s | 0.194s |
+| duckdb raw   | 0.281s | 0.190s | 0.158s | 0.144s | 0.137s |
 
-| Backend         |    Real  |
-|-----------------|----------|
-| Polars freq     |   0.787s |
-| DuckDB freq     |   0.761s |
-| Polars filter   |   0.257s |
-| DuckDB filter   |   0.253s |
+### count
+| Backend      |   1T |   2T |   4T |   8T |  16T |
+|--------------|------|------|------|------|------|
+| polars       | 0.166s | 0.164s | 0.166s | 0.169s | 0.169s |
+| duckapi      | 0.166s | 0.169s | 0.171s | 0.170s | 0.175s |
+| duckcli      | 0.167s | 0.169s | 0.165s | 0.164s | 0.171s |
+| duckdb raw   | 0.057s | 0.055s | 0.058s | 0.056s | 0.057s |
 
-### Multi Process (4 parallel)
+### head 100
+| Backend      |   1T |   2T |   4T |   8T |  16T |
+|--------------|------|------|------|------|------|
+| polars       | 0.166s | 0.167s | 0.167s | 0.170s | 0.167s |
+| duckapi      | 0.167s | 0.174s | 0.172s | 0.173s | 0.174s |
+| duckcli      | 0.165s | 0.168s | 0.166s | 0.169s | 0.173s |
+| duckdb raw   | 0.219s | 0.173s | 0.154s | 0.160s | 0.160s |
 
-| Backend         | Total(s) | Avg(s)  |
-|-----------------|----------|---------|
-| Polars freq x4  |     2.58s |    0.64s |
-| DuckDB freq x4  |     2.56s |    0.64s |
+### meta
+| Backend      |   1T |   2T |   4T |   8T |  16T |
+|--------------|------|------|------|------|------|
+| polars       | 0.241s | 0.243s | 0.242s | 0.237s | 0.245s |
+| duckapi      | 0.244s | 0.238s | 0.241s | 0.245s | 0.242s |
+| duckcli      | 0.242s | 0.244s | 0.244s | 0.245s | 0.238s |
+| duckdb raw   | 0.057s | 0.057s | 0.057s | 0.056s | 0.058s |
 
-### Summary
-
-- Both backends comparable performance (~0.76s for freq)
-- DuckDB slightly faster in all tests
-- Linear scaling with parallel processes (4x processes = ~3.3x time)
-- Filter much faster than freq (~0.25s vs ~0.76s)
-
-### Historical Comparison
-
-| Engine | Freq Time |
-|--------|-----------|
-| Polars 0.45 default | 7.0s |
-| Polars 0.52 default | 5.0s |
-| Polars 0.52 streaming | 0.79s |
-| DuckDB native API | 0.76s |
-| DuckDB CLI | 0.10s |
-
-Note: DuckDB CLI is faster because it outputs directly without DataFrame conversion overhead.
+Done.

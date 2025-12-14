@@ -1,81 +1,107 @@
 #!/bin/bash
-# Benchmark polars vs duckdb backends
-# Usage: ./tools/bench.sh [parquet_file] [column] [mode]
-# Modes: single (default), multi (parallel processes)
+# Benchmark polars vs duckapi vs duckcli vs raw duckdb
+# Tests internal thread scaling (1,2,4,8,16 threads in single process)
+# Usage: ./tools/bench.sh [parquet|all]
 
+set -e
 TV=${TV:-./target/release/tv}
-FILE=${1:-tests/data/nyse/1.parquet}
-COL=${2:-Symbol}
-MODE=${3:-single}
-NPROC=${NPROC:-4}
+PARQUET=${PARQUET:-tests/data/nyse/1.parquet}
+COL=${COL:-Symbol}
+SYMBOL=${SYMBOL:-AAPL}
+THREADS="${THREADS:-1 2 4 8 16}"
 
-if [ ! -f "$TV" ]; then
-    echo "Building release..."
-    cargo build --release
-fi
+# Build if needed
+[ -f "$TV" ] || cargo build --release
 
-if [ ! -f "$FILE" ]; then
-    echo "File not found: $FILE"
-    exit 1
-fi
-
-SIZE=$(ls -lh "$FILE" | awk '{print $5}')
-
-# Run benchmark: captures real time
-run_bench() {
-    local name="$1"
-    shift
+# Time a command, return seconds
+timeit() {
     local start=$(date +%s%N)
     "$@" >/dev/null 2>&1
     local end=$(date +%s%N)
-    local ms=$(( (end - start) / 1000000 ))
-    local sec=$(awk "BEGIN {printf \"%.3f\", $ms/1000}")
-    printf "| %-15s | %7ss |\n" "$name" "$sec"
+    awk "BEGIN {printf \"%.3f\", ($end-$start)/1000000000}"
 }
 
-echo "=== Benchmark: $FILE ($SIZE) ==="
-echo "Column: $COL | Mode: $MODE"
-echo ""
-
-if [ "$MODE" = "single" ]; then
-    echo "| Backend         |    Real  |"
-    echo "|-----------------|----------|"
-
-    run_bench "Polars freq" $TV "$FILE" -c "from $FILE | freq $COL"
-    run_bench "DuckDB freq" $TV --duckdb "$FILE" -c "from $FILE | freq $COL"
-    run_bench "Polars filter" $TV "$FILE" -c "from $FILE | filter $COL = 'NVDA'"
-    run_bench "DuckDB filter" $TV --duckdb "$FILE" -c "from $FILE | filter $COL = 'NVDA'"
-
-elif [ "$MODE" = "multi" ]; then
-    echo "Running $NPROC parallel processes..."
+# Header for operation
+op_header() {
     echo ""
-    echo "| Backend         | Total(s) | Avg(s)  |"
-    echo "|-----------------|----------|---------|"
+    echo "### $1"
+    echo "| Backend      |   1T |   2T |   4T |   8T |  16T |"
+    echo "|--------------|------|------|------|------|------|"
+}
 
-    # Polars multi-process
-    start=$(date +%s%N)
-    for i in $(seq 1 $NPROC); do
-        $TV "$FILE" -c "from $FILE | freq $COL" >/dev/null 2>&1 &
+# Run all thread counts for one backend, print one row
+bench_row() {
+    local name="$1"
+    shift
+    printf "| %-12s |" "$name"
+    for t in $THREADS; do
+        export POLARS_MAX_THREADS=$t RAYON_NUM_THREADS=$t
+        local time=$(timeit "$@")
+        printf " %4ss |" "$time"
     done
-    wait
-    end=$(date +%s%N)
-    ms=$(( (end - start) / 1000000 ))
-    total=$(awk "BEGIN {printf \"%.2f\", $ms/1000}")
-    avg=$(awk "BEGIN {printf \"%.2f\", $ms/1000/$NPROC}")
-    printf "| Polars freq x%-2d | %8ss | %7ss |\n" "$NPROC" "$total" "$avg"
+    echo ""
+}
 
-    # DuckDB multi-process
-    start=$(date +%s%N)
-    for i in $(seq 1 $NPROC); do
-        $TV --duckdb "$FILE" -c "from $FILE | freq $COL" >/dev/null 2>&1 &
+# Raw duckdb with thread setting
+bench_row_raw() {
+    local name="$1" sql="$2"
+    printf "| %-12s |" "$name"
+    for t in $THREADS; do
+        local time=$(timeit duckdb -c "SET threads=$t; $sql")
+        printf " %4ss |" "$time"
     done
-    wait
-    end=$(date +%s%N)
-    ms=$(( (end - start) / 1000000 ))
-    total=$(awk "BEGIN {printf \"%.2f\", $ms/1000}")
-    avg=$(awk "BEGIN {printf \"%.2f\", $ms/1000/$NPROC}")
-    printf "| DuckDB freq x%-2d | %8ss | %7ss |\n" "$NPROC" "$total" "$avg"
-fi
+    echo ""
+}
 
-echo ""
-echo "Done."
+# Main benchmark
+bench_parquet() {
+    local f="$PARQUET"
+    [ -f "$f" ] || { echo "File not found: $f"; return 1; }
+    local size=$(ls -lh "$f" | awk '{print $5}')
+    local rows=$(duckdb -c "SELECT COUNT(*) FROM '$f'" 2>/dev/null | tail -1 | tr -d ' ')
+
+    echo "# Benchmark: $f"
+    echo "Size: $size, Rows: $rows"
+    echo "Threads: $THREADS"
+    echo ""
+
+    # freq
+    op_header "freq $COL"
+    bench_row "polars" $TV "$f" -c "from $f | freq $COL"
+    bench_row "duckapi" $TV --duckapi "$f" -c "from $f | freq $COL"
+    bench_row "duckcli" $TV --duckcli "$f" -c "from $f | freq $COL"
+    bench_row_raw "duckdb raw" "SELECT \"$COL\", COUNT(*) as Cnt FROM '$f' GROUP BY \"$COL\" ORDER BY Cnt DESC"
+
+    # filter
+    op_header "filter $COL='$SYMBOL'"
+    bench_row "polars" $TV "$f" -c "from $f | filter $COL = '$SYMBOL'"
+    bench_row "duckapi" $TV --duckapi "$f" -c "from $f | filter $COL = '$SYMBOL'"
+    bench_row "duckcli" $TV --duckcli "$f" -c "from $f | filter $COL = '$SYMBOL'"
+    bench_row_raw "duckdb raw" "SELECT * FROM '$f' WHERE \"$COL\" = '$SYMBOL'"
+
+    # count
+    op_header "count"
+    bench_row "polars" $TV "$f" -c "from $f | count"
+    bench_row "duckapi" $TV --duckapi "$f" -c "from $f | count"
+    bench_row "duckcli" $TV --duckcli "$f" -c "from $f | count"
+    bench_row_raw "duckdb raw" "SELECT COUNT(*) FROM '$f'"
+
+    # head
+    op_header "head 100"
+    bench_row "polars" $TV "$f" -c "from $f | take 100"
+    bench_row "duckapi" $TV --duckapi "$f" -c "from $f | take 100"
+    bench_row "duckcli" $TV --duckcli "$f" -c "from $f | take 100"
+    bench_row_raw "duckdb raw" "SELECT * FROM '$f' LIMIT 100"
+
+    # meta
+    op_header "meta"
+    bench_row "polars" $TV "$f" -c "from $f | meta"
+    bench_row "duckapi" $TV --duckapi "$f" -c "from $f | meta"
+    bench_row "duckcli" $TV --duckcli "$f" -c "from $f | meta"
+    bench_row_raw "duckdb raw" "DESCRIBE SELECT * FROM '$f'"
+
+    echo ""
+    echo "Done."
+}
+
+bench_parquet

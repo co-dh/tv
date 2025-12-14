@@ -1,4 +1,4 @@
-use crate::backend::{self, Backend};
+use crate::backend::{self, Backend, BackendType};
 use crate::funcs::Funcs;
 use crate::keymap::KeyMap;
 use crate::plugin::Registry;
@@ -68,7 +68,7 @@ impl AppContext {
             bg_loader: None,
             bg_saver: None,
             raw_save: false,
-            backend: backend::get(false),
+            backend: backend::get(BackendType::default()),
             bg_meta: None,
             needs_redraw: false,
             needs_center: false,
@@ -150,7 +150,7 @@ impl AppContext {
         }
     }
 
-    pub fn set_backend(&mut self, use_duckdb: bool) { self.backend = backend::get(use_duckdb); }
+    pub fn set_backend(&mut self, t: BackendType) { self.backend = backend::get(t); }
     pub fn next_id(&mut self) -> usize { let i = self.next_id; self.next_id += 1; i }
     pub fn has_view(&self) -> bool { self.stack.has_view() }
     pub fn view(&self) -> Option<&ViewState> { self.stack.cur() }
