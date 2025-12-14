@@ -94,25 +94,11 @@ impl Command for Frequency {
         let pq_path = view.filename.as_ref().filter(|p| p.ends_with(".parquet"))
             .or(view.parquet_path.as_ref());
 
+        // Use backend for all freq operations
         let result = if let Some(path) = pq_path {
-            // Use backend (polars or duckdb) for parquet files
             add_freq_cols(app.backend.freq(path, &self.col_name)?)?
-        } else if key_cols.is_empty() {
-            // Simple value_counts
-            let col = view.dataframe.column(&self.col_name)?;
-            let series = col.as_materialized_series();
-            let value_counts = series.value_counts(true, false, "Cnt".into(), false)?;
-            add_freq_cols(value_counts)?
         } else {
-            // Group by key columns + target column
-            let mut group_cols: Vec<&str> = key_cols.iter().map(|s| s.as_str()).collect();
-            group_cols.push(&self.col_name);
-            let grouped = view.dataframe.clone().lazy()
-                .group_by(group_cols.iter().map(|&s| col(s)).collect::<Vec<_>>())
-                .agg([len().alias("Cnt")])
-                .sort(["Cnt"], SortMultipleOptions::default().with_order_descending(true))
-                .collect()?;
-            add_freq_cols(grouped)?
+            add_freq_cols(app.backend.freq_df(&view.dataframe, &self.col_name, &key_cols)?)?
         };
 
         let id = app.next_id();

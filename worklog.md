@@ -40,11 +40,15 @@
 | count     | 0.18s  | 0.18s   | 0.06s      |
 
 ### Files Modified
-- `src/backend.rs` - Backend trait, Polars/DuckApi/DuckCli impls
+- `src/backend/` - Backend module split into separate files:
+  - `mod.rs` - Backend trait with freq, filter, freq_df methods
+  - `polars.rs` - Polars streaming engine for parquet
+  - `duckapi.rs` - DuckDB API with Arrow transfer
+  - `duckcli.rs` - DuckDB CLI backend
+  - `memory.rs` - In-memory DataFrame operations
 - `src/main.rs` - CLI flag parsing, pass backend to batch
 - `src/app.rs` - backend field, set_backend()
-- `src/plugin/freq.rs` - use backend.freq() for all parquet
-- `src/command/io/parquet.rs` - removed freq_from_disk
+- `src/plugin/freq.rs` - use backend.freq() and freq_df()
 - `tools/bench.sh` - benchmark script for backends
 
 ## 2025-12-13: Performance, Rendering & xkey
