@@ -5,6 +5,7 @@
 - ask for approval if delete unit test that covers requirements.
 - do not remove or change test case just to fit the code. ask for approval of changing tests.
 - For bugs, implement a test to catch it first, then fix.
+- use short module imports: `use crate::foo::bar;` then `bar::func()`, not `crate::foo::bar::func()`
 
 # Architecture
 ## Source: csv, parquet on disk, odbc, .gz
