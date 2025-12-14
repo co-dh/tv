@@ -168,8 +168,15 @@ fn wait_bg_save(app: &mut AppContext) {
 /// Print table to stdout (for script mode)
 fn print(app: &AppContext) {
     if let Some(view) = app.view() {
-        println!("=== {} ({} rows) ===", view.name, view.dataframe.height());
-        println!("{}", view.dataframe);
+        println!("=== {} ({} rows) ===", view.name, view.rows());
+        // For lazy parquet, fetch first 50 rows to print
+        if let Some(ref path) = view.parquet_path {
+            if let Ok(df) = command::io::parquet::fetch_rows(std::path::Path::new(path), 0, 50) {
+                println!("{}", df);
+            }
+        } else {
+            println!("{}", view.dataframe);
+        }
     } else {
         println!("No table loaded");
     }

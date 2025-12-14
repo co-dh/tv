@@ -69,21 +69,23 @@ impl Command for From {
             ));
             app.bg_loader = bg_rx;
         } else {
-            let (df, disk_rows) = match path.extension().and_then(|s| s.to_str()) {
-                Some("csv") => (convert_epoch_cols(csv::load(path)?), None),
+            match path.extension().and_then(|s| s.to_str()) {
+                Some("csv") => {
+                    let df = convert_epoch_cols(csv::load(path)?);
+                    if df.height() == 0 { return Err(anyhow!("File is empty")); }
+                    let id = app.next_id();
+                    app.stack.push(ViewState::new(id, self.file_path.clone(), df, Some(self.file_path.clone())));
+                }
                 Some("parquet") => {
-                    let (df, total) = parquet::load(path, MAX_PREVIEW_ROWS as u32)?;
-                    let dr = if total > df.height() { Some(total) } else { None };
-                    (convert_epoch_cols(df), dr)
+                    // Lazy parquet: no in-memory DataFrame, all ops go to disk
+                    let (rows, _cols) = parquet::metadata(path)?;
+                    if rows == 0 { return Err(anyhow!("File is empty")); }
+                    let id = app.next_id();
+                    app.stack.push(ViewState::new_parquet(id, self.file_path.clone(), self.file_path.clone(), rows));
                 }
                 Some(ext) => return Err(anyhow!("Unsupported file format: {}", ext)),
                 None => return Err(anyhow!("Could not determine file type")),
             };
-            if df.height() == 0 { return Err(anyhow!("File is empty")); }
-            let id = app.next_id();
-            let mut view = ViewState::new(id, self.file_path.clone(), df, Some(self.file_path.clone()));
-            view.disk_rows = disk_rows;
-            app.stack.push(view);
         }
         Ok(())
     }

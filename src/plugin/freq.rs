@@ -68,9 +68,16 @@ impl Command for Frequency {
         if app.is_loading() { return Err(anyhow!("Wait for loading to complete")); }
         let view = app.req()?;
         let parent_id = view.id;
-        let parent_rows = view.dataframe.height();
+        let parent_rows = view.rows();  // disk_rows for parquet
         let parent_name = view.name.clone();
-        let col_names: Vec<String> = view.dataframe.get_column_names().iter().map(|s| s.to_string()).collect();
+
+        // For lazy parquet, get column names from disk
+        let col_names: Vec<String> = if let Some(ref path) = view.parquet_path {
+            crate::command::io::parquet::schema(std::path::Path::new(path))?
+                .into_iter().map(|(name, _)| name).collect()
+        } else {
+            view.dataframe.get_column_names().iter().map(|s| s.to_string()).collect()
+        };
 
         if !col_names.contains(&self.col_name) {
             return Err(anyhow!("Column '{}' not found", self.col_name));
@@ -81,7 +88,11 @@ impl Command for Frequency {
             col_names[..sep].iter().filter(|c| *c != &self.col_name).cloned().collect()
         }).unwrap_or_default();
 
-        let result = if key_cols.is_empty() {
+        let result = if let Some(ref path) = view.parquet_path {
+            // Lazy parquet: freq from disk
+            let freq = crate::command::io::parquet::freq_from_disk(std::path::Path::new(path), &self.col_name)?;
+            add_freq_cols(freq)?
+        } else if key_cols.is_empty() {
             // Simple value_counts
             let col = view.dataframe.column(&self.col_name)?;
             let series = col.as_materialized_series();

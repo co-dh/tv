@@ -90,6 +90,7 @@ pub struct ViewState {
     pub meta_cache: Option<DataFrame>, // cached metadata stats for this view
     pub partial: bool,  // gz file not fully loaded (hit memory limit)
     pub disk_rows: Option<usize>,  // total rows on disk (for large parquet files)
+    pub parquet_path: Option<String>,  // lazy parquet source (no in-memory df)
 }
 
 impl ViewState {
@@ -98,7 +99,17 @@ impl ViewState {
             id, name, dataframe: df, state: TableState::new(), history: Vec::new(),
             filename, show_row_numbers: false, parent_id: None, parent_rows: None, parent_name: None, freq_col: None,
             selected_cols: HashSet::new(), selected_rows: HashSet::new(), gz_source: None,
-            stats_cache: None, col_separator: None, meta_cache: None, partial: false, disk_rows: None,
+            stats_cache: None, col_separator: None, meta_cache: None, partial: false, disk_rows: None, parquet_path: None,
+        }
+    }
+
+    /// Create lazy parquet view (no in-memory dataframe, all ops go to disk)
+    pub fn new_parquet(id: usize, name: String, path: String, total_rows: usize) -> Self {
+        Self {
+            id, name, dataframe: DataFrame::empty(), state: TableState::new(), history: Vec::new(),
+            filename: Some(path.clone()), show_row_numbers: false, parent_id: None, parent_rows: None, parent_name: None, freq_col: None,
+            selected_cols: HashSet::new(), selected_rows: HashSet::new(), gz_source: None,
+            stats_cache: None, col_separator: None, meta_cache: None, partial: false, disk_rows: Some(total_rows), parquet_path: Some(path),
         }
     }
 
@@ -107,7 +118,7 @@ impl ViewState {
             id, name, dataframe: df, state: TableState::new(), history: Vec::new(),
             filename, show_row_numbers: false, parent_id: None, parent_rows: None, parent_name: None, freq_col: None,
             selected_cols: HashSet::new(), selected_rows: HashSet::new(), gz_source: Some(gz),
-            stats_cache: None, col_separator: None, meta_cache: None, partial, disk_rows: None,
+            stats_cache: None, col_separator: None, meta_cache: None, partial, disk_rows: None, parquet_path: None,
         }
     }
 
@@ -117,7 +128,7 @@ impl ViewState {
             id, name, dataframe: df, state: TableState::new(), history: Vec::new(),
             filename: None, show_row_numbers: false, parent_id: Some(pid), parent_rows: Some(prows), parent_name: Some(pname), freq_col: None,
             selected_cols: HashSet::new(), selected_rows: HashSet::new(), gz_source: None,
-            stats_cache: None, col_separator: None, meta_cache: None, partial: false, disk_rows: None,
+            stats_cache: None, col_separator: None, meta_cache: None, partial: false, disk_rows: None, parquet_path: None,
         }
     }
 
@@ -127,13 +138,16 @@ impl ViewState {
             id, name, dataframe: df, state: TableState::new(), history: Vec::new(),
             filename: None, show_row_numbers: false, parent_id: Some(pid), parent_rows: Some(prows), parent_name: Some(pname), freq_col: Some(col),
             selected_cols: HashSet::new(), selected_rows: HashSet::new(), gz_source: None,
-            stats_cache: None, col_separator: None, meta_cache: None, partial: false, disk_rows: None,
+            stats_cache: None, col_separator: None, meta_cache: None, partial: false, disk_rows: None, parquet_path: None,
         }
     }
 
     pub fn add_hist(&mut self, cmd: String) { self.history.push(cmd); }
-    pub fn rows(&self) -> usize { self.dataframe.height() }
+    /// Row count: from disk_rows for parquet, else dataframe height
+    pub fn rows(&self) -> usize { self.disk_rows.unwrap_or_else(|| self.dataframe.height()) }
     pub fn cols(&self) -> usize { self.dataframe.width() }
+    /// Check if view is backed by lazy parquet (no in-memory df)
+    pub fn is_lazy_parquet(&self) -> bool { self.parquet_path.is_some() }
     /// Check if view uses row selection (meta/freq) vs column selection (table)
     pub fn is_row_sel(&self) -> bool { self.name == "metadata" || self.name.starts_with("Freq:") }
 }

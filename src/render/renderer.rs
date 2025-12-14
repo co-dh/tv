@@ -45,7 +45,16 @@ impl Renderer {
 
     /// Render table data
     fn render_table(frame: &mut Frame, view: &mut ViewState, area: Rect, selected_cols: &HashSet<usize>, selected_rows: &HashSet<usize>, decimals: usize, theme: &Theme, show_tabs: bool) {
+        // For lazy parquet views, fetch visible rows from disk
+        let lazy_offset = if let Some(ref path) = view.parquet_path {
+            let rows_needed = area.height as usize + 10; // buffer
+            if let Ok(df) = crate::command::io::parquet::fetch_rows(std::path::Path::new(path), view.state.r0, rows_needed) {
+                view.dataframe = df;
+            }
+            view.state.r0  // df rows start at this offset
+        } else { 0 };
         let df = &view.dataframe;
+        let total_rows = view.rows();  // use disk_rows for parquet
         let is_correlation = view.name == "correlation";
 
         // Calculate column widths if needed
@@ -65,9 +74,9 @@ impl Renderer {
             return;
         }
 
-        // Row number width
+        // Row number width (use total_rows for lazy parquet)
         let row_num_width = if view.show_row_numbers {
-            df.height().to_string().len().max(3) as u16
+            total_rows.to_string().len().max(3) as u16
         } else { 0 };
         let screen_width = area.width.saturating_sub(if row_num_width > 0 { row_num_width + 1 } else { 0 }) as i32;
 
@@ -87,17 +96,19 @@ impl Renderer {
 
         // Reserve rows at bottom: header(1) + status(1) + tabs(1 if shown)
         let bottom_reserve = if show_tabs { 3 } else { 2 };
-        let end_row = (state.r0 + (area.height as usize).saturating_sub(bottom_reserve)).min(df.height());
+        let end_row = (state.r0 + (area.height as usize).saturating_sub(bottom_reserve)).min(total_rows);
 
         let col_sep = view.col_separator;
 
         // Render headers
         Self::render_headers_xs(frame, df, state, &xs, screen_width, row_num_width, selected_cols, col_sep, theme, area);
 
-        // Render data rows
+        // Render data rows (for lazy parquet, df_idx = row_idx - lazy_offset)
         for row_idx in state.r0..end_row {
+            let df_idx = row_idx - lazy_offset;
+            if df_idx >= df.height() { break; }  // fetched window exhausted
             let screen_row = (row_idx - state.r0 + 1) as u16;
-            Self::render_row_xs(frame, df, row_idx, state, &xs, screen_width, row_num_width, is_correlation, selected_cols, selected_rows, col_sep, decimals, theme, area, screen_row);
+            Self::render_row_xs(frame, df, df_idx, row_idx, state, &xs, screen_width, row_num_width, is_correlation, selected_cols, selected_rows, col_sep, decimals, theme, area, screen_row);
         }
 
         // Draw separator bar if set (stop before tabs/status)
@@ -181,7 +192,8 @@ impl Renderer {
     }
 
     /// Render a single data row
-    fn render_row_xs(frame: &mut Frame, df: &DataFrame, row_idx: usize, state: &TableState, xs: &[i32], screen_width: i32, row_num_width: u16, is_correlation: bool, selected_cols: &HashSet<usize>, selected_rows: &HashSet<usize>, _col_sep: Option<usize>, decimals: usize, theme: &Theme, area: Rect, screen_row: u16) {
+    // df_idx: index into dataframe, row_idx: actual row number in file (for display/cursor)
+    fn render_row_xs(frame: &mut Frame, df: &DataFrame, df_idx: usize, row_idx: usize, state: &TableState, xs: &[i32], screen_width: i32, row_num_width: u16, is_correlation: bool, selected_cols: &HashSet<usize>, selected_rows: &HashSet<usize>, _col_sep: Option<usize>, decimals: usize, theme: &Theme, area: Rect, screen_row: u16) {
         let buf = frame.buffer_mut();
         let is_cur_row = row_idx == state.cr;
         let is_sel_row = selected_rows.contains(&row_idx);
@@ -215,7 +227,7 @@ impl Renderer {
             let is_sel = selected_cols.contains(&col_idx);
 
             let col_width = state.col_widths.get(col_idx).copied().unwrap_or(10) as usize;
-            let value = Self::format_value(df, col_idx, row_idx, decimals);
+            let value = Self::format_value(df, col_idx, df_idx, decimals);
 
             // Correlation color
             let corr_color = if is_correlation && col_idx > 0 { Self::correlation_color(&value) } else { None };

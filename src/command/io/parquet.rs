@@ -3,6 +3,15 @@ use anyhow::{anyhow, Result};
 use polars::prelude::*;
 use std::path::Path;
 
+/// Get parquet metadata (row count, column count) without loading data
+pub fn metadata(path: &Path) -> Result<(usize, usize)> {
+    let file = std::fs::File::open(path).map_err(|e| anyhow!("Open: {}", e))?;
+    let mut reader = ParquetReader::new(file);
+    let rows = reader.get_metadata().map_err(|e| anyhow!("Metadata: {}", e))?.num_rows;
+    let cols = reader.schema().map_err(|e| anyhow!("Schema: {}", e))?.len();
+    Ok((rows, cols))
+}
+
 /// Load parquet file (lazy with limit). Returns (df, total_rows_on_disk)
 pub fn load(path: &Path, limit: u32) -> Result<(DataFrame, usize)> {
     // Get total row count from parquet metadata (reads only footer, not data)
@@ -58,10 +67,28 @@ pub fn freq_from_disk(path: &Path, name: &str) -> Result<DataFrame> {
     LazyFrame::scan_parquet(path, args)
         .map_err(|e| anyhow!("Scan: {}", e))?
         .group_by([col(name)])
-        .agg([len().alias("count")])
-        .sort(["count"], SortMultipleOptions::default().with_order_descending(true))
+        .agg([len().alias("Cnt")])
+        .sort(["Cnt"], SortMultipleOptions::default().with_order_descending(true))
         .collect()
         .map_err(|e| anyhow!("Freq: {}", e))
+}
+
+/// Fetch window of rows from parquet (for rendering visible viewport)
+pub fn fetch_rows(path: &Path, offset: usize, limit: usize) -> Result<DataFrame> {
+    let args = ScanArgsParquet::default();
+    LazyFrame::scan_parquet(path, args)
+        .map_err(|e| anyhow!("Scan: {}", e))?
+        .slice(offset as i64, limit as u32)
+        .collect()
+        .map_err(|e| anyhow!("Fetch: {}", e))
+}
+
+/// Get schema (column names and types) from parquet without loading data
+pub fn schema(path: &Path) -> Result<Vec<(String, String)>> {
+    let file = std::fs::File::open(path).map_err(|e| anyhow!("Open: {}", e))?;
+    let schema = ParquetReader::new(file).schema()
+        .map_err(|e| anyhow!("Schema: {}", e))?;
+    Ok(schema.iter().map(|(n, f)| (n.to_string(), format!("{:?}", f.dtype()))).collect())
 }
 
 /// Get distinct values for a column from parquet file on disk (lazy, no full load)
@@ -223,6 +250,38 @@ mod tests {
         let (df, total) = load(&tmp, 2000).unwrap();
         assert_eq!(df.height(), 1000);
         assert_eq!(total, 1000);
+
+        let _ = std::fs::remove_file(tmp);
+    }
+
+    #[test]
+    fn test_lazy_parquet_viewport_fetch() {
+        // Test fetch_rows for lazy parquet - fetch only visible window
+        let tmp = std::env::temp_dir().join("test_lazy_viewport.parquet");
+        // Create parquet: 1000 rows with known values
+        let df = DataFrame::new(vec![
+            Column::new("id".into(), (0..1000).collect::<Vec<i32>>()),
+            Column::new("val".into(), (0..1000).map(|i| i * 10).collect::<Vec<i32>>()),
+        ]).unwrap();
+        save(&df, &tmp).unwrap();
+
+        // Lazy load: just metadata, no rows loaded
+        let (rows, cols) = metadata(&tmp).unwrap();
+        assert_eq!(rows, 1000, "Metadata should report 1000 rows");
+        assert_eq!(cols, 2, "Metadata should report 2 columns");
+
+        // Fetch rows 100-149 (50 rows)
+        let window = fetch_rows(&tmp, 100, 50).unwrap();
+        assert_eq!(window.height(), 50, "Should fetch exactly 50 rows");
+        // First row should have id=100
+        let first_id = window.column("id").unwrap().get(0).unwrap();
+        assert_eq!(first_id.to_string(), "100", "First row should have id=100");
+
+        // Fetch rows at end (950-999, 50 rows)
+        let end_window = fetch_rows(&tmp, 950, 100).unwrap();
+        assert_eq!(end_window.height(), 50, "Should only get 50 rows at end");
+        let last_id = end_window.column("id").unwrap().get(49).unwrap();
+        assert_eq!(last_id.to_string(), "999", "Last row should have id=999");
 
         let _ = std::fs::remove_file(tmp);
     }
