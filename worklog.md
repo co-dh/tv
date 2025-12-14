@@ -1,5 +1,51 @@
 # Worklog
 
+## 2025-12-14: Backend Trait & DuckDB Integration
+
+### Commits
+- `791f836` - Remove duplicate freq_from_disk, use Backend trait
+- `dde7798` - Fix backend flag ignored with -c, Arrow conversion
+- `04a94d0` - Add 3 backend options: polars, duckapi, duckcli
+- `8778c6f` - Remove unused code
+- `e7ba58e` - Fix polars 0.52 API changes
+- `9f53404` - Add Backend trait for polars/duckdb switching
+
+### Changes
+- **Backend trait**: Abstract interface for data engines
+  - `Polars` - streaming engine with LazyFrame
+  - `DuckApi` - native duckdb crate with Arrow transfer
+  - `DuckCli` - shell out to duckdb CLI, parse CSV output
+  - CLI flags: `--duckapi`, `--duckcli` (default: polars)
+
+- **Arrow conversion**: Fast DuckDB to polars transfer
+  - Use `query_arrow()` instead of row-by-row iteration
+  - Handle Int32/Int64/Float64/Utf8/LargeUtf8 types
+  - 2x faster than polars for freq on 3.7GB parquet
+
+- **Bug fix**: Backend flag was ignored with `-c`
+  - Parse `--duckapi`/`--duckcli` before `-c` check
+  - Pass `BackendType` to `run_commands()`/`run_batch()`
+
+- **Code cleanup**: Removed 584 lines of unused code
+  - Deleted `src/connector.rs` (unused module)
+  - Removed duplicate `freq_from_disk` from parquet.rs
+  - Consolidated all freq to use `Backend` trait
+
+### Performance (8 threads, 3.7GB parquet)
+| Operation | Polars | DuckApi | Raw DuckDB |
+|-----------|--------|---------|------------|
+| freq      | 0.59s  | 0.33s   | 0.13s      |
+| filter    | 0.21s  | 0.58s   | 0.15s      |
+| count     | 0.18s  | 0.18s   | 0.06s      |
+
+### Files Modified
+- `src/backend.rs` - Backend trait, Polars/DuckApi/DuckCli impls
+- `src/main.rs` - CLI flag parsing, pass backend to batch
+- `src/app.rs` - backend field, set_backend()
+- `src/plugin/freq.rs` - use backend.freq() for all parquet
+- `src/command/io/parquet.rs` - removed freq_from_disk
+- `tools/bench.sh` - benchmark script for backends
+
 ## 2025-12-13: Performance, Rendering & xkey
 
 ### Commits
