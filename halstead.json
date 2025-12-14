@@ -1,24 +1,24 @@
 {
-  "total_length": 29184.0,
-  "total_bugs": 45.33765637305328,
+  "total_length": 31179.0,
+  "total_bugs": 47.9453821890934,
   "files": [
     {
       "file": "./src/app.rs",
-      "length": 912.0,
-      "bugs": 1.3475800397691649,
-      "volume": 6520.5693729882705
+      "length": 920.0,
+      "bugs": 1.3610734285533062,
+      "volume": 6577.767349944308
     },
     {
       "file": "./src/command/executor.rs",
-      "length": 75.0,
-      "bugs": 0.09736655719289146,
-      "volume": 360.5516191543203
+      "length": 76.0,
+      "bugs": 0.09823012572066325,
+      "volume": 365.3589740763779
     },
     {
       "file": "./src/command/io.rs",
-      "length": 3833.0,
-      "bugs": 5.878253467994501,
-      "volume": 33034.271630157236
+      "length": 4258.0,
+      "bugs": 6.673857561790176,
+      "volume": 36912.11226300568
     },
     {
       "file": "./src/command/mod.rs",
@@ -40,9 +40,9 @@
     },
     {
       "file": "./src/command/view.rs",
-      "length": 706.0,
-      "bugs": 0.9675234038266537,
-      "volume": 4893.100560319398
+      "length": 192.0,
+      "bugs": 0.2736332297163011,
+      "volume": 1035.324945173522
     },
     {
       "file": "./src/funcs.rs",
@@ -52,33 +52,39 @@
     },
     {
       "file": "./src/keymap.rs",
-      "length": 806.0,
-      "bugs": 1.11282825786885,
-      "volume": 5651.049167871142
+      "length": 827.0,
+      "bugs": 1.1042151956431874,
+      "volume": 5807.498181374532
     },
     {
       "file": "./src/main.rs",
-      "length": 5492.0,
-      "bugs": 8.131258324948778,
-      "volume": 49716.70373501641
+      "length": 5514.0,
+      "bugs": 8.07268269260165,
+      "volume": 49915.8602321341
     },
     {
       "file": "./src/os.rs",
-      "length": 2714.0,
-      "bugs": 3.985685776823714,
-      "volume": 22132.176347967412
+      "length": 2692.0,
+      "bugs": 3.8063208396385773,
+      "volume": 22060.285452104694
     },
     {
       "file": "./src/picker.rs",
-      "length": 871.0,
-      "bugs": 1.4263652026304308,
-      "volume": 6126.111434339119
+      "length": 886.0,
+      "bugs": 1.456324474996247,
+      "volume": 6231.612779362181
+    },
+    {
+      "file": "./src/plugin/corr.rs",
+      "length": 787.0,
+      "bugs": 1.0556924803694208,
+      "volume": 5526.603468853394
     },
     {
       "file": "./src/plugin/folder.rs",
-      "length": 415.0,
-      "bugs": 0.585636471995594,
-      "volume": 2623.6001593782553
+      "length": 930.0,
+      "bugs": 1.2428832863235408,
+      "volume": 6890.733570608063
     },
     {
       "file": "./src/plugin/freq.rs",
@@ -94,9 +100,9 @@
     },
     {
       "file": "./src/plugin/mod.rs",
-      "length": 415.0,
-      "bugs": 0.64516976493831,
-      "volume": 2584.9597565557906
+      "length": 427.0,
+      "bugs": 0.67079274972124,
+      "volume": 2675.917852876723
     },
     {
       "file": "./src/plugin/system.rs",
@@ -106,9 +112,9 @@
     },
     {
       "file": "./src/prql.rs",
-      "length": 740.0,
-      "bugs": 1.066803298618252,
-      "volume": 5260.308098015845
+      "length": 769.0,
+      "bugs": 1.103219819816784,
+      "volume": 5498.1555348991005
     },
     {
       "file": "./src/render/mod.rs",
@@ -118,9 +124,9 @@
     },
     {
       "file": "./src/render/renderer.rs",
-      "length": 3668.0,
-      "bugs": 6.56050946807058,
-      "volume": 30557.803108924418
+      "length": 4011.0,
+      "bugs": 7.006442414274324,
+      "volume": 33897.80776955947
     },
     {
       "file": "./src/render/terminal.rs",
@@ -130,9 +136,9 @@
     },
     {
       "file": "./src/state.rs",
-      "length": 923.0,
-      "bugs": 1.693374200223942,
-      "volume": 5946.836846668376
+      "length": 1276.0,
+      "bugs": 2.18071175177637,
+      "volume": 8828.469490762383
     },
     {
       "file": "./src/theme.rs",

@@ -241,6 +241,20 @@ fn on_col<F>(app: &mut AppContext, f: F) where F: FnOnce(String) -> Box<dyn comm
     }
 }
 
+/// Dispatch action to plugin (DRY helper)
+fn dispatch(app: &mut AppContext, action: &str) -> bool {
+    let name = match app.view() { Some(v) => v.name.clone(), None => return false };
+    let plugins = std::mem::take(&mut app.plugins);
+    let cmd = plugins.handle(&name, action, app);
+    app.plugins = plugins;
+    if let Some(cmd) = cmd { run(app, cmd); true } else { false }
+}
+
+/// Execute command with error handling (DRY helper)
+fn run(app: &mut AppContext, cmd: Box<dyn command::Command>) {
+    if let Err(e) = CommandExecutor::exec(app, cmd) { app.err(e); }
+}
+
 /// Find next/prev search match (DRY helper)
 fn find_match(app: &mut AppContext, forward: bool) {
     if let Some(expr) = app.search.value.clone() {
@@ -287,9 +301,7 @@ fn on_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
         KeyCode::Char('L') => {
             // L: Load file
             if let Some(file_path) = prompt(app, "Load file: ")? {
-                if let Err(e) = CommandExecutor::exec(app, Box::new(From { file_path })) {
-                    app.err(e);
-                }
+                run(app, Box::new(From { file_path }));
             }
         }
         KeyCode::Char('S') => {
@@ -314,39 +326,25 @@ fn on_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                         }
                     }
                 }
-                if let Err(e) = CommandExecutor::exec(app, Box::new(Save { file_path })) {
-                    app.err(e);
-                }
+                run(app, Box::new(Save { file_path }));
             }
         }
         KeyCode::Char('D') => {
-            // D: Delete - dispatch to view-specific handler, fallback to table delete
-            let name = app.view().map(|v| v.name.clone());
-            if let Some(name) = name {
-                // Temporarily move registry to avoid borrow conflict
-                let plugins = std::mem::take(&mut app.plugins);
-                let cmd = plugins.handle(&name, "delete", app);
-                app.plugins = plugins;
-                if let Some(cmd) = cmd {
-                    if let Err(e) = CommandExecutor::exec(app, cmd) {
-                        app.err(e);
+            // D: Delete - dispatch to plugin, fallback to table delete
+            if !dispatch(app, "delete") {
+                let col_names: Vec<String> = app.view().map(|view| {
+                    if view.selected_cols.is_empty() {
+                        view.state.cur_col(&view.dataframe).map(|c| vec![c]).unwrap_or_default()
+                    } else {
+                        let names: Vec<String> = view.dataframe.get_column_names().iter().map(|s| s.to_string()).collect();
+                        let mut sel: Vec<usize> = view.selected_cols.iter().copied().collect();
+                        sel.sort_by(|a, b| b.cmp(a));
+                        sel.iter().filter_map(|&i| names.get(i).cloned()).collect()
                     }
-                } else {
-                    // Default table delete
-                    let col_names: Vec<String> = app.view().map(|view| {
-                        if view.selected_cols.is_empty() {
-                            view.state.cur_col(&view.dataframe).map(|c| vec![c]).unwrap_or_default()
-                        } else {
-                            let names: Vec<String> = view.dataframe.get_column_names().iter().map(|s| s.to_string()).collect();
-                            let mut sel: Vec<usize> = view.selected_cols.iter().copied().collect();
-                            sel.sort_by(|a, b| b.cmp(a));
-                            sel.iter().filter_map(|&i| names.get(i).cloned()).collect()
-                        }
-                    }).unwrap_or_default();
-                    if !col_names.is_empty() {
-                        let _ = CommandExecutor::exec(app, Box::new(DelCol { col_names }));
-                        if let Some(v) = app.view_mut() { v.selected_cols.clear(); }
-                    }
+                }).unwrap_or_default();
+                if !col_names.is_empty() {
+                    let _ = CommandExecutor::exec(app, Box::new(DelCol { col_names }));
+                    if let Some(v) = app.view_mut() { v.selected_cols.clear(); }
                 }
             }
         }
@@ -362,9 +360,7 @@ fn on_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                     sel.into_iter().filter_map(|i| names.get(i).cloned()).collect()
                 };
                 if !col_names.is_empty() {
-                    if let Err(e) = CommandExecutor::exec(app, Box::new(Xkey { col_names })) {
-                        app.err(e);
-                    }
+                    run(app, Box::new(Xkey { col_names }));
                     if let Some(v) = app.view_mut() { v.selected_cols.clear(); }
                 }
             }
@@ -401,16 +397,7 @@ fn on_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                     } else { false };
 
                     // Folder view: auto-execute Enter after search
-                    if found && is_folder {
-                        let name = app.view().map(|v| v.name.clone());
-                        if let Some(name) = name {
-                            let plugins = std::mem::take(&mut app.plugins);
-                            if let Some(cmd) = plugins.handle(&name, "enter", app) {
-                                let _ = CommandExecutor::exec(app, cmd);
-                            }
-                            app.plugins = plugins;
-                        }
-                    }
+                    if found && is_folder { dispatch(app, "enter"); }
                 }
             }
         }
@@ -425,9 +412,7 @@ fn on_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                 app.needs_redraw = true;
 
                 if let Ok(Some(expr)) = expr_opt {
-                    if let Err(e) = CommandExecutor::exec(app, Box::new(Filter { expr })) {
-                        app.err(e);
-                    }
+                    run(app, Box::new(Filter { expr }));
                 }
             } else {
                 app.no_table();
@@ -456,17 +441,13 @@ fn on_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
             if !app.has_view() {
                 app.no_table();
             } else if let Some(cols_str) = prompt(app, "Select columns (comma-separated): ")? {
-                if let Err(e) = CommandExecutor::exec(app, Box::new(Select {
-                    col_names: cols_str.split(',').map(|s| s.trim().to_string()).collect()
-                })) {
-                    app.err(e);
-                }
+                run(app, Box::new(Select { col_names: cols_str.split(',').map(|s| s.trim().to_string()).collect() }));
             }
         }
         KeyCode::Char('F') => on_col(app, |c| Box::new(Frequency { col_name: c })),  // F: Frequency
         KeyCode::Char('M') => {  // M: Metadata view
             if app.has_view() {
-                if let Err(e) = CommandExecutor::exec(app, Box::new(Metadata)) { app.err(e); }
+                run(app, Box::new(Metadata));
             }
         }
         KeyCode::Char('[') => on_col(app, |c| Box::new(Sort { col_name: c, descending: false })),  // [: Sort asc
@@ -476,27 +457,12 @@ fn on_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
             if let Some(view) = app.view() {
                 if let Some(old_name) = view.state.cur_col(&view.dataframe) {
                     if let Some(new_name) = prompt(app, &format!("Rename '{}' to: ", old_name))? {
-                        if let Err(e) = CommandExecutor::exec(app, Box::new(RenameCol { old_name, new_name })) {
-                            app.err(e);
-                        }
+                        run(app, Box::new(RenameCol { old_name, new_name }));
                     }
                 }
             }
         }
-        KeyCode::Enter => {
-            // Dispatch Enter to view-specific handler
-            let name = app.view().map(|v| v.name.clone());
-            if let Some(name) = name {
-                let plugins = std::mem::take(&mut app.plugins);
-                let cmd = plugins.handle(&name, "enter", app);
-                app.plugins = plugins;
-                if let Some(cmd) = cmd {
-                    if let Err(e) = CommandExecutor::exec(app, cmd) {
-                        app.err(e);
-                    }
-                }
-            }
-        }
+        KeyCode::Enter => { dispatch(app, "enter"); }
         KeyCode::Char('c') => {
             // c: Copy current column
             if let Some(view) = app.view() {
@@ -561,7 +527,7 @@ fn on_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                 let result = picker::fzf(vec!["count".into(), "sum".into(), "mean".into(), "min".into(), "max".into(), "std".into()], "Aggregate: ");
                 app.needs_redraw = true;
                 if let Ok(Some(func)) = result {
-                    if let Err(e) = CommandExecutor::exec(app, Box::new(Agg { col, func })) { app.err(e); }
+                    run(app, Box::new(Agg { col, func }));
                 }
             }
         }
@@ -573,28 +539,23 @@ fn on_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
         }
         KeyCode::Char('W') => {
             // W: Swap top two views
-            if let Err(e) = CommandExecutor::exec(app, Box::new(Swap)) {
-                app.err(e);
-            }
+            run(app, Box::new(Swap));
         }
         KeyCode::Char('l') => {  // l: Directory listing
             let dir = std::env::current_dir().unwrap_or_default();
-            if let Err(e) = CommandExecutor::exec(app, Box::new(Ls { dir, recursive: false })) { app.err(e); }
+            run(app, Box::new(Ls { dir, recursive: false }));
         }
         KeyCode::Char('r') => {  // r: Recursive directory listing (ls -r)
             let dir = std::env::current_dir().unwrap_or_default();
-            if let Err(e) = CommandExecutor::exec(app, Box::new(Ls { dir, recursive: true })) { app.err(e); }
+            run(app, Box::new(Ls { dir, recursive: true }));
         }
         KeyCode::Char('C') => {
             // C: Correlation matrix (uses selected columns if >= 2, otherwise all numeric)
             if app.has_view() {
-                if let Err(e) = CommandExecutor::exec(app, Box::new(Correlation {
+                run(app, Box::new(Correlation {
                     selected_cols: app.view().map(|v| v.selected_cols.iter().copied().collect()).unwrap_or_default()
-                })) {
-                    app.err(e);
-                } else if let Some(view) = app.view_mut() {
-                    view.selected_cols.clear();
-                }
+                }));
+                if let Some(v) = app.view_mut() { v.selected_cols.clear(); }
             }
         }
         KeyCode::Char(':') => {
