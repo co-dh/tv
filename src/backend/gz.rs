@@ -25,29 +25,36 @@ pub struct Gz<'a> {
 }
 
 impl Backend for Gz<'_> {
+    /// Column names from in-memory DataFrame
     fn cols(&self, _: &str) -> Result<Vec<String>> {
         Ok(self.df.get_column_names().iter().map(|s| s.to_string()).collect())
     }
 
+    /// Schema from in-memory DataFrame
     fn schema(&self, _: &str) -> Result<Vec<(String, String)>> {
         Ok(self.df.schema().iter().map(|(n, dt)| (n.to_string(), format!("{:?}", dt))).collect())
     }
 
+    /// Row count and columns from in-memory DataFrame
     fn metadata(&self, _: &str) -> Result<(usize, Vec<String>)> {
         Ok((self.df.height(), self.df.get_column_names().iter().map(|s| s.to_string()).collect()))
     }
 
+    /// Slice in-memory DataFrame for viewport
     fn fetch_rows(&self, _: &str, offset: usize, limit: usize) -> Result<DataFrame> {
         Ok(self.df.slice(offset as i64, limit))
     }
 
+    /// Distinct values - blocked if partial load (memory limit hit)
     fn distinct(&self, _: &str, col: &str) -> Result<Vec<String>> {
         if self.partial { return Err(anyhow!("File not fully loaded (memory limit)")); }
         df_distinct(self.df, col)
     }
 
+    /// Save to parquet via common helper
     fn save(&self, df: &DataFrame, path: &Path) -> Result<()> { df_save(df, path) }
 
+    /// Frequency count - blocked if partial load
     fn freq(&self, _: &str, col: &str) -> Result<DataFrame> {
         if self.partial { return Err(anyhow!("File not fully loaded (memory limit)")); }
         self.df.column(col)?.as_materialized_series()
@@ -55,11 +62,13 @@ impl Backend for Gz<'_> {
             .map_err(|e| anyhow!("{}", e))
     }
 
+    /// Filter - blocked if partial load
     fn filter(&self, _: &str, w: &str) -> Result<DataFrame> {
         if self.partial { return Err(anyhow!("File not fully loaded (memory limit)")); }
         df_filter(self.df, w)
     }
 
+    /// Sort and limit via common helper (always allowed)
     fn sort_head(&self, _: &str, col: &str, desc: bool, limit: usize) -> Result<DataFrame> { df_sort_head(self.df, col, desc, limit) }
 }
 
@@ -112,6 +121,7 @@ pub fn load_streaming(path: &Path, mem_limit: u64) -> Result<(DataFrame, Option<
     Ok((df, Some(rx)))
 }
 
+/// Background thread: read chunks until EOF or memory limit
 fn stream_chunks(
     mut reader: BufReader<ChildStdout>, header: Vec<u8>, sep: u8,
     mem_limit: u64, mut total_bytes: u64, tx: Sender<GzChunk>, mut child: Child, schema: Arc<Schema>,
@@ -141,6 +151,7 @@ fn stream_chunks(
 
 // ── Streaming save ──────────────────────────────────────────────────────────
 
+/// Format number with commas (1234567 -> "1,234,567")
 fn commify(n: usize) -> String {
     let s = n.to_string();
     let mut r = String::with_capacity(s.len() + s.len() / 3);
@@ -159,6 +170,7 @@ pub fn stream_to_parquet(gz_path: &str, out_path: &Path, raw: bool) -> Receiver<
     rx
 }
 
+/// Stream gz→parquet conversion with progress updates via channel
 fn stream_save(gz_path: &str, out_path: &Path, raw: bool, tx: &Sender<String>) -> Result<()> {
     let mut child = Command::new("zcat")
         .arg(gz_path).stdout(Stdio::piped()).stderr(Stdio::null())

@@ -9,16 +9,19 @@ use std::path::Path;
 pub struct Polars;
 
 impl Backend for Polars {
+    /// Column names from parquet schema
     fn cols(&self, path: &str) -> Result<Vec<String>> {
         Ok(self.schema(path)?.into_iter().map(|(n, _)| n).collect())
     }
 
+    /// Schema as (name, type) pairs from parquet metadata
     fn schema(&self, path: &str) -> Result<Vec<(String, String)>> {
         let file = std::fs::File::open(path)?;
         let schema = ParquetReader::new(file).schema()?;
         Ok(schema.iter().map(|(n, f)| (n.to_string(), format!("{:?}", f.dtype()))).collect())
     }
 
+    /// Row count and column names from parquet metadata (no data scan)
     fn metadata(&self, path: &str) -> Result<(usize, Vec<String>)> {
         let file = std::fs::File::open(path).map_err(|e| anyhow!("Open: {}", e))?;
         let mut reader = ParquetReader::new(file);
@@ -28,6 +31,7 @@ impl Backend for Polars {
         Ok((rows, cols))
     }
 
+    /// Fetch row window via LazyFrame slice (streaming, no full scan)
     fn fetch_rows(&self, path: &str, offset: usize, limit: usize) -> Result<DataFrame> {
         LazyFrame::scan_parquet(PlPath::new(path), ScanArgsParquet::default())
             .map_err(|e| anyhow!("Scan: {}", e))?
@@ -36,6 +40,7 @@ impl Backend for Polars {
             .map_err(|e| anyhow!("Fetch: {}", e))
     }
 
+    /// Distinct values via LazyFrame unique (streaming)
     fn distinct(&self, path: &str, name: &str) -> Result<Vec<String>> {
         let df = LazyFrame::scan_parquet(PlPath::new(path), ScanArgsParquet::default())
             .map_err(|e| anyhow!("Scan: {}", e))?
@@ -50,6 +55,7 @@ impl Backend for Polars {
         Ok(vals)
     }
 
+    /// Write DataFrame to parquet file
     fn save(&self, df: &DataFrame, path: &Path) -> Result<()> {
         let mut df = df.clone();
         ParquetWriter::new(std::fs::File::create(path)?)
@@ -58,6 +64,7 @@ impl Backend for Polars {
         Ok(())
     }
 
+    /// Frequency count via streaming group_by (handles large files)
     fn freq(&self, path: &str, name: &str) -> Result<DataFrame> {
         LazyFrame::scan_parquet(PlPath::new(path), ScanArgsParquet::default())?
             .group_by([col(name)])
@@ -67,6 +74,7 @@ impl Backend for Polars {
             .map_err(|e| anyhow!("{}", e))
     }
 
+    /// Filter via SQL WHERE on LazyFrame
     fn filter(&self, path: &str, where_clause: &str) -> Result<DataFrame> {
         let mut ctx = polars::sql::SQLContext::new();
         ctx.register("df", LazyFrame::scan_parquet(PlPath::new(path), ScanArgsParquet::default())?);
@@ -75,6 +83,7 @@ impl Backend for Polars {
             .map_err(|e| anyhow!("{}", e))
     }
 
+    /// Sort and limit via LazyFrame (efficient for TUI viewport)
     fn sort_head(&self, path: &str, col: &str, desc: bool, limit: usize) -> Result<DataFrame> {
         LazyFrame::scan_parquet(PlPath::new(path), ScanArgsParquet::default())?
             .sort([col], SortMultipleOptions::default().with_order_descending(desc))

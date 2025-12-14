@@ -15,33 +15,40 @@ pub struct Memory<'a>(pub &'a DataFrame, pub Vec<String>);
 /// `impl Backend for Memory<'_>` - implement trait for Memory with any lifetime
 /// `'_` = elided lifetime, compiler infers it
 impl Backend for Memory<'_> {
+    /// Column names from in-memory DataFrame
     fn cols(&self, _: &str) -> Result<Vec<String>> {
         Ok(self.0.get_column_names().iter().map(|s| s.to_string()).collect())
     }
 
+    /// Schema from in-memory DataFrame
     fn schema(&self, _: &str) -> Result<Vec<(String, String)>> {
         Ok(self.0.schema().iter().map(|(n, dt)| (n.to_string(), format!("{:?}", dt))).collect())
     }
 
+    /// Row count and columns from in-memory DataFrame
     fn metadata(&self, _: &str) -> Result<(usize, Vec<String>)> {
         let df = self.0;
         Ok((df.height(), df.get_column_names().iter().map(|s| s.to_string()).collect()))
     }
 
+    /// Slice in-memory DataFrame for viewport
     fn fetch_rows(&self, _: &str, offset: usize, limit: usize) -> Result<DataFrame> {
         Ok(self.0.slice(offset as i64, limit))
     }
 
+    /// Distinct values via common helper
     fn distinct(&self, _: &str, col: &str) -> Result<Vec<String>> { df_distinct(self.0, col) }
+    /// Save to parquet via common helper
     fn save(&self, df: &DataFrame, path: &Path) -> Result<()> { df_save(df, path) }
 
+    /// Frequency count - simple value_counts or keyed group_by
     fn freq(&self, _: &str, c: &str) -> Result<DataFrame> {
         let (df, keys) = (self.0, &self.1);
-        if keys.is_empty() {
+        if keys.is_empty() {  // simple: value_counts on single column
             df.column(c)?.as_materialized_series()
                 .value_counts(true, false, "Cnt".into(), false)
                 .map_err(|e| anyhow!("{}", e))
-        } else {
+        } else {  // keyed: group_by [keys..., col] then count
             let mut g: Vec<Expr> = keys.iter().map(|k| col(k)).collect();
             g.push(col(c));
             df.clone().lazy()
@@ -52,7 +59,9 @@ impl Backend for Memory<'_> {
         }
     }
 
+    /// Filter via common SQL helper
     fn filter(&self, _: &str, w: &str) -> Result<DataFrame> { df_filter(self.0, w) }
+    /// Sort and limit via common helper
     fn sort_head(&self, _: &str, col: &str, desc: bool, limit: usize) -> Result<DataFrame> { df_sort_head(self.0, col, desc, limit) }
 }
 

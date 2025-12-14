@@ -29,6 +29,7 @@ use render::Renderer;
 use std::fs;
 use std::io::{self, Write};
 
+/// Entry point: parse args, run TUI or batch mode
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
 
@@ -121,7 +122,7 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-/// Run batch commands (used by both -c and --script)
+/// Run commands from iterator (pipe/batch mode)
 fn run_batch<I: Iterator<Item = String>>(lines: I) -> Result<()> {
     let mut app = AppContext::new();
     app.viewport(50, 120);
@@ -145,17 +146,17 @@ fn run_batch<I: Iterator<Item = String>>(lines: I) -> Result<()> {
     Ok(())
 }
 
-/// Run commands from inline string (-c option)
+/// Run inline commands (-c "from x | filter y")
 fn run_commands(commands: &str) -> Result<()> {
     run_batch(std::iter::once(commands.to_string()))
 }
 
-/// Run commands from a script file
+/// Run script file (--script path)
 fn run_script(script_path: &str) -> Result<()> {
     run_batch(fs::read_to_string(script_path)?.lines().map(String::from))
 }
 
-/// Wait for background save to complete (for script mode)
+/// Block until background save completes
 fn wait_bg_save(app: &mut AppContext) {
     if let Some(rx) = app.bg_saver.take() {
         for msg in rx {
@@ -164,7 +165,7 @@ fn wait_bg_save(app: &mut AppContext) {
     }
 }
 
-/// Print table to stdout (for script mode)
+/// Print current view to stdout (batch mode)
 fn print(app: &AppContext) {
     if let Some(view) = app.view() {
         println!("=== {} ({} rows) ===", view.name, view.rows());
@@ -181,7 +182,7 @@ fn print(app: &AppContext) {
     }
 }
 
-/// Parse a text command into a Command object
+/// Parse command string into Command object
 fn parse(line: &str, app: &AppContext) -> Option<Box<dyn command::Command>> {
     let parts: Vec<&str> = line.splitn(2, ' ').collect();
     let cmd = parts[0].to_lowercase();
@@ -231,7 +232,7 @@ fn parse(line: &str, app: &AppContext) -> Option<Box<dyn command::Command>> {
     app.plugins.parse(&cmd, arg)
 }
 
-/// Execute a command string with function expansion
+/// Parse and execute command string, return success
 fn exec_str(cmd_str: &str, app: &mut AppContext) -> bool {
     for cmd_part in app.funcs.expand(cmd_str).split('|').map(str::trim) {
         if cmd_part.is_empty() { continue; }
@@ -242,14 +243,14 @@ fn exec_str(cmd_str: &str, app: &mut AppContext) -> bool {
     true
 }
 
-/// Execute command on current column (DRY helper)
+/// Execute command on current column
 fn on_col<F>(app: &mut AppContext, f: F) where F: FnOnce(String) -> Box<dyn command::Command> {
     if let Some(col) = app.view().and_then(|v| v.col_name(v.state.cc)) {
         if let Err(e) = CommandExecutor::exec(app, f(col)) { app.err(e); }
     }
 }
 
-/// Dispatch action to plugin (DRY helper)
+/// Dispatch action to view-specific plugin handler
 fn dispatch(app: &mut AppContext, action: &str) -> bool {
     let name = match app.view() { Some(v) => v.name.clone(), None => return false };
     // mem::take to avoid borrow conflict: plugins.handle needs &mut app
@@ -259,12 +260,12 @@ fn dispatch(app: &mut AppContext, action: &str) -> bool {
     if let Some(cmd) = cmd { run(app, cmd); true } else { false }
 }
 
-/// Execute command with error handling (DRY helper)
+/// Execute command through executor with error handling
 fn run(app: &mut AppContext, cmd: Box<dyn command::Command>) {
     if let Err(e) = CommandExecutor::exec(app, cmd) { app.err(e); }
 }
 
-/// Find next/prev search match (DRY helper)
+/// Navigate to next/prev search match
 fn find_match(app: &mut AppContext, forward: bool) {
     if let Some(expr) = app.search.value.clone() {
         if let Some(view) = app.view_mut() {
@@ -277,8 +278,7 @@ fn find_match(app: &mut AppContext, forward: bool) {
     } else { app.msg("No search active".into()); }
 }
 
-/// Convert KeyEvent to string matching cfg/key.csv format
-/// Format: ^X for Ctrl+X, regular char for letters, key name for special keys
+/// Convert KeyEvent to string for keymap lookup
 fn key_str(key: &KeyEvent) -> String {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     match key.code {
@@ -302,7 +302,7 @@ fn key_str(key: &KeyEvent) -> String {
     }
 }
 
-/// Get current tab name for keymap lookup
+/// Get current keymap tab based on view type
 fn cur_tab(app: &AppContext) -> &'static str {
     app.view().map(|v| {
         if v.name.starts_with("ls") { "folder" }
@@ -313,8 +313,7 @@ fn cur_tab(app: &AppContext) -> &'static str {
     }).unwrap_or("table")
 }
 
-/// Handle keyboard input
-/// Returns false to exit the application
+/// Process key event, return false to quit
 fn on_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
     // Look up command from keymap
     let ks = key_str(&key);
@@ -326,7 +325,7 @@ fn on_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
     Ok(true)
 }
 
-/// Handle command by name (from keymap)
+/// Handle keymap command, return false to quit
 fn handle_cmd(app: &mut AppContext, cmd: &str) -> Result<bool> {
     match cmd {
         // Exit commands
@@ -722,8 +721,7 @@ fn find(df: &polars::prelude::DataFrame, expr: &str) -> Vec<usize> {
         .unwrap_or_default()
 }
 
-/// Prompt user for input
-/// Returns None if user cancels (Esc)
+/// Prompt user for input, None if cancelled
 fn prompt(_app: &mut AppContext, prompt: &str) -> Result<Option<String>> {
     // Show prompt at bottom (screen already rendered by main loop)
     let (_cols, rows) = terminal::size()?;

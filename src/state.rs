@@ -14,6 +14,7 @@ pub struct TableState {
 }
 
 impl TableState {
+    /// Create new state with cursor at origin
     pub fn new() -> Self {
         Self { r0: 0, cr: 0, cc: 0, viewport: (0, 0), col_widths: Vec::new(), widths_row: 0 }
     }
@@ -23,6 +24,7 @@ impl TableState {
         self.col_widths.is_empty() || self.cr.abs_diff(self.widths_row) > self.viewport.0.saturating_sub(2) as usize
     }
 
+    /// Move cursor down n rows, scroll if needed
     pub fn down(&mut self, n: usize, max: usize) {
         if max == 0 { return; }
         self.cr = (self.cr + n).min(max - 1);
@@ -30,24 +32,30 @@ impl TableState {
         if self.cr >= self.r0 + vis { self.r0 = self.cr.saturating_sub(vis - 1); }
     }
 
+    /// Move cursor up n rows, scroll if needed
     pub fn up(&mut self, n: usize) {
         self.cr = self.cr.saturating_sub(n);
         if self.cr < self.r0 { self.r0 = self.cr; }
     }
 
+    /// Move cursor right n columns
     pub fn right(&mut self, n: usize, max: usize) {
         if max > 0 { self.cc = (self.cc + n).min(max - 1); }
     }
 
+    /// Move cursor left n columns
     pub fn left(&mut self, n: usize) { self.cc = self.cc.saturating_sub(n); }
+    /// Jump to first row
     pub fn top(&mut self) { self.cr = 0; self.r0 = 0; }
 
+    /// Jump to last row
     pub fn bot(&mut self, max: usize) {
         if max == 0 { return; }
         self.cr = max - 1;
         self.r0 = self.cr.saturating_sub((self.viewport.0 as usize).saturating_sub(3));
     }
 
+    /// Ensure cursor is visible in viewport
     pub fn visible(&mut self) {
         let vis = (self.viewport.0 as usize).saturating_sub(2);
         if self.cr < self.r0 { self.r0 = self.cr; }
@@ -120,6 +128,7 @@ impl ViewState {
 }
 
 impl ViewState {
+    /// Create standard in-memory view (CSV, filtered results, etc.)
     pub fn new(id: usize, name: String, df: DataFrame, filename: Option<String>) -> Self {
         Self {
             id, name, dataframe: df, state: TableState::new(), history: Vec::new(),
@@ -141,6 +150,7 @@ impl ViewState {
         }
     }
 
+    /// Create gzipped CSV view (may be partial if memory limit hit)
     pub fn new_gz(id: usize, name: String, df: DataFrame, filename: Option<String>, gz: String, partial: bool) -> Self {
         Self {
             id, name, dataframe: df, state: TableState::new(), history: Vec::new(),
@@ -173,8 +183,9 @@ impl ViewState {
         }
     }
 
+    /// Add command to history
     pub fn add_hist(&mut self, cmd: String) { self.history.push(cmd); }
-    /// Row count: from disk_rows for parquet, else dataframe height
+    /// Row count: disk_rows for parquet, else dataframe height
     pub fn rows(&self) -> usize { self.disk_rows.unwrap_or_else(|| self.dataframe.height()) }
     /// Column count: from col_names for parquet, else dataframe width
     pub fn cols(&self) -> usize { if self.col_names.is_empty() { self.dataframe.width() } else { self.col_names.len() } }
@@ -187,20 +198,30 @@ impl ViewState {
     pub fn is_row_sel(&self) -> bool { self.name == "metadata" || self.name.starts_with("Freq:") }
 }
 
-/// View stack
+/// View stack - manages multiple views like browser tabs
 pub struct StateStack { stack: Vec<ViewState> }
 
 impl StateStack {
+    /// Empty stack
     pub fn new() -> Self { Self { stack: Vec::new() } }
+    /// Stack with initial view
     pub fn init(v: ViewState) -> Self { Self { stack: vec![v] } }
+    /// Push new view on top
     pub fn push(&mut self, v: ViewState) { self.stack.push(v); }
+    /// Pop top view (keeps at least one)
     pub fn pop(&mut self) -> Option<ViewState> { if self.stack.len() > 1 { self.stack.pop() } else { None } }
+    /// Current view reference
     pub fn cur(&self) -> Option<&ViewState> { self.stack.last() }
+    /// Current view mutable reference
     pub fn cur_mut(&mut self) -> Option<&mut ViewState> { self.stack.last_mut() }
+    /// Stack depth
     pub fn len(&self) -> usize { self.stack.len() }
+    /// Has any view
     pub fn has_view(&self) -> bool { !self.stack.is_empty() }
+    /// Find view by id
     pub fn find_mut(&mut self, id: usize) -> Option<&mut ViewState> { self.stack.iter_mut().find(|v| v.id == id) }
 
+    /// Swap top two views
     pub fn swap(&mut self) {
         let n = self.stack.len();
         if n >= 2 { self.stack.swap(n - 1, n - 2); }
