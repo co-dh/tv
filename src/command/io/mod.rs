@@ -1,6 +1,7 @@
-//! File I/O commands (load/save CSV, Parquet, gz)
+//! File I/O commands (load/save CSV, Parquet, gz, DuckDB)
 pub mod convert;
 pub mod csv;
+pub mod duckdb;
 pub mod gz;
 pub mod parquet;
 
@@ -23,6 +24,17 @@ pub struct From {
 impl Command for From {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         let p = &self.file_path;
+
+        // DuckDB SQL query: sql:SELECT * FROM 'file.parquet'
+        if let Some(sql) = p.strip_prefix("sql:") {
+            let df = duckdb::query(sql)?;
+            if df.height() == 0 { return Err(anyhow!("Empty result")); }
+            let df = convert_epoch_cols(df);
+            let name = if sql.len() > 30 { format!("{}...", &sql[..30]) } else { sql.to_string() };
+            let id = app.next_id();
+            app.stack.push(ViewState::new(id, name, df, None));
+            return Ok(());
+        }
 
         // Glob pattern for parquet
         if p.contains('*') || p.contains('?') {

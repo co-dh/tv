@@ -593,6 +593,28 @@ fn test_from_and_load_equivalent() {
     assert_eq!(from_output, load_output, "'from' and 'load' should produce identical output");
 }
 
+#[test]
+fn test_duckdb_sql_query() {
+    // Test DuckDB SQL query via sql: prefix
+    let id = unique_id();
+    let output = run_script("from sql:SELECT 1 as a, 'hello' as b\n", id);
+    assert!(output.contains("(1 rows)"), "DuckDB query should return 1 row");
+    assert!(output.contains("hello"), "DuckDB query should contain 'hello'");
+}
+
+#[test]
+fn test_duckdb_parquet_query() {
+    // Test DuckDB query on parquet file
+    let id = unique_id();
+    let path = format!("/tmp/tv_duckdb_test_{}.parquet", id);
+    // First create a parquet file
+    run_script(&format!("from sql:SELECT 1 as x, 2 as y UNION SELECT 3, 4 | save {}\n", path), id);
+    // Then query it via DuckDB
+    let output = run_script(&format!("from sql:SELECT SUM(x) as total FROM read_parquet('{}')\n", path), id + 1);
+    assert!(output.contains("total"), "DuckDB parquet query should have 'total' column");
+    let _ = std::fs::remove_file(path);
+}
+
 // === meta tests (from test_meta.sh) ===
 
 #[test]
