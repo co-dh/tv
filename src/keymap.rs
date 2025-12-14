@@ -50,19 +50,20 @@ impl KeyMap {
         Ok(Self { bindings, key_to_cmd })
     }
 
-    /// Get command for a key in given tab (checks tab first, then common)
+    /// Get command for a key in given tab (checks tab first, then table, then common)
     pub fn get_command(&self, tab: &str, key: &str) -> Option<&str> {
+        // Check specific tab first
         if let Some(cmds) = self.key_to_cmd.get(tab) {
-            if let Some(cmd) = cmds.get(key) {
-                return Some(cmd);
+            if let Some(cmd) = cmds.get(key) { return Some(cmd); }
+        }
+        // Fall back to table for data views (freq/meta/corr inherit table keys)
+        if tab != "table" && tab != "folder" {
+            if let Some(cmds) = self.key_to_cmd.get("table") {
+                if let Some(cmd) = cmds.get(key) { return Some(cmd); }
             }
         }
-        if let Some(cmds) = self.key_to_cmd.get("common") {
-            if let Some(cmd) = cmds.get(key) {
-                return Some(cmd);
-            }
-        }
-        None
+        // Fall back to common
+        self.key_to_cmd.get("common").and_then(|m| m.get(key)).map(|s| s.as_str())
     }
 
     /// Get key for a command in given tab (checks tab first, then common)
@@ -196,6 +197,33 @@ mod tests {
 
         let result = KeyMap::load(&tmp);
         assert!(result.is_ok(), "Same key in different tabs should be ok");
+
+        let _ = std::fs::remove_file(tmp);
+    }
+
+    #[test]
+    fn test_freq_inherits_table_keys() {
+        let tmp = std::env::temp_dir().join("tv_test_keymap_fallback.csv");
+        let mut f = std::fs::File::create(&tmp).unwrap();
+        writeln!(f, "tab,key,command,description").unwrap();
+        writeln!(f, "table,[,sort,Sort ascending").unwrap();
+        writeln!(f, "table,],sort-,Sort descending").unwrap();
+        writeln!(f, "freq,Enter,enter,Filter parent").unwrap();
+        writeln!(f, "common,q,quit,Quit").unwrap();
+
+        let km = KeyMap::load(&tmp).unwrap();
+
+        // freq tab should fall back to table keys
+        assert_eq!(km.get_command("freq", "["), Some("sort"), "freq should inherit [ from table");
+        assert_eq!(km.get_command("freq", "]"), Some("sort-"), "freq should inherit ] from table");
+        assert_eq!(km.get_command("freq", "Enter"), Some("enter"), "freq's own binding should take priority");
+        assert_eq!(km.get_command("freq", "q"), Some("quit"), "freq should inherit from common");
+
+        // table tab should work normally
+        assert_eq!(km.get_command("table", "["), Some("sort"));
+
+        // folder should not fall back to table
+        assert_eq!(km.get_command("folder", "["), None, "folder should not inherit from table");
 
         let _ = std::fs::remove_file(tmp);
     }

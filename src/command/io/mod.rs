@@ -1,11 +1,10 @@
-//! File I/O commands (load/save CSV, Parquet, gz, DuckDB)
+//! File I/O commands (load/save CSV, Parquet, gz)
 pub mod convert;
 pub mod csv;
 pub mod gz;
 pub mod parquet;
 
 use crate::app::AppContext;
-use crate::backend::DuckApi;
 use crate::command::Command;
 use crate::os;
 use crate::state::ViewState;
@@ -24,17 +23,6 @@ pub struct From {
 impl Command for From {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         let p = &self.file_path;
-
-        // DuckDB SQL query: sql:SELECT * FROM 'file.parquet'
-        if let Some(sql) = p.strip_prefix("sql:") {
-            let df = DuckApi.query(sql)?;
-            if df.height() == 0 { return Err(anyhow!("Empty result")); }
-            let df = convert_epoch_cols(df);
-            let name = if sql.len() > 30 { format!("{}...", &sql[..30]) } else { sql.to_string() };
-            let id = app.next_id();
-            app.stack.push(ViewState::new(id, name, df, None));
-            return Ok(());
-        }
 
         // Glob pattern for parquet
         if p.contains('*') || p.contains('?') {
@@ -81,7 +69,7 @@ impl Command for From {
                     let (rows, _cols) = parquet::metadata(path)?;
                     if rows == 0 { return Err(anyhow!("File is empty")); }
                     let id = app.next_id();
-                    app.stack.push(ViewState::new_parquet(id, self.file_path.clone(), self.file_path.clone(), rows, app.backend_type));
+                    app.stack.push(ViewState::new_parquet(id, self.file_path.clone(), self.file_path.clone(), rows));
                 }
                 Some(ext) => return Err(anyhow!("Unsupported file format: {}", ext)),
                 None => return Err(anyhow!("Could not determine file type")),

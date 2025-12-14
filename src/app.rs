@@ -1,4 +1,3 @@
-use crate::backend::BackendType;
 use crate::funcs::Funcs;
 use crate::keymap::KeyMap;
 use crate::plugin::Registry;
@@ -35,7 +34,6 @@ pub struct AppContext {
     pub bg_loader: Option<Receiver<crate::command::io::gz::GzChunk>>,  // background gz loader
     pub bg_saver: Option<Receiver<String>>,      // background save status
     pub raw_save: bool,            // --raw: skip type detection on save
-    pub backend_type: BackendType, // default backend for new parquet views
     pub bg_meta: Option<(usize, Receiver<DataFrame>)>,  // (parent_id, meta stats receiver)
     pub needs_redraw: bool,  // force full redraw (after leaving alternate screen)
     pub needs_center: bool,  // center cursor after viewport update (for search)
@@ -68,7 +66,6 @@ impl AppContext {
             bg_loader: None,
             bg_saver: None,
             raw_save: false,
-            backend_type: BackendType::default(),
             bg_meta: None,
             needs_redraw: false,
             needs_center: false,
@@ -150,7 +147,6 @@ impl AppContext {
         }
     }
 
-    pub fn set_backend(&mut self, t: BackendType) { self.backend_type = t; }
     pub fn next_id(&mut self) -> usize { let i = self.next_id; self.next_id += 1; i }
     pub fn has_view(&self) -> bool { self.stack.has_view() }
     pub fn view(&self) -> Option<&ViewState> { self.stack.cur() }

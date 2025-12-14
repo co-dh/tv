@@ -1,5 +1,40 @@
 # Worklog
 
+## 2025-12-14: Simplify to Polars-only Backend
+
+### Benchmark Results (8 threads, 3.7GB parquet)
+| Operation | Polars | DuckApi | DuckDB Raw |
+|-----------|--------|---------|------------|
+| freq      | 0.581s | 0.345s  | 0.127s     |
+| filter    | 0.200s | 0.574s  | 0.153s     |
+| count     | 0.159s | 0.161s  | 0.064s     |
+| head 100k | 0.164s | 0.159s  | 0.180s     |
+| meta      | 0.229s | 0.291s  | 0.058s     |
+
+### Analysis
+- **DuckApi**: Only wins at freq (1.7x faster), loses at filter (2.9x slower due to Arrow transfer of 1.2M rows)
+- **DuckCli**: 10x slower at filter due to CSV serialization overhead
+- **Polars**: Best overall balance, streaming handles large results well
+
+### Decision
+Remove DuckDB backends (duckapi, duckcli) - complexity not justified:
+- DuckApi Arrow transfer slow for large results
+- DuckCli CSV serialization too slow
+- Polars handles all operations reasonably well
+- Simpler codebase with single backend
+
+### Changes
+- Removed `src/backend/duckapi.rs`
+- Removed `src/backend/duckcli.rs`
+- Removed `--duckapi` CLI flag
+- Removed `duckdb` crate from Cargo.toml
+- Fixed keymap fallback: freq/meta/corr views now inherit table keys (sort works)
+- Disabled LTO/strip for faster builds
+- Binary: 108MB (was 152MB with duckdb+LTO)
+- Build: 3s incremental (was 4-7min with duckdb)
+
+---
+
 ## 2025-12-14: Backend Trait & DuckDB Integration
 
 ### Commits

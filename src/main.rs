@@ -33,13 +33,6 @@ fn main() -> Result<()> {
 
     // Parse flags first (before early returns)
     let raw_save = args.iter().any(|a| a == "--raw");
-    let backend = if args.iter().any(|a| a == "--duckcli") {
-        backend::BackendType::DuckCli
-    } else if args.iter().any(|a| a == "--duckapi") {
-        backend::BackendType::DuckApi
-    } else {
-        backend::BackendType::Polars
-    };
 
     // Check for -c argument (inline script)
     if let Some(idx) = args.iter().position(|a| a == "-c") {
@@ -47,7 +40,7 @@ fn main() -> Result<()> {
             eprintln!("Usage: tv -c '<commands>'");
             std::process::exit(1);
         }
-        return run_commands(&args[idx + 1], backend);
+        return run_commands(&args[idx + 1]);
     }
 
     // Check for --script argument
@@ -56,7 +49,7 @@ fn main() -> Result<()> {
             eprintln!("Usage: tv --script <script_file>");
             std::process::exit(1);
         }
-        return run_script(&args[idx + 1], backend);
+        return run_script(&args[idx + 1]);
     }
 
     // Initialize ratatui terminal
@@ -70,7 +63,6 @@ fn main() -> Result<()> {
         // Load file from CLI argument
         let mut temp_app = AppContext::new();
         temp_app.raw_save = raw_save;
-        temp_app.set_backend(backend);
         match CommandExecutor::exec(&mut temp_app, Box::new(From { file_path: path.clone() })) {
             Ok(_) => temp_app,
             Err(e) => {
@@ -82,7 +74,6 @@ fn main() -> Result<()> {
     } else {
         let mut temp_app = AppContext::new();
         temp_app.raw_save = raw_save;
-        temp_app.set_backend(backend);
         temp_app
     };
 
@@ -130,9 +121,8 @@ fn main() -> Result<()> {
 }
 
 /// Run batch commands (used by both -c and --script)
-fn run_batch<I: Iterator<Item = String>>(lines: I, backend: backend::BackendType) -> Result<()> {
+fn run_batch<I: Iterator<Item = String>>(lines: I) -> Result<()> {
     let mut app = AppContext::new();
-    app.set_backend(backend);
     app.viewport(50, 120);
     'outer: for line in lines {
         let line = line.trim();
@@ -155,13 +145,13 @@ fn run_batch<I: Iterator<Item = String>>(lines: I, backend: backend::BackendType
 }
 
 /// Run commands from inline string (-c option)
-fn run_commands(commands: &str, backend: backend::BackendType) -> Result<()> {
-    run_batch(std::iter::once(commands.to_string()), backend)
+fn run_commands(commands: &str) -> Result<()> {
+    run_batch(std::iter::once(commands.to_string()))
 }
 
 /// Run commands from a script file
-fn run_script(script_path: &str, backend: backend::BackendType) -> Result<()> {
-    run_batch(fs::read_to_string(script_path)?.lines().map(String::from), backend)
+fn run_script(script_path: &str) -> Result<()> {
+    run_batch(fs::read_to_string(script_path)?.lines().map(String::from))
 }
 
 /// Wait for background save to complete (for script mode)

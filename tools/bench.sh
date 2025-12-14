@@ -1,5 +1,5 @@
 #!/bin/bash
-# Benchmark polars vs duckapi vs duckcli vs raw duckdb
+# Benchmark polars vs duckapi vs raw duckdb
 # Tests internal thread scaling (1,2,4,8,16 threads in single process)
 # Usage: ./tools/bench.sh [parquet|all]
 
@@ -69,35 +69,32 @@ bench_parquet() {
     op_header "freq $COL"
     bench_row "polars" $TV "$f" -c "from $f | freq $COL"
     bench_row "duckapi" $TV --duckapi "$f" -c "from $f | freq $COL"
-    bench_row "duckcli" $TV --duckcli "$f" -c "from $f | freq $COL"
     bench_row_raw "duckdb raw" "SELECT \"$COL\", COUNT(*) as Cnt FROM '$f' GROUP BY \"$COL\" ORDER BY Cnt DESC"
 
     # filter
     op_header "filter $COL='$SYMBOL'"
     bench_row "polars" $TV "$f" -c "from $f | filter $COL = '$SYMBOL'"
     bench_row "duckapi" $TV --duckapi "$f" -c "from $f | filter $COL = '$SYMBOL'"
-    bench_row "duckcli" $TV --duckcli "$f" -c "from $f | filter $COL = '$SYMBOL'"
     bench_row_raw "duckdb raw" "SELECT * FROM '$f' WHERE \"$COL\" = '$SYMBOL'"
 
     # count
     op_header "count"
     bench_row "polars" $TV "$f" -c "from $f | count"
     bench_row "duckapi" $TV --duckapi "$f" -c "from $f | count"
-    bench_row "duckcli" $TV --duckcli "$f" -c "from $f | count"
     bench_row_raw "duckdb raw" "SELECT COUNT(*) FROM '$f'"
 
-    # head
-    op_header "head 100"
-    bench_row "polars" $TV "$f" -c "from $f | take 100"
-    bench_row "duckapi" $TV --duckapi "$f" -c "from $f | take 100"
-    bench_row "duckcli" $TV --duckcli "$f" -c "from $f | take 100"
-    bench_row_raw "duckdb raw" "SELECT * FROM '$f' LIMIT 100"
+    # head (various sizes)
+    for n in 100 1000 10000 100000; do
+        op_header "head $n"
+        bench_row "polars" $TV "$f" -c "from $f | take $n"
+        bench_row "duckapi" $TV --duckapi "$f" -c "from $f | take $n"
+        bench_row_raw "duckdb raw" "SELECT * FROM '$f' LIMIT $n"
+    done
 
     # meta
     op_header "meta"
     bench_row "polars" $TV "$f" -c "from $f | meta"
     bench_row "duckapi" $TV --duckapi "$f" -c "from $f | meta"
-    bench_row "duckcli" $TV --duckcli "$f" -c "from $f | meta"
     bench_row_raw "duckdb raw" "DESCRIBE SELECT * FROM '$f'"
 
     echo ""
