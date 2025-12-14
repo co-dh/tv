@@ -6,11 +6,9 @@
 
 # Todo
 
-## Add Why Comments
-- Add comments explaining why, not what (e.g. executor.rs history recording)
-
-## Inline One-Time Variables
-- Inline local variables that are only used once
+## Use KeyMap for Key Handlers
+- Refactor main.rs to use KeyMap instead of hardcoded key bindings
+- Read key bindings from cfg/key.csv
 
 ## Plugin Architecture
 - Investigate nushell plugin architecture - modularize view functionality into single files for dynamic add/remove
@@ -21,7 +19,8 @@
 - Added dispatch() helper for plugin action dispatch
 - Added run() helper for command execution with error handling
 - Refactored 10+ occurrences to use helpers
-- Halstead improvement: 31,418 → 31,179 tokens, 48.4 → 47.9 bugs
+- Added why comments for non-obvious logic
+- Halstead: 31,418 → 31,167 tokens (-251), 48.4 → 47.9 bugs (-0.5)
 
 ## Folder View FZF Direct Action
 - In Folder view, fzf search selection auto-executes Enter action

@@ -1,6 +1,6 @@
 {
-  "total_length": 31179.0,
-  "total_bugs": 47.9453821890934,
+  "total_length": 31167.0,
+  "total_bugs": 47.93284240895604,
   "files": [
     {
       "file": "./src/app.rs",
@@ -58,9 +58,9 @@
     },
     {
       "file": "./src/main.rs",
-      "length": 5514.0,
-      "bugs": 8.07268269260165,
-      "volume": 49915.8602321341
+      "length": 5502.0,
+      "bugs": 8.060142912464293,
+      "volume": 49792.26671907699
     },
     {
       "file": "./src/os.rs",
