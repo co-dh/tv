@@ -18,7 +18,10 @@ fn run_script(script: &str, id: usize) -> String {
         .output()
         .expect("failed to execute tv");
 
-    String::from_utf8_lossy(&output.stdout).to_string()
+    // Combine stdout and stderr for complete output
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    format!("{}{}", stdout, stderr)
 }
 
 fn setup_test_csv(id: usize) -> String {
@@ -90,6 +93,28 @@ fn test_filter_reserved_word_column() {
     let output = run_script(&format!("load {} | filter \"USER\" = 'root'\n", csv), id);
     assert!(output.contains("(2 rows)"), "Quoted USER='root' should match 2 rows, got: {}", output);
     std::fs::remove_file(&csv).ok();
+}
+
+#[test]
+fn test_failed_command_recorded_in_history() {
+    // Failed commands should still be recorded in history
+    let id = unique_id();
+    let csv = setup_test_csv(id);
+    let hist = dirs::home_dir().unwrap().join(".tv/history.4th");
+
+    // Get history size before
+    let before = std::fs::read_to_string(&hist).unwrap_or_default();
+    let before_lines = before.lines().count();
+
+    // Run a filter that will fail (invalid column)
+    let output = run_script(&format!("load {}\nfilter nonexistent > 1\n", csv), id);
+    assert!(output.contains("Error") || output.contains("error"), "Filter should fail: {}", output);
+
+    // Check history was still recorded
+    let after = std::fs::read_to_string(&hist).unwrap_or_default();
+    let after_lines = after.lines().count();
+    assert!(after_lines > before_lines, "Failed command should be recorded in history");
+    assert!(after.contains("filter nonexistent"), "History should contain the failed filter command");
 }
 
 #[test]

@@ -6,12 +6,14 @@ use anyhow::Result;
 pub struct CommandExecutor;
 
 impl CommandExecutor {
-    /// Run command, record to history if needed
+    /// Run command, record to history before exec (so failed commands are also logged)
     pub fn exec(app: &mut AppContext, mut c: Box<dyn Command>) -> Result<()> {
         let (s, rec) = (c.to_str(), c.record());
-        c.exec(app)?;
-        // Record to ~/.tv/history for persistence, and to view.hist for undo
-        if rec { app.record(&s)?; if let Some(v) = app.view_mut() { v.add_hist(s); } }
-        Ok(())
+        // Record before exec so failed commands are in history too
+        if rec { let _ = app.record(&s); }
+        let res = c.exec(app);
+        // Add to view history only on success (for undo)
+        if res.is_ok() && rec { if let Some(v) = app.view_mut() { v.add_hist(s); } }
+        res
     }
 }
