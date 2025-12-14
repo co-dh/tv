@@ -578,6 +578,21 @@ fn test_load_nonexistent_file_error() {
         "Loading nonexistent file should result in no table");
 }
 
+#[test]
+fn test_from_and_load_equivalent() {
+    // Both "from" and "load" commands should work identically
+    let id = unique_id();
+    let path = format!("/tmp/tv_test_from_{}.csv", id);
+    fs::write(&path, "a,b\n1,x\n2,y\n").unwrap();
+
+    let from_output = run_script(&format!("from {}\n", path), id + 1000);
+    let load_output = run_script(&format!("load {}\n", path), id + 1001);
+
+    assert!(from_output.contains("(2 rows)"), "'from' command should load 2 rows");
+    assert!(load_output.contains("(2 rows)"), "'load' command should load 2 rows");
+    assert_eq!(from_output, load_output, "'from' and 'load' should produce identical output");
+}
+
 // === meta tests (from test_meta.sh) ===
 
 #[test]

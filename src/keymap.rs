@@ -3,13 +3,14 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct KeyBinding {
     pub key: String,
     pub command: String,
     pub description: String,
 }
 
+#[derive(Debug)]
 pub struct KeyMap {
     // tab -> command -> KeyBinding
     bindings: HashMap<String, HashMap<String, KeyBinding>>,
@@ -30,6 +31,14 @@ impl KeyMap {
                 let key = parts[1].to_string();
                 let command = parts[2].to_string();
                 let description = parts.get(3).unwrap_or(&"").to_string();
+
+                // Check for key conflict: same tab+key mapped to different command
+                if let Some(existing) = key_to_cmd.get(&tab).and_then(|m| m.get(&key)) {
+                    return Err(anyhow::anyhow!(
+                        "Key conflict in {}: '{}' mapped to both '{}' and '{}'",
+                        path.display(), key, existing, command
+                    ));
+                }
 
                 let binding = KeyBinding { key: key.clone(), command: command.clone(), description };
 
@@ -79,8 +88,9 @@ impl KeyMap {
             "quit" => Some(("quit", 5)),
             "top" | "bottom" | "page_down" | "page_up" => None,  // hide nav
             // Selection
-            "select" => Some(("select", 1)),
-            "clear_sel" => Some(("clear sel", 1)),
+            "toggle_sel" => Some(("sel", 1)),
+            "select_cols" => Some(("sel col", 3)),
+            "clear_sel" => Some(("clr sel", 1)),
             "sel_null" => Some(("sel null", 0)),
             "sel_single" => Some(("sel single", 0)),
             // Search
@@ -153,5 +163,40 @@ impl Default for KeyMap {
             bindings: HashMap::new(),
             key_to_cmd: HashMap::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn test_key_conflict_detection() {
+        let tmp = std::env::temp_dir().join("tv_test_keymap_conflict.csv");
+        let mut f = std::fs::File::create(&tmp).unwrap();
+        writeln!(f, "tab,key,command,description").unwrap();
+        writeln!(f, "table,F,freq,Frequency").unwrap();
+        writeln!(f, "table,F,from,Load file").unwrap();  // conflict!
+
+        let result = KeyMap::load(&tmp);
+        assert!(result.is_err(), "Should detect key conflict");
+        assert!(result.unwrap_err().to_string().contains("Key conflict"));
+
+        let _ = std::fs::remove_file(tmp);
+    }
+
+    #[test]
+    fn test_no_conflict_different_tabs() {
+        let tmp = std::env::temp_dir().join("tv_test_keymap_ok.csv");
+        let mut f = std::fs::File::create(&tmp).unwrap();
+        writeln!(f, "tab,key,command,description").unwrap();
+        writeln!(f, "table,F,freq,Frequency").unwrap();
+        writeln!(f, "meta,F,filter,Filter").unwrap();  // same key, different tab = ok
+
+        let result = KeyMap::load(&tmp);
+        assert!(result.is_ok(), "Same key in different tabs should be ok");
+
+        let _ = std::fs::remove_file(tmp);
     }
 }

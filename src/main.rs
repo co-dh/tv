@@ -269,160 +269,116 @@ fn find_match(app: &mut AppContext, forward: bool) {
     } else { app.msg("No search active".into()); }
 }
 
+/// Convert KeyEvent to string matching cfg/key.csv format
+/// Format: ^X for Ctrl+X, regular char for letters, key name for special keys
+fn key_str(key: &KeyEvent) -> String {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    match key.code {
+        KeyCode::Char(c) if ctrl => format!("^{}", c.to_ascii_uppercase()),
+        KeyCode::Char(c) => c.to_string(),
+        KeyCode::Enter => "Enter".into(),
+        KeyCode::Esc => "Esc".into(),
+        KeyCode::Up => "Up".into(),
+        KeyCode::Down => "Down".into(),
+        KeyCode::Left => "Left".into(),
+        KeyCode::Right => "Right".into(),
+        KeyCode::Home => "Home".into(),
+        KeyCode::End => "End".into(),
+        KeyCode::PageUp => "PageUp".into(),
+        KeyCode::PageDown => "PageDown".into(),
+        KeyCode::Tab => "Tab".into(),
+        KeyCode::BackTab => "BackTab".into(),
+        KeyCode::Delete => "Delete".into(),
+        KeyCode::Backspace => "Backspace".into(),
+        _ => "?".into(),
+    }
+}
+
+/// Get current tab name for keymap lookup
+fn cur_tab(app: &AppContext) -> &'static str {
+    app.view().map(|v| {
+        if v.name.starts_with("ls") { "folder" }
+        else if v.name.starts_with("Freq:") { "freq" }
+        else if v.name == "metadata" { "meta" }
+        else if v.name == "correlation" { "corr" }
+        else { "table" }
+    }).unwrap_or("table")
+}
+
 /// Handle keyboard input
 /// Returns false to exit the application
 fn on_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
-    match key.code {
-        KeyCode::Char('q') => {
-            // Quit if no view or only one view
-            if !app.has_view() || app.stack.len() == 1 {
-                return Ok(false);
+    // Look up command from keymap
+    let ks = key_str(&key);
+    let tab = cur_tab(app);
+    if let Some(cmd) = app.keymap.get_command(tab, &ks).map(|s| s.to_string()) {
+        return handle_cmd(app, &cmd);
+    }
+    // Fallback for unmapped keys
+    Ok(true)
+}
+
+/// Handle command by name (from keymap)
+fn handle_cmd(app: &mut AppContext, cmd: &str) -> Result<bool> {
+    match cmd {
+        // Exit commands
+        "quit" => {
+            if !app.has_view() || app.stack.len() == 1 { return Ok(false); }
+            run(app, Box::new(Pop));
+        }
+        "force_quit" => return Ok(false),
+        // Navigation
+        "up" => run(app, Box::new(Goto { arg: "-1".into() })),
+        "down" => run(app, Box::new(Goto { arg: "+1".into() })),
+        "left" => run(app, Box::new(GotoCol { arg: "-1".into() })),
+        "right" => run(app, Box::new(GotoCol { arg: "+1".into() })),
+        "page_down" => run(app, Box::new(Goto { arg: app.page().to_string() })),
+        "page_up" => run(app, Box::new(Goto { arg: (-app.page()).to_string() })),
+        "top" => run(app, Box::new(Goto { arg: "0".into() })),
+        "bottom" => run(app, Box::new(Goto { arg: "max".into() })),
+        // Display
+        "toggle_info" => run(app, Box::new(ToggleInfo)),
+        "decimals_inc" => run(app, Box::new(Decimals { delta: 1 })),
+        "decimals_dec" => run(app, Box::new(Decimals { delta: -1 })),
+        // Selection
+        "toggle_sel" => run(app, Box::new(ToggleSel)),
+        "clear_sel" => run(app, Box::new(ClearSel)),
+        "sel_all" => run(app, Box::new(SelAll)),
+        "select_cols" => {
+            if !app.has_view() { app.no_table(); }
+            else if let Some(cols) = prompt(app, "Select columns: ")? {
+                run(app, Box::new(Select { col_names: cols.split(',').map(|s| s.trim().to_string()).collect() }));
             }
-            let _ = CommandExecutor::exec(app, Box::new(Pop));
         }
-        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            // Ctrl+C to force quit
-            return Ok(false);
+        // File I/O
+        "from" => {
+            if let Some(file_path) = prompt(app, "Load file: ")? { run(app, Box::new(From { file_path })); }
         }
-        KeyCode::Up => { let _ = CommandExecutor::exec(app, Box::new(Goto { arg: "-1".into() })); }
-        KeyCode::Down => { let _ = CommandExecutor::exec(app, Box::new(Goto { arg: "+1".into() })); }
-        KeyCode::Left => { let _ = CommandExecutor::exec(app, Box::new(GotoCol { arg: "-1".into() })); }
-        KeyCode::Right => { let _ = CommandExecutor::exec(app, Box::new(GotoCol { arg: "+1".into() })); }
-        KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => { let _ = CommandExecutor::exec(app, Box::new(Goto { arg: app.page().to_string() })); }
-        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => { let _ = CommandExecutor::exec(app, Box::new(Goto { arg: (-app.page()).to_string() })); }
-        KeyCode::Char('g') => { let _ = CommandExecutor::exec(app, Box::new(Goto { arg: "0".into() })); }
-        KeyCode::Char('G') => { let _ = CommandExecutor::exec(app, Box::new(Goto { arg: "max".into() })); }
-        KeyCode::PageUp => { let _ = CommandExecutor::exec(app, Box::new(Goto { arg: (-app.page()).to_string() })); }
-        KeyCode::PageDown => { let _ = CommandExecutor::exec(app, Box::new(Goto { arg: app.page().to_string() })); }
-        KeyCode::Home => { let _ = CommandExecutor::exec(app, Box::new(Goto { arg: "0".into() })); }
-        KeyCode::End => { let _ = CommandExecutor::exec(app, Box::new(Goto { arg: "max".into() })); }
-        KeyCode::Char('I') => { let _ = CommandExecutor::exec(app, Box::new(ToggleInfo)); }
-        KeyCode::Char('.') => { let _ = CommandExecutor::exec(app, Box::new(Decimals { delta: 1 })); }
-        KeyCode::Char(',') => { let _ = CommandExecutor::exec(app, Box::new(Decimals { delta: -1 })); }
-        KeyCode::Char('L') => {
-            // L: Load file
-            if let Some(file_path) = prompt(app, "Load file: ")? {
-                run(app, Box::new(From { file_path }));
-            }
-        }
-        KeyCode::Char('S') => {
-            // S: Save file
-            if !app.has_view() {
-                app.no_table();
-            } else if let Some(file_path) = prompt(app, "Save to: ")? {
+        "save" => {
+            if !app.has_view() { app.no_table(); }
+            else if let Some(file_path) = prompt(app, "Save to: ")? {
                 let path = std::path::Path::new(&file_path);
-                // Check if parent directory exists
                 if let Some(parent) = path.parent() {
                     if !parent.as_os_str().is_empty() && !parent.exists() {
-                        let msg = format!("Create dir '{}'? (y/n): ", parent.display());
-                        if let Some(ans) = prompt(app, &msg)? {
+                        if let Some(ans) = prompt(app, &format!("Create dir '{}'? (y/n): ", parent.display()))? {
                             if ans.to_lowercase() == "y" {
                                 if let Err(e) = std::fs::create_dir_all(parent) {
                                     app.err(anyhow::anyhow!("Failed to create dir: {}", e));
                                     return Ok(true);
                                 }
-                            } else {
-                                return Ok(true);  // User declined
-                            }
+                            } else { return Ok(true); }
                         }
                     }
                 }
                 run(app, Box::new(Save { file_path }));
             }
         }
-        KeyCode::Char('D') => {
-            // D: Delete - dispatch to plugin, fallback to table delete
-            if !dispatch(app, "delete") {
-                let col_names: Vec<String> = app.view().map(|view| {
-                    if view.selected_cols.is_empty() {
-                        view.state.cur_col(&view.dataframe).map(|c| vec![c]).unwrap_or_default()
-                    } else {
-                        let names: Vec<String> = view.dataframe.get_column_names().iter().map(|s| s.to_string()).collect();
-                        let mut sel: Vec<usize> = view.selected_cols.iter().copied().collect();
-                        sel.sort_by(|a, b| b.cmp(a));
-                        sel.iter().filter_map(|&i| names.get(i).cloned()).collect()
-                    }
-                }).unwrap_or_default();
-                if !col_names.is_empty() {
-                    let _ = CommandExecutor::exec(app, Box::new(DelCol { col_names }));
-                    if let Some(v) = app.view_mut() { v.selected_cols.clear(); }
-                }
-            }
-        }
-        KeyCode::Char('!') => {
-            // !: xkey with selected columns (move to front as keys)
-            if let Some(view) = app.view() {
-                let names: Vec<String> = view.dataframe.get_column_names().iter().map(|s| s.to_string()).collect();
-                let col_names: Vec<String> = if view.selected_cols.is_empty() {
-                    view.state.cur_col(&view.dataframe).into_iter().collect()
-                } else {
-                    let mut sel: Vec<usize> = view.selected_cols.iter().copied().collect();
-                    sel.sort();  // preserve left-to-right order
-                    sel.into_iter().filter_map(|i| names.get(i).cloned()).collect()
-                };
-                if !col_names.is_empty() {
-                    run(app, Box::new(Xkey { col_names }));
-                    if let Some(v) = app.view_mut() { v.selected_cols.clear(); }
-                }
-            }
-        }
-        KeyCode::Char('/') => {
-            // /: Search with SQL WHERE expression
-            let info = app.view().and_then(|v| {
-                let col_name = v.state.cur_col(&v.dataframe)?;
-                Some((hints(&v.dataframe, &col_name, v.state.cr), col_name, v.name.starts_with("ls")))
-            });
-            if let Some((hint_list, col_name, is_folder)) = info {
-                let expr_opt = picker::fzf_edit(hint_list, "Search> ");
-                app.needs_redraw = true;
-
-                if let Ok(Some(expr)) = expr_opt {
-                    // If prql_hints disabled (default) and plain value, convert to SQL LIKE
-                    let prql_mode = theme::load_config_value("prql_hints").map(|v| v == "true").unwrap_or(false);
-                    let expr = if !prql_mode && is_plain_value(&expr) {
-                        format!("{} LIKE '%{}%'", col_name, expr)
-                    } else { expr };
-                    let matches = app.view().map(|v| find(&v.dataframe, &expr)).unwrap_or_default();
-                    app.search.col_name = None;
-                    app.search.value = Some(expr.clone());
-
-                    let found = if let Some(view) = app.view_mut() {
-                        if let Some(&pos) = matches.first() {
-                            view.state.cr = pos;
-                            app.needs_center = true;
-                            true
-                        } else {
-                            app.msg(format!("Not found: {}", expr));
-                            false
-                        }
-                    } else { false };
-
-                    // Folder view: auto-execute Enter after search
-                    if found && is_folder { dispatch(app, "enter"); }
-                }
-            }
-        }
-        KeyCode::Char('\\') => {
-            // \: Filter rows with SQL WHERE expression
-            let info = app.view().and_then(|v| {
-                let col_name = v.state.cur_col(&v.dataframe)?;
-                Some((hints(&v.dataframe, &col_name, v.state.cr), col_name))
-            });
-            if let Some((hint_list, _col_name)) = info {
-                let expr_opt = picker::fzf_edit(hint_list, "WHERE> ");
-                app.needs_redraw = true;
-
-                if let Ok(Some(expr)) = expr_opt {
-                    run(app, Box::new(Filter { expr }));
-                }
-            } else {
-                app.no_table();
-            }
-        }
-        KeyCode::Char('n') => find_match(app, true),   // n: Find next
-        KeyCode::Char('N') => find_match(app, false),  // N: Find prev
-        KeyCode::Char('*') => {
-            // *: Search for current cell value (creates SQL expression)
+        // Search
+        "search" => do_search(app)?,
+        "filter" => do_filter(app)?,
+        "next_match" => find_match(app, true),
+        "prev_match" => find_match(app, false),
+        "search_cell" => {
             if let Some(view) = app.view() {
                 if let Some(col_name) = view.state.cur_col(&view.dataframe) {
                     let col = &view.dataframe.get_columns()[view.state.cc];
@@ -437,24 +393,20 @@ fn on_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                 }
             }
         }
-        KeyCode::Char('s') => {
-            // s: Select columns
-            if !app.has_view() {
-                app.no_table();
-            } else if let Some(cols_str) = prompt(app, "Select columns (comma-separated): ")? {
-                run(app, Box::new(Select { col_names: cols_str.split(',').map(|s| s.trim().to_string()).collect() }));
-            }
-        }
-        KeyCode::Char('F') => on_col(app, |c| Box::new(Frequency { col_name: c })),  // F: Frequency
-        KeyCode::Char('M') => {  // M: Metadata view
+        // Column operations
+        "freq" => on_col(app, |c| Box::new(Frequency { col_name: c })),
+        "meta" => if app.has_view() { run(app, Box::new(Metadata)); },
+        "corr" => {
             if app.has_view() {
-                run(app, Box::new(Metadata));
+                run(app, Box::new(Correlation {
+                    selected_cols: app.view().map(|v| v.selected_cols.iter().copied().collect()).unwrap_or_default()
+                }));
+                if let Some(v) = app.view_mut() { v.selected_cols.clear(); }
             }
         }
-        KeyCode::Char('[') => on_col(app, |c| Box::new(Sort { col_name: c, descending: false })),  // [: Sort asc
-        KeyCode::Char(']') => on_col(app, |c| Box::new(Sort { col_name: c, descending: true })),   // ]: Sort desc
-        KeyCode::Char('^') => {
-            // ^: Rename current column
+        "sort" => on_col(app, |c| Box::new(Sort { col_name: c, descending: false })),
+        "sort-" => on_col(app, |c| Box::new(Sort { col_name: c, descending: true })),
+        "rename" => {
             if let Some(view) = app.view() {
                 if let Some(old_name) = view.state.cur_col(&view.dataframe) {
                     if let Some(new_name) = prompt(app, &format!("Rename '{}' to: ", old_name))? {
@@ -463,139 +415,71 @@ fn on_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                 }
             }
         }
-        KeyCode::Enter => { dispatch(app, "enter"); }
-        KeyCode::Char('c') => {
-            // c: Copy current column
+        "derive" => {
             if let Some(view) = app.view() {
                 if let Some(col_name) = view.state.cur_col(&view.dataframe) {
                     let new_name = format!("{}_copy", col_name);
-                    let col = view.dataframe.column(&col_name).ok().cloned();
-                    if let Some(c) = col {
-                        if let Some(view) = app.view_mut() {
-                            let new_col = c.as_materialized_series().clone().with_name(new_name.clone().into());
-                            if let Err(e) = view.dataframe.with_column(new_col) {
-                                app.err(e);
-                            } else {
-                                
-                            }
+                    if let Ok(c) = view.dataframe.column(&col_name).cloned() {
+                        if let Some(v) = app.view_mut() {
+                            let new_col = c.as_materialized_series().clone().with_name(new_name.into());
+                            if let Err(e) = v.dataframe.with_column(new_col) { app.err(e); }
                         }
                     }
                 }
             }
         }
-        KeyCode::Char('$') => {
-            // $: Type convert column
-            if let Some(view) = app.view() {
-                if let Some(col_name) = view.state.cur_col(&view.dataframe) {
-                    let types = vec![
-                        "String".to_string(),
-                        "Int64".to_string(),
-                        "Float64".to_string(),
-                        "Boolean".to_string(),
-                    ];
-                    let result = picker::fzf(types, "Convert to: ");
-                    app.needs_redraw = true;
-                    if let Ok(Some(selected)) = result {
-                        if let Some(view) = app.view_mut() {
-                            let result = match selected.as_str() {
-                                "String" => view.dataframe.column(&col_name)
-                                    .and_then(|c| c.cast(&polars::prelude::DataType::String)),
-                                "Int64" => view.dataframe.column(&col_name)
-                                    .and_then(|c| c.cast(&polars::prelude::DataType::Int64)),
-                                "Float64" => view.dataframe.column(&col_name)
-                                    .and_then(|c| c.cast(&polars::prelude::DataType::Float64)),
-                                "Boolean" => view.dataframe.column(&col_name)
-                                    .and_then(|c| c.cast(&polars::prelude::DataType::Boolean)),
-                                _ => Err(polars::prelude::PolarsError::ComputeError("Unknown type".into())),
-                            };
-                            match result {
-                                Ok(new_col) => {
-                                    if let Err(e) = view.dataframe.with_column(new_col) {
-                                        app.err(e);
-                                    } else {
-                                        
-                                    }
-                                }
-                                Err(e) => app.err(e),
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        KeyCode::Char('b') => {  // b: Aggregate by current column
+        "convert" => do_convert(app)?,
+        "aggregate" => {
             if let Some(col) = app.view().and_then(|v| v.state.cur_col(&v.dataframe)) {
                 let result = picker::fzf(vec!["count".into(), "sum".into(), "mean".into(), "min".into(), "max".into(), "std".into()], "Aggregate: ");
                 app.needs_redraw = true;
-                if let Ok(Some(func)) = result {
-                    run(app, Box::new(Agg { col, func }));
-                }
+                if let Ok(Some(func)) = result { run(app, Box::new(Agg { col, func })); }
             }
         }
-        KeyCode::Char('T') => {
-            // T: Duplicate current view
-            if app.has_view() {
-                let _ = CommandExecutor::exec(app, Box::new(Dup));
-            }
-        }
-        KeyCode::Char('W') => {
-            // W: Swap top two views
-            run(app, Box::new(Swap));
-        }
-        KeyCode::Char('l') => run(app, Box::new(Ls { dir: std::env::current_dir().unwrap_or_default(), recursive: false })),
-        KeyCode::Char('r') => run(app, Box::new(Ls { dir: std::env::current_dir().unwrap_or_default(), recursive: true })),
-        KeyCode::Char('C') => {
-            // C: Correlation matrix (uses selected columns if >= 2, otherwise all numeric)
-            if app.has_view() {
-                run(app, Box::new(Correlation {
-                    selected_cols: app.view().map(|v| v.selected_cols.iter().copied().collect()).unwrap_or_default()
-                }));
-                if let Some(v) = app.view_mut() { v.selected_cols.clear(); }
-            }
-        }
-        KeyCode::Char(':') => {
-            // :: Command picker
-            let cmd_list: Vec<String> = vec![
-                "from <file>", "save <file>",
-                "ls [dir]", "lr [dir]",
-                "ps", "df", "mounts", "tcp", "udp", "lsblk", "who", "lsof [pid]", "env",
-                "filter <expr>", "freq <col>", "meta", "corr",
-                "select <cols>", "delcol <cols>", "sort <col>", "sort -<col>", "take <n>", "rename <old> <new>",
-            ].iter().map(|s| s.to_string()).collect();
-            let result = picker::fzf_edit(cmd_list, ": ");
-            app.needs_redraw = true;
-            if let Ok(Some(selected)) = result {
-                let cmd_str = selected.split_whitespace().next().unwrap_or(&selected);
-                if let Some(cmd) = parse(cmd_str, app).or_else(|| parse(&selected, app)) {
-                    if let Err(e) = CommandExecutor::exec(app, cmd) {
-                        app.err(e);
+        "delete" => {
+            // Dispatch to plugin first, fallback to table column delete
+            if !dispatch(app, "delete") {
+                let col_names: Vec<String> = app.view().map(|v| {
+                    if v.selected_cols.is_empty() {
+                        v.state.cur_col(&v.dataframe).into_iter().collect()
+                    } else {
+                        let names: Vec<String> = v.dataframe.get_column_names().iter().map(|s| s.to_string()).collect();
+                        let mut sel: Vec<usize> = v.selected_cols.iter().copied().collect();
+                        sel.sort_by(|a, b| b.cmp(a));
+                        sel.iter().filter_map(|&i| names.get(i).cloned()).collect()
                     }
-                } else {
-                    app.msg(format!("Unknown command: {}", selected));
+                }).unwrap_or_default();
+                if !col_names.is_empty() {
+                    run(app, Box::new(DelCol { col_names }));
+                    if let Some(v) = app.view_mut() { v.selected_cols.clear(); }
                 }
             }
         }
-        KeyCode::Char('@') => {
-            // @: Jump to column by name
+        "xkey" => {
             if let Some(view) = app.view() {
-                let col_names: Vec<String> = view.dataframe.get_column_names()
-                    .iter()
-                    .map(|s| s.to_string())
-                    .collect();
-                let result = picker::fzf(col_names.clone(), "Column: ");
-                app.needs_redraw = true;
-                if let Ok(Some(selected)) = result {
-                    if let Some(idx) = col_names.iter().position(|c| c == &selected) {
-                        if let Some(view) = app.view_mut() {
-                            view.state.cc = idx;
-                            app.msg(format!("Column: {}", selected));
-                        }
-                    }
+                let names: Vec<String> = view.dataframe.get_column_names().iter().map(|s| s.to_string()).collect();
+                let col_names: Vec<String> = if view.selected_cols.is_empty() {
+                    view.state.cur_col(&view.dataframe).into_iter().collect()
+                } else {
+                    let mut sel: Vec<usize> = view.selected_cols.iter().copied().collect();
+                    sel.sort();
+                    sel.into_iter().filter_map(|i| names.get(i).cloned()).collect()
+                };
+                if !col_names.is_empty() {
+                    run(app, Box::new(Xkey { col_names }));
+                    if let Some(v) = app.view_mut() { v.selected_cols.clear(); }
                 }
             }
         }
-        KeyCode::Char('m') => {
-            // m: Toggle bookmark on current row
+        // View management
+        "dup" => if app.has_view() { run(app, Box::new(Dup)); },
+        "swap" => run(app, Box::new(Swap)),
+        "ls" => run(app, Box::new(Ls { dir: std::env::current_dir().unwrap_or_default(), recursive: false })),
+        "lr" => run(app, Box::new(Ls { dir: std::env::current_dir().unwrap_or_default(), recursive: true })),
+        // UI
+        "command" => do_command_picker(app)?,
+        "goto_col" | "goto_col_name" => do_goto_col(app)?,
+        "bookmark" => {
             if let Some(view) = app.view() {
                 let cr = view.state.cr;
                 if let Some(pos) = app.bookmarks.iter().position(|&r| r == cr) {
@@ -608,39 +492,132 @@ fn on_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
                 }
             }
         }
-        KeyCode::Char('\'') => {
-            // ': Jump to next bookmark
-            if app.bookmarks.is_empty() {
-                app.msg("No bookmarks".to_string());
-            } else if let Some(row) = app.bookmarks.iter()
+        "next_bookmark" => {
+            if app.bookmarks.is_empty() { app.msg("No bookmarks".into()); }
+            else if let Some(row) = app.bookmarks.iter()
                 .find(|&&r| r > app.view().map(|v| v.state.cr).unwrap_or(0)).copied()
                 .or_else(|| app.bookmarks.first().copied())
             {
-                if let Some(view) = app.view_mut() {
-                    view.state.cr = row;
-                    view.state.visible();
-                }
+                if let Some(v) = app.view_mut() { v.state.cr = row; v.state.visible(); }
                 app.msg(format!("Bookmark: row {}", row));
             }
         }
-        KeyCode::Char(' ') => { let _ = CommandExecutor::exec(app, Box::new(ToggleSel)); }
-        KeyCode::Esc => { let _ = CommandExecutor::exec(app, Box::new(ClearSel)); }
-        KeyCode::Char('0') => {
-            // 0: Execute sel_null function (defined in cfg/funcs.4th) - Meta view only
-            if app.view().map(|v| v.name == "metadata").unwrap_or(false) {
-                exec_str("sel_null", app);
-            }
-        }
-        KeyCode::Char('1') => {
-            // 1: Execute sel_single function (defined in cfg/funcs.4th) - Meta view only
-            if app.view().map(|v| v.name == "metadata").unwrap_or(false) {
-                exec_str("sel_single", app);
-            }
-        }
+        // Plugin dispatch (Enter, etc.)
+        "enter" | "filter_parent" | "delete_sel" => { dispatch(app, cmd); }
+        // Forth functions (meta view)
+        "sel_null" => { exec_str("sel_null", app); }
+        "sel_single" => { exec_str("sel_single", app); }
         _ => {}
     }
-
     Ok(true)
+}
+
+/// Search with fzf (/)
+fn do_search(app: &mut AppContext) -> Result<()> {
+    let info = app.view().and_then(|v| {
+        let col_name = v.state.cur_col(&v.dataframe)?;
+        Some((hints(&v.dataframe, &col_name, v.state.cr), col_name, v.name.starts_with("ls")))
+    });
+    if let Some((hint_list, col_name, is_folder)) = info {
+        let expr_opt = picker::fzf_edit(hint_list, "Search> ");
+        app.needs_redraw = true;
+        if let Ok(Some(expr)) = expr_opt {
+            let prql_mode = theme::load_config_value("prql_hints").map(|v| v == "true").unwrap_or(false);
+            let expr = if !prql_mode && is_plain_value(&expr) {
+                format!("{} LIKE '%{}%'", col_name, expr)
+            } else { expr };
+            let matches = app.view().map(|v| find(&v.dataframe, &expr)).unwrap_or_default();
+            app.search.col_name = None;
+            app.search.value = Some(expr.clone());
+            let found = if let Some(view) = app.view_mut() {
+                if let Some(&pos) = matches.first() {
+                    view.state.cr = pos;
+                    app.needs_center = true;
+                    true
+                } else { app.msg(format!("Not found: {}", expr)); false }
+            } else { false };
+            if found && is_folder { dispatch(app, "enter"); }
+        }
+    }
+    Ok(())
+}
+
+/// Filter with fzf (\)
+fn do_filter(app: &mut AppContext) -> Result<()> {
+    let info = app.view().and_then(|v| {
+        let col_name = v.state.cur_col(&v.dataframe)?;
+        Some((hints(&v.dataframe, &col_name, v.state.cr), col_name))
+    });
+    if let Some((hint_list, _)) = info {
+        let expr_opt = picker::fzf_edit(hint_list, "WHERE> ");
+        app.needs_redraw = true;
+        if let Ok(Some(expr)) = expr_opt { run(app, Box::new(Filter { expr })); }
+    } else { app.no_table(); }
+    Ok(())
+}
+
+/// Type conversion ($)
+fn do_convert(app: &mut AppContext) -> Result<()> {
+    if let Some(view) = app.view() {
+        if let Some(col_name) = view.state.cur_col(&view.dataframe) {
+            let types = vec!["String".into(), "Int64".into(), "Float64".into(), "Boolean".into()];
+            let result = picker::fzf(types, "Convert to: ");
+            app.needs_redraw = true;
+            if let Ok(Some(selected)) = result {
+                if let Some(v) = app.view_mut() {
+                    let res = match selected.as_str() {
+                        "String" => v.dataframe.column(&col_name).and_then(|c| c.cast(&polars::prelude::DataType::String)),
+                        "Int64" => v.dataframe.column(&col_name).and_then(|c| c.cast(&polars::prelude::DataType::Int64)),
+                        "Float64" => v.dataframe.column(&col_name).and_then(|c| c.cast(&polars::prelude::DataType::Float64)),
+                        "Boolean" => v.dataframe.column(&col_name).and_then(|c| c.cast(&polars::prelude::DataType::Boolean)),
+                        _ => Err(polars::prelude::PolarsError::ComputeError("Unknown type".into())),
+                    };
+                    match res {
+                        Ok(new_col) => if let Err(e) = v.dataframe.with_column(new_col) { app.err(e); },
+                        Err(e) => app.err(e),
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Command picker (:)
+fn do_command_picker(app: &mut AppContext) -> Result<()> {
+    let cmd_list: Vec<String> = vec![
+        "from <file>", "save <file>", "ls [dir]", "lr [dir]",
+        "ps", "df", "mounts", "tcp", "udp", "lsblk", "who", "lsof [pid]", "env",
+        "filter <expr>", "freq <col>", "meta", "corr",
+        "select <cols>", "delcol <cols>", "sort <col>", "sort -<col>", "take <n>", "rename <old> <new>",
+    ].iter().map(|s| s.to_string()).collect();
+    let result = picker::fzf_edit(cmd_list, ": ");
+    app.needs_redraw = true;
+    if let Ok(Some(selected)) = result {
+        let cmd_str = selected.split_whitespace().next().unwrap_or(&selected);
+        if let Some(cmd) = parse(cmd_str, app).or_else(|| parse(&selected, app)) {
+            if let Err(e) = CommandExecutor::exec(app, cmd) { app.err(e); }
+        } else { app.msg(format!("Unknown command: {}", selected)); }
+    }
+    Ok(())
+}
+
+/// Jump to column by name (@)
+fn do_goto_col(app: &mut AppContext) -> Result<()> {
+    if let Some(view) = app.view() {
+        let col_names: Vec<String> = view.dataframe.get_column_names().iter().map(|s| s.to_string()).collect();
+        let result = picker::fzf(col_names.clone(), "Column: ");
+        app.needs_redraw = true;
+        if let Ok(Some(selected)) = result {
+            if let Some(idx) = col_names.iter().position(|c| c == &selected) {
+                if let Some(v) = app.view_mut() {
+                    v.state.cc = idx;
+                    app.msg(format!("Column: {}", selected));
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Strip quotes from polars string values
