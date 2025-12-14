@@ -1,6 +1,6 @@
 use crate::app::AppContext;
 use crate::command::Command;
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use polars::prelude::*;
 
 /// Delete columns
@@ -31,10 +31,14 @@ pub struct Filter { pub expr: String }
 
 impl Command for Filter {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
+        // Block filter while gz is still loading
+        if app.is_loading() { return Err(anyhow!("Wait for loading to complete")); }
         let (filtered, filename) = {
             let v = app.req()?;
+            // Force deep copy via lazy().collect() - avoids reference to mutating source
+            let df = v.dataframe.clone().lazy().collect()?;
             let mut ctx = polars::sql::SQLContext::new();
-            ctx.register("df", v.dataframe.clone().lazy());
+            ctx.register("df", df.lazy());
             // Compile PRQL filter expr to SQL WHERE clause
             let where_clause = crate::prql::filter_to_sql(&self.expr)?;
             let sql = format!("SELECT * FROM df WHERE {}", where_clause);

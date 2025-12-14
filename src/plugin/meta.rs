@@ -7,7 +7,7 @@ use crate::command::transform::Xkey;
 use crate::command::view::Pop;
 use crate::plugin::Plugin;
 use crate::state::ViewState;
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use polars::prelude::*;
 
 pub struct MetaPlugin;
@@ -56,6 +56,8 @@ pub struct Metadata;
 
 impl Command for Metadata {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
+        // Block meta while gz is still loading
+        if app.is_loading() { return Err(anyhow!("Wait for loading to complete")); }
         let (parent_id, parent_col, parent_rows, parent_name, cached, df, col_sep) = {
             let view = app.req()?;
             (view.id, view.state.cc, view.dataframe.height(), view.name.clone(),

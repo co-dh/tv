@@ -64,6 +64,8 @@ pub struct Frequency {
 
 impl Command for Frequency {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
+        // Block freq while gz is still loading
+        if app.is_loading() { return Err(anyhow!("Wait for loading to complete")); }
         let view = app.req()?;
         let parent_id = view.id;
         let parent_rows = view.dataframe.height();

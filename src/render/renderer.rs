@@ -18,6 +18,7 @@ impl Renderer {
         let stack_names = app.stack.names();
         let show_info = app.show_info;
         let decimals = app.float_decimals;
+        let is_loading = app.is_loading();
 
         // Get view name for keymap lookup
         let tab = app.view().map(|v| app.plugins.tab(&v.name)).unwrap_or("table");
@@ -36,7 +37,7 @@ impl Renderer {
             if show_tabs {
                 Self::render_tabs(frame, &stack_names, area, &theme);
             }
-            Self::render_status_bar(frame, view, &message, area, &theme);
+            Self::render_status_bar(frame, view, &message, is_loading, area, &theme);
         } else {
             Self::render_empty_message(frame, &message, area);
         }
@@ -460,7 +461,7 @@ impl Renderer {
     }
 
     /// Render status bar
-    fn render_status_bar(frame: &mut Frame, view: &mut ViewState, message: &str, area: Rect, theme: &Theme) {
+    fn render_status_bar(frame: &mut Frame, view: &mut ViewState, message: &str, is_loading: bool, area: Rect, theme: &Theme) {
         let row = area.height - 1;
         let buf = frame.buffer_mut();
         let style = Style::default().bg(to_rcolor(theme.status_bg)).fg(to_rcolor(theme.status_fg));
@@ -469,6 +470,7 @@ impl Renderer {
         for x in 0..area.width { buf[(x, row)].set_style(style); buf[(x, row)].set_char(' '); }
 
         let total_str = Self::commify(view.rows());
+        let loading = if is_loading { " [Loading...]" } else { "" };
 
         let left = if !message.is_empty() { message.to_string() }
         else if view.name.starts_with("Freq:") || view.name == "metadata" {
@@ -477,7 +479,7 @@ impl Renderer {
             let pr = view.parent_rows.map(|n| format!(" ({})", Self::commify(n))).unwrap_or_default();
             format!("{} <- {}{}", view.name, pn, pr)
         }
-        else { view.filename.as_deref().unwrap_or("(no file)").to_string() };
+        else { format!("{}{}", view.filename.as_deref().unwrap_or("(no file)"), loading) };
 
         // Use cached stats if column unchanged
         let col_stats = if view.cols() > 0 {

@@ -72,6 +72,9 @@ impl AppContext {
         }
     }
 
+    /// Check if background loading is in progress
+    pub fn is_loading(&self) -> bool { self.bg_loader.is_some() }
+
     /// Merge any available background data into current view
     pub fn merge_bg_data(&mut self) {
         use std::sync::mpsc::TryRecvError;
