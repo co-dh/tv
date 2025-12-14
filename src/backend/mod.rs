@@ -13,9 +13,41 @@ pub use polars::Polars;
 pub use memory::Memory;
 pub use gz::Gz;
 
-use anyhow::Result;
-use ::polars::prelude::DataFrame;
+use anyhow::{anyhow, Result};
+use ::polars::prelude::*;
 use std::path::Path;
+
+// ── Common DataFrame ops (used by Memory & Gz) ──────────────────────────────
+
+/// Filter DataFrame using SQL WHERE clause
+pub fn df_filter(df: &DataFrame, w: &str) -> Result<DataFrame> {
+    let mut ctx = ::polars::sql::SQLContext::new();
+    ctx.register("df", df.clone().lazy());
+    ctx.execute(&format!("SELECT * FROM df WHERE {}", w))?
+        .collect().map_err(|e| anyhow!("{}", e))
+}
+
+/// Sort DataFrame and take top N rows
+pub fn df_sort_head(df: &DataFrame, col: &str, desc: bool, limit: usize) -> Result<DataFrame> {
+    df.clone().lazy()
+        .sort([col], SortMultipleOptions::default().with_order_descending(desc))
+        .limit(limit as u32).collect().map_err(|e| anyhow!("{}", e))
+}
+
+/// Get distinct values (exclude null)
+pub fn df_distinct(df: &DataFrame, col: &str) -> Result<Vec<String>> {
+    let c = df.column(col).map_err(|e| anyhow!("{}", e))?;
+    let uniq = c.unique().map_err(|e| anyhow!("{}", e))?;
+    Ok((0..uniq.len()).filter_map(|i| uniq.get(i).ok().map(|v| v.to_string())).filter(|v| v != "null").collect())
+}
+
+/// Save DataFrame to parquet
+pub fn df_save(df: &DataFrame, path: &Path) -> Result<()> {
+    let mut df = df.clone();
+    ParquetWriter::new(std::fs::File::create(path)?)
+        .finish(&mut df).map_err(|e| anyhow!("Parquet write: {}", e))?;
+    Ok(())
+}
 
 /// Backend interface for data operations.
 /// All methods take a path (ignored by Memory backend).
@@ -45,4 +77,7 @@ pub trait Backend: Send + Sync {
     /// Filter rows using SQL WHERE clause syntax.
     /// Returns DataFrame with matching rows.
     fn filter(&self, path: &str, where_clause: &str) -> Result<DataFrame>;
+
+    /// Sort by column and return top N rows (efficient for TUI viewport).
+    fn sort_head(&self, path: &str, col: &str, desc: bool, limit: usize) -> Result<DataFrame>;
 }

@@ -93,6 +93,8 @@ pub struct ViewState {
     pub disk_rows: Option<usize>,  // total rows on disk (for large parquet files)
     pub parquet_path: Option<String>,  // lazy parquet source (no in-memory df)
     pub col_names: Vec<String>,  // cached column names (for parquet views)
+    pub sort_col: Option<String>,  // sort column for lazy parquet
+    pub sort_desc: bool,  // sort descending
 }
 
 impl ViewState {
@@ -128,6 +130,7 @@ impl ViewState {
             filename, show_row_numbers: false, parent_id: None, parent_rows: None, parent_name: None, freq_col: None,
             selected_cols: HashSet::new(), selected_rows: HashSet::new(), gz_source: None,
             stats_cache: None, col_separator: None, meta_cache: None, partial: false, disk_rows: None, parquet_path: None, col_names: Vec::new(),
+            sort_col: None, sort_desc: false,
         }
     }
 
@@ -138,6 +141,7 @@ impl ViewState {
             filename: Some(path.clone()), show_row_numbers: false, parent_id: None, parent_rows: None, parent_name: None, freq_col: None,
             selected_cols: HashSet::new(), selected_rows: HashSet::new(), gz_source: None,
             stats_cache: None, col_separator: None, meta_cache: None, partial: false, disk_rows: Some(total_rows), parquet_path: Some(path), col_names: cols,
+            sort_col: None, sort_desc: false,
         }
     }
 
@@ -147,6 +151,7 @@ impl ViewState {
             filename, show_row_numbers: false, parent_id: None, parent_rows: None, parent_name: None, freq_col: None,
             selected_cols: HashSet::new(), selected_rows: HashSet::new(), gz_source: Some(gz),
             stats_cache: None, col_separator: None, meta_cache: None, partial, disk_rows: None, parquet_path: None, col_names: Vec::new(),
+            sort_col: None, sort_desc: false,
         }
     }
 
@@ -157,6 +162,7 @@ impl ViewState {
             filename: None, show_row_numbers: false, parent_id: Some(pid), parent_rows: Some(prows), parent_name: Some(pname), freq_col: None,
             selected_cols: HashSet::new(), selected_rows: HashSet::new(), gz_source: None,
             stats_cache: None, col_separator: None, meta_cache: None, partial: false, disk_rows: None, parquet_path: None, col_names: Vec::new(),
+            sort_col: None, sort_desc: false,
         }
     }
 
@@ -167,6 +173,7 @@ impl ViewState {
             filename: None, show_row_numbers: false, parent_id: Some(pid), parent_rows: Some(prows), parent_name: Some(pname), freq_col: Some(col),
             selected_cols: HashSet::new(), selected_rows: HashSet::new(), gz_source: None,
             stats_cache: None, col_separator: None, meta_cache: None, partial: false, disk_rows: None, parquet_path: None, col_names: Vec::new(),
+            sort_col: None, sort_desc: false,
         }
     }
 

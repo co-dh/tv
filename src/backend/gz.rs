@@ -1,6 +1,6 @@
 //! Gz backend - streaming gzipped CSV with memory limits.
 //! Refuses expensive operations on partial (memory-limited) data.
-use super::Backend;
+use super::{Backend, df_filter, df_sort_head, df_distinct, df_save};
 use crate::command::io::convert::{convert_epoch_cols, apply_schema, convert_types};
 use super::polars::{detect_sep, parse_csv_buf};
 use anyhow::{anyhow, Result};
@@ -43,18 +43,10 @@ impl Backend for Gz<'_> {
 
     fn distinct(&self, _: &str, col: &str) -> Result<Vec<String>> {
         if self.partial { return Err(anyhow!("File not fully loaded (memory limit)")); }
-        let c = self.df.column(col).map_err(|e| anyhow!("{}", e))?;
-        let uniq = c.unique().map_err(|e| anyhow!("{}", e))?;
-        Ok((0..uniq.len()).filter_map(|i| uniq.get(i).ok().map(|v| v.to_string())).filter(|v| v != "null").collect())
+        df_distinct(self.df, col)
     }
 
-    fn save(&self, df: &DataFrame, path: &Path) -> Result<()> {
-        let mut df = df.clone();
-        ParquetWriter::new(std::fs::File::create(path)?)
-            .finish(&mut df)
-            .map_err(|e| anyhow!("Failed to write Parquet: {}", e))?;
-        Ok(())
-    }
+    fn save(&self, df: &DataFrame, path: &Path) -> Result<()> { df_save(df, path) }
 
     fn freq(&self, _: &str, col: &str) -> Result<DataFrame> {
         if self.partial { return Err(anyhow!("File not fully loaded (memory limit)")); }
@@ -65,12 +57,10 @@ impl Backend for Gz<'_> {
 
     fn filter(&self, _: &str, w: &str) -> Result<DataFrame> {
         if self.partial { return Err(anyhow!("File not fully loaded (memory limit)")); }
-        let mut ctx = polars::sql::SQLContext::new();
-        ctx.register("df", self.df.clone().lazy());
-        ctx.execute(&format!("SELECT * FROM df WHERE {}", w))?
-            .collect()
-            .map_err(|e| anyhow!("{}", e))
+        df_filter(self.df, w)
     }
+
+    fn sort_head(&self, _: &str, col: &str, desc: bool, limit: usize) -> Result<DataFrame> { df_sort_head(self.df, col, desc, limit) }
 }
 
 // ── Streaming load ──────────────────────────────────────────────────────────
@@ -238,7 +228,6 @@ fn stream_save(gz_path: &str, out_path: &Path, raw: bool, tx: &Sender<String>) -
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
 
     #[test]
     fn test_gz_to_parquet() {

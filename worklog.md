@@ -34,8 +34,11 @@ src/command/io/
 └── convert.rs  - epoch conversion
 ```
 
-### Todo
-- Investigate: can polars scan_csv from zcat pipe/fifo? If so, merge gz into polars
+### Investigation: polars pipe support
+**Q:** Can polars scan_csv from zcat pipe/fifo?
+**A:** No. Polars requires `MmapBytesReader` trait. Pipes (ChildStdout) don't implement it.
+Must buffer to `Cursor<Vec<u8>>` first - which is what gz.rs already does.
+Cannot simplify further.
 
 ---
 

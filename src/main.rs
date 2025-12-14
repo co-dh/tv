@@ -244,7 +244,7 @@ fn exec_str(cmd_str: &str, app: &mut AppContext) -> bool {
 
 /// Execute command on current column (DRY helper)
 fn on_col<F>(app: &mut AppContext, f: F) where F: FnOnce(String) -> Box<dyn command::Command> {
-    if let Some(col) = app.view().and_then(|v| v.state.cur_col(&v.dataframe)) {
+    if let Some(col) = app.view().and_then(|v| v.col_name(v.state.cc)) {
         if let Err(e) = CommandExecutor::exec(app, f(col)) { app.err(e); }
     }
 }

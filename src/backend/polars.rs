@@ -74,6 +74,14 @@ impl Backend for Polars {
             .collect()
             .map_err(|e| anyhow!("{}", e))
     }
+
+    fn sort_head(&self, path: &str, col: &str, desc: bool, limit: usize) -> Result<DataFrame> {
+        LazyFrame::scan_parquet(PlPath::new(path), ScanArgsParquet::default())?
+            .sort([col], SortMultipleOptions::default().with_order_descending(desc))
+            .limit(limit as u32)
+            .collect()
+            .map_err(|e| anyhow!("{}", e))
+    }
 }
 
 // ── CSV operations ──────────────────────────────────────────────────────────
@@ -196,6 +204,26 @@ mod tests {
         assert_eq!(window.height(), 50, "Should fetch exactly 50 rows");
         let first_id = window.column("id").unwrap().get(0).unwrap();
         assert_eq!(first_id.to_string(), "100", "First row should have id=100");
+        let _ = std::fs::remove_file(tmp);
+    }
+
+    #[test]
+    fn test_parquet_sort_head() {
+        let tmp = std::env::temp_dir().join("test_sort_head.parquet");
+        let df = DataFrame::new(vec![
+            Column::new("id".into(), vec![5, 2, 8, 1, 9, 3]),
+        ]).unwrap();
+        Polars.save(&df, &tmp).unwrap();
+        // Sort ascending, take 3
+        let r = Polars.sort_head(tmp.to_str().unwrap(), "id", false, 3).unwrap();
+        assert_eq!(r.height(), 3);
+        assert_eq!(r.column("id").unwrap().get(0).unwrap().try_extract::<i32>().unwrap(), 1);
+        assert_eq!(r.column("id").unwrap().get(2).unwrap().try_extract::<i32>().unwrap(), 3);
+        // Sort descending, take 2
+        let r = Polars.sort_head(tmp.to_str().unwrap(), "id", true, 2).unwrap();
+        assert_eq!(r.height(), 2);
+        assert_eq!(r.column("id").unwrap().get(0).unwrap().try_extract::<i32>().unwrap(), 9);
+        assert_eq!(r.column("id").unwrap().get(1).unwrap().try_extract::<i32>().unwrap(), 8);
         let _ = std::fs::remove_file(tmp);
     }
 }

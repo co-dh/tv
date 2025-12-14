@@ -59,13 +59,26 @@ impl Command for Select {
     fn to_str(&self) -> String { format!("sel {}", self.col_names.join(",")) }
 }
 
-/// Sort by column
+/// Sort by column (limit to 10k rows for large files)
 pub struct Sort { pub col_name: String, pub descending: bool }
+
+const SORT_LIMIT: usize = 10_000;
 
 impl Command for Sort {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
+        let sorted = {
+            let v = app.req()?;
+            let path = v.path().to_string();
+            v.backend().sort_head(&path, &self.col_name, self.descending, SORT_LIMIT)?
+        };
         let v = app.req_mut()?;
-        v.dataframe = v.dataframe.sort([&self.col_name], SortMultipleOptions::default().with_order_descending(self.descending))?;
+        v.dataframe = sorted;
+        v.sort_col = Some(self.col_name.clone());
+        v.sort_desc = self.descending;
+        // Clear parquet lazy state - now in memory
+        v.disk_rows = None;
+        v.parquet_path = None;
+        v.state.top();  // reset to top after sort
         Ok(())
     }
     fn to_str(&self) -> String { format!("{} {}", if self.descending { "sort_desc" } else { "sort_asc" }, self.col_name) }

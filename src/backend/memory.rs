@@ -1,7 +1,7 @@
 //! Memory backend - in-memory DataFrame operations.
 //! Used for OS commands (ls, ps, tcp), CSV files, and filtered results.
 //! Path parameter is ignored - data comes from stored DataFrame reference.
-use super::Backend;
+use super::{Backend, df_filter, df_sort_head, df_distinct, df_save};
 use anyhow::{anyhow, Result};
 use polars::prelude::*;
 use std::path::Path;
@@ -32,23 +32,8 @@ impl Backend for Memory<'_> {
         Ok(self.0.slice(offset as i64, limit))
     }
 
-    fn distinct(&self, _: &str, col: &str) -> Result<Vec<String>> {
-        let c = self.0.column(col).map_err(|e| anyhow!("{}", e))?;
-        let uniq = c.unique().map_err(|e| anyhow!("{}", e))?;
-        let vals: Vec<String> = (0..uniq.len())
-            .filter_map(|i| uniq.get(i).ok().map(|v| v.to_string()))
-            .filter(|v| v != "null")
-            .collect();
-        Ok(vals)
-    }
-
-    fn save(&self, df: &DataFrame, path: &Path) -> Result<()> {
-        let mut df = df.clone();
-        ParquetWriter::new(std::fs::File::create(path)?)
-            .finish(&mut df)
-            .map_err(|e| anyhow!("Failed to write Parquet: {}", e))?;
-        Ok(())
-    }
+    fn distinct(&self, _: &str, col: &str) -> Result<Vec<String>> { df_distinct(self.0, col) }
+    fn save(&self, df: &DataFrame, path: &Path) -> Result<()> { df_save(df, path) }
 
     fn freq(&self, _: &str, c: &str) -> Result<DataFrame> {
         let (df, keys) = (self.0, &self.1);
@@ -67,13 +52,8 @@ impl Backend for Memory<'_> {
         }
     }
 
-    fn filter(&self, _: &str, w: &str) -> Result<DataFrame> {
-        let mut ctx = polars::sql::SQLContext::new();
-        ctx.register("df", self.0.clone().lazy());
-        ctx.execute(&format!("SELECT * FROM df WHERE {}", w))?
-            .collect()
-            .map_err(|e| anyhow!("{}", e))
-    }
+    fn filter(&self, _: &str, w: &str) -> Result<DataFrame> { df_filter(self.0, w) }
+    fn sort_head(&self, _: &str, col: &str, desc: bool, limit: usize) -> Result<DataFrame> { df_sort_head(self.0, col, desc, limit) }
 }
 
 #[cfg(test)]
@@ -144,5 +124,22 @@ mod tests {
             Column::new("a".into(), vec![1, 2, 3, 4, 5]),
         ]).unwrap();
         assert_eq!(Memory(&df, vec![]).filter("", "a > 3").unwrap().height(), 2);
+    }
+
+    #[test]
+    fn test_memory_sort_head() {
+        let df = DataFrame::new(vec![
+            Column::new("a".into(), vec![3, 1, 4, 1, 5, 9, 2, 6]),
+        ]).unwrap();
+        // Sort ascending, take 3
+        let r = Memory(&df, vec![]).sort_head("", "a", false, 3).unwrap();
+        assert_eq!(r.height(), 3);
+        assert_eq!(r.column("a").unwrap().get(0).unwrap().try_extract::<i32>().unwrap(), 1);
+        assert_eq!(r.column("a").unwrap().get(2).unwrap().try_extract::<i32>().unwrap(), 2);
+        // Sort descending, take 2
+        let r = Memory(&df, vec![]).sort_head("", "a", true, 2).unwrap();
+        assert_eq!(r.height(), 2);
+        assert_eq!(r.column("a").unwrap().get(0).unwrap().try_extract::<i32>().unwrap(), 9);
+        assert_eq!(r.column("a").unwrap().get(1).unwrap().try_extract::<i32>().unwrap(), 6);
     }
 }
