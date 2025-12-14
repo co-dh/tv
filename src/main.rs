@@ -1,5 +1,6 @@
 mod app;
 mod command;
+mod connector;
 mod funcs;
 mod keymap;
 mod os;
@@ -546,12 +547,21 @@ fn do_search(app: &mut AppContext) -> Result<()> {
 fn do_filter(app: &mut AppContext) -> Result<()> {
     let info = app.view().and_then(|v| {
         let col_name = v.state.cur_col(&v.dataframe)?;
-        Some((hints(&v.dataframe, &col_name, v.state.cr), col_name))
+        let is_str = v.dataframe.column(&col_name).ok()
+            .map(|c| matches!(c.dtype(), polars::prelude::DataType::String)).unwrap_or(false);
+        Some((hints(&v.dataframe, &col_name, v.state.cr), col_name, is_str))
     });
-    if let Some((hint_list, _)) = info {
+    if let Some((hint_list, col_name, is_str)) = info {
         let expr_opt = picker::fzf_edit(hint_list, "WHERE> ");
         app.needs_redraw = true;
-        if let Ok(Some(expr)) = expr_opt { run(app, Box::new(Filter { expr })); }
+        if let Ok(Some(expr)) = expr_opt {
+            // If plain value selected, construct equality expression (quote column for reserved words)
+            let expr = if is_plain_value(&expr) {
+                if is_str { format!("\"{}\" = '{}'", col_name, expr) }
+                else { format!("\"{}\" = {}", col_name, expr) }
+            } else { expr };
+            run(app, Box::new(Filter { expr }));
+        }
     } else { app.no_table(); }
     Ok(())
 }

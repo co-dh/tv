@@ -80,6 +80,19 @@ fn test_filter_string_equality() {
 }
 
 #[test]
+fn test_filter_reserved_word_column() {
+    // Column named "USER" is a SQL reserved word - must be quoted in filter
+    let id = unique_id();
+    let csv = format!("tmp/reserved_{}.csv", id);
+    std::fs::write(&csv, "USER,value\nroot,1\nadmin,2\nroot,3\n").unwrap();
+
+    // Quoted "USER" should work
+    let output = run_script(&format!("load {} | filter \"USER\" = 'root'\n", csv), id);
+    assert!(output.contains("(2 rows)"), "Quoted USER='root' should match 2 rows, got: {}", output);
+    std::fs::remove_file(&csv).ok();
+}
+
+#[test]
 fn test_filter_between() {
     let id = unique_id();
     let csv = setup_test_csv(id);
