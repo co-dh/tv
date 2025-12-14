@@ -7,3 +7,4 @@ commands.txt
 !cfg/plugins.csv
 *.parquet
 tests/data/
+tmp/
