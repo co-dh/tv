@@ -1,4 +1,5 @@
 mod app;
+mod backend;
 mod command;
 mod connector;
 mod funcs;
@@ -53,6 +54,8 @@ fn main() -> Result<()> {
 
     // Check for --raw flag (skip type detection on save)
     let raw_save = args.iter().any(|a| a == "--raw");
+    // Check for --duckdb flag (use duckdb for all operations)
+    let use_duckdb = args.iter().any(|a| a == "--duckdb" || a == "-d");
 
     // Initialize ratatui terminal
     let mut tui = render::init()?;
@@ -65,6 +68,7 @@ fn main() -> Result<()> {
         // Load file from CLI argument
         let mut temp_app = AppContext::new();
         temp_app.raw_save = raw_save;
+        temp_app.set_backend(use_duckdb);
         match CommandExecutor::exec(&mut temp_app, Box::new(From { file_path: path.clone() })) {
             Ok(_) => temp_app,
             Err(e) => {
@@ -76,6 +80,7 @@ fn main() -> Result<()> {
     } else {
         let mut temp_app = AppContext::new();
         temp_app.raw_save = raw_save;
+        temp_app.set_backend(use_duckdb);
         temp_app
     };
 

@@ -90,7 +90,11 @@ impl Command for Frequency {
             col_names[..sep].iter().filter(|c| *c != &self.col_name).cloned().collect()
         }).unwrap_or_default();
 
-        let result = if let Some(ref path) = view.parquet_path {
+        let result = if let Some(ref path) = view.filename.as_ref().filter(|p| p.ends_with(".parquet")) {
+            // Use backend (polars or duckdb) for parquet files
+            let freq = app.backend.freq(path, &self.col_name)?;
+            add_freq_cols(freq)?
+        } else if let Some(ref path) = view.parquet_path {
             // Lazy parquet: freq from disk
             let freq = parquet::freq_from_disk(Path::new(path), &self.col_name)?;
             add_freq_cols(freq)?

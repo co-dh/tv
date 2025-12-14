@@ -36,21 +36,12 @@ impl Command for Filter {
         let (filtered, filename) = {
             let v = app.req()?;
             let where_clause = crate::prql::filter_to_sql(&self.expr)?;
-            let sql = format!("SELECT * FROM df WHERE {}", where_clause);
-            let mut ctx = polars::sql::SQLContext::new();
-            // For parquet files, filter against disk not memory
-            if let Some(ref path) = v.filename {
-                if path.ends_with(".parquet") {
-                    let args = ScanArgsParquet::default();
-                    ctx.register("df", LazyFrame::scan_parquet(path, args)?);
-                    (ctx.execute(&sql)?.collect()?, v.filename.clone())
-                } else {
-                    let mut df = v.dataframe.clone();
-                    df.rechunk_mut();
-                    ctx.register("df", df.lazy());
-                    (ctx.execute(&sql)?.collect()?, v.filename.clone())
-                }
+            // Use backend for parquet files, polars SQL for others
+            if let Some(ref path) = v.filename.as_ref().filter(|p| p.ends_with(".parquet")) {
+                (app.backend.filter(path, &where_clause)?, v.filename.clone())
             } else {
+                let sql = format!("SELECT * FROM df WHERE {}", where_clause);
+                let mut ctx = polars::sql::SQLContext::new();
                 let mut df = v.dataframe.clone();
                 df.rechunk_mut();
                 ctx.register("df", df.lazy());
