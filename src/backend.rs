@@ -40,7 +40,8 @@ impl Backend for Polars {
 pub struct DuckApi;
 
 impl DuckApi {
-    fn query(&self, sql: &str) -> Result<DataFrame> {
+    /// Execute SQL via DuckDB, return polars DataFrame (Arrow transfer)
+    pub fn query(&self, sql: &str) -> Result<DataFrame> {
         use duckdb::Connection;
         let conn = Connection::open_in_memory()?;
         let mut stmt = conn.prepare(sql)?;

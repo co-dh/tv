@@ -26,10 +26,11 @@
   - Parse `--duckapi`/`--duckcli` before `-c` check
   - Pass `BackendType` to `run_commands()`/`run_batch()`
 
-- **Code cleanup**: Removed 584 lines of unused code
+- **Code cleanup**: Removed 584+ lines of unused code
   - Deleted `src/connector.rs` (unused module)
+  - Deleted `src/command/io/duckdb.rs` (replaced by backend::DuckApi)
   - Removed duplicate `freq_from_disk` from parquet.rs
-  - Consolidated all freq to use `Backend` trait
+  - Consolidated all duckdb queries to use Arrow-based Backend trait
 
 ### Performance (8 threads, 3.7GB parquet)
 | Operation | Polars | DuckApi | Raw DuckDB |

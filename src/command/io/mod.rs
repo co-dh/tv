@@ -1,11 +1,11 @@
 //! File I/O commands (load/save CSV, Parquet, gz, DuckDB)
 pub mod convert;
 pub mod csv;
-pub mod duckdb;
 pub mod gz;
 pub mod parquet;
 
 use crate::app::AppContext;
+use crate::backend::DuckApi;
 use crate::command::Command;
 use crate::os;
 use crate::state::ViewState;
@@ -27,7 +27,7 @@ impl Command for From {
 
         // DuckDB SQL query: sql:SELECT * FROM 'file.parquet'
         if let Some(sql) = p.strip_prefix("sql:") {
-            let df = duckdb::query(sql)?;
+            let df = DuckApi.query(sql)?;
             if df.height() == 0 { return Err(anyhow!("Empty result")); }
             let df = convert_epoch_cols(df);
             let name = if sql.len() > 30 { format!("{}...", &sql[..30]) } else { sql.to_string() };
