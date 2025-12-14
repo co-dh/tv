@@ -61,9 +61,11 @@ impl Command for From {
             let df = convert_epoch_cols(df);
             if df.height() == 0 { return Err(anyhow!("File is empty")); }
             let id = app.next_id();
+            // partial = true if there's background loading (may hit mem limit)
+            let partial = bg_rx.is_some();
             app.stack.push(ViewState::new_gz(
                 id, self.file_path.clone(), df,
-                Some(self.file_path.clone()), self.file_path.clone(),
+                Some(self.file_path.clone()), self.file_path.clone(), partial,
             ));
             app.bg_loader = bg_rx;
         } else {

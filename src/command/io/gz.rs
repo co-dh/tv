@@ -14,8 +14,11 @@ const MIN_ROWS: usize = 1_000;      // min rows before showing table
 const CHUNK_ROWS: usize = 100_000;  // rows per background chunk
 const FIRST_CHUNK_ROWS: usize = 100_000;
 
+/// Streaming chunk: Some(df) = more data, None = EOF reached (file fully loaded)
+pub type GzChunk = Option<DataFrame>;
+
 /// Load gz file with streaming: returns initial chunk + background loader
-pub fn load_streaming(path: &Path, mem_limit: u64) -> Result<(DataFrame, Option<Receiver<DataFrame>>)> {
+pub fn load_streaming(path: &Path, mem_limit: u64) -> Result<(DataFrame, Option<Receiver<GzChunk>>)> {
     let mut child = Command::new("zcat")
         .arg(path)
         .stdout(Stdio::piped())
@@ -51,7 +54,10 @@ pub fn load_streaming(path: &Path, mem_limit: u64) -> Result<(DataFrame, Option<
 
     if lines == 0 { return Err(anyhow!("Empty file")); }
 
-    let df = convert_epoch_cols(parse_buf(buf, sep, 500)?);
+    // Parse and capture raw schema BEFORE epoch conversion
+    let raw_df = parse_buf(buf, sep, 500)?;
+    let schema = Arc::new(raw_df.schema().clone());
+    let df = convert_epoch_cols(raw_df);
 
     // If EOF or already at mem limit, no background loading
     if lines < CHUNK_ROWS || total_bytes * 2 > mem_limit {
@@ -59,10 +65,10 @@ pub fn load_streaming(path: &Path, mem_limit: u64) -> Result<(DataFrame, Option<
         return Ok((df, None));
     }
 
-    // Continue loading in background
+    // Continue loading in background with same schema
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
-        stream_chunks(reader, header_bytes, sep, mem_limit, total_bytes, tx, child);
+        stream_chunks(reader, header_bytes, sep, mem_limit, total_bytes, tx, child, schema);
     });
 
     Ok((df, Some(rx)))
@@ -75,8 +81,9 @@ fn stream_chunks(
     sep: u8,
     mem_limit: u64,
     mut total_bytes: u64,
-    tx: Sender<DataFrame>,
+    tx: Sender<GzChunk>,
     mut child: Child,
+    schema: Arc<Schema>,
 ) {
     loop {
         let mut buf = header.clone();
@@ -93,10 +100,22 @@ fn stream_chunks(
                 Err(_) => break,
             }
         }
-        if lines == 0 { break; }
-        if let Ok(df) = parse_buf(buf, sep, 100) {
-            if tx.send(convert_epoch_cols(df)).is_err() { break; }
+        if lines == 0 {
+            // EOF reached - send None to signal file fully loaded
+            let _ = tx.send(None);
+            break;
         }
+        // Parse with fixed schema from first chunk, then convert epochs
+        let df = CsvReadOptions::default()
+            .with_has_header(true)
+            .with_schema(Some(schema.clone()))
+            .map_parse_options(|o| o.with_separator(sep))
+            .into_reader_with_file_handle(std::io::Cursor::new(buf))
+            .finish();
+        if let Ok(df) = df {
+            if tx.send(Some(convert_epoch_cols(df))).is_err() { break; }
+        }
+        // mem_limit hit - don't send None, just close channel (partial = true)
         if total_bytes * 2 > mem_limit { break; }
     }
     let _ = child.kill();

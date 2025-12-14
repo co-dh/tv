@@ -497,7 +497,7 @@ impl Renderer {
             }
         } else { String::new() };
 
-        let partial = if is_loading { " Partial" } else { "" };
+        let partial = if is_loading || view.partial { " Partial" } else { "" };
         let right = if col_stats.is_empty() { format!("{}/{}{}", view.state.cr, total_str, partial) }
         else { format!("{} {}/{}{}", col_stats, view.state.cr, total_str, partial) };
 

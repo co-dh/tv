@@ -35,13 +35,13 @@ impl Command for Filter {
         if app.is_loading() { return Err(anyhow!("Wait for loading to complete")); }
         let (filtered, filename) = {
             let v = app.req()?;
-            // Force deep copy via lazy().collect() - avoids reference to mutating source
-            let df = v.dataframe.clone().lazy().collect()?;
-            let mut ctx = polars::sql::SQLContext::new();
-            ctx.register("df", df.lazy());
-            // Compile PRQL filter expr to SQL WHERE clause
+            // Clone and rechunk to consolidate all chunks into single contiguous buffer
+            let mut df = v.dataframe.clone();
+            df.rechunk_mut();
             let where_clause = crate::prql::filter_to_sql(&self.expr)?;
             let sql = format!("SELECT * FROM df WHERE {}", where_clause);
+            let mut ctx = polars::sql::SQLContext::new();
+            ctx.register("df", df.lazy());
             (ctx.execute(&sql)?.collect()?, v.filename.clone())
         };
         let id = app.next_id();

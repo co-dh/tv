@@ -31,7 +31,7 @@ pub struct AppContext {
     pub theme: Theme,              // color theme
     pub funcs: Funcs,              // user-defined functions
     pub plugins: Registry,         // plugin registry
-    pub bg_loader: Option<Receiver<DataFrame>>,  // background gz loader
+    pub bg_loader: Option<Receiver<crate::command::io::gz::GzChunk>>,  // background gz loader
     pub bg_saver: Option<Receiver<String>>,      // background save status
     pub raw_save: bool,            // --raw: skip type detection on save
     pub bg_meta: Option<(usize, Receiver<DataFrame>)>,  // (parent_id, meta stats receiver)
@@ -78,13 +78,14 @@ impl AppContext {
     /// Merge any available background data into current view
     pub fn merge_bg_data(&mut self) {
         use std::sync::mpsc::TryRecvError;
+        use crate::command::io::gz::GzChunk;
         let Some(rx) = &self.bg_loader else { return };
 
         // Collect all available chunks (non-blocking)
-        let mut chunks: Vec<DataFrame> = Vec::new();
+        let mut chunks: Vec<GzChunk> = Vec::new();
         loop {
             match rx.try_recv() {
-                Ok(df) => chunks.push(df),
+                Ok(chunk) => chunks.push(chunk),
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => {
                     self.bg_loader = None;
@@ -99,12 +100,13 @@ impl AppContext {
         if let Some(view) = self.stack.cur_mut() {
             let old_rows = view.dataframe.height();
             for chunk in chunks {
-                let _ = view.dataframe.vstack_mut(&chunk);
+                match chunk {
+                    Some(df) => { let _ = view.dataframe.vstack_mut(&df); }
+                    None => { view.partial = false; }  // EOF - file fully loaded
+                }
             }
             let new_rows = view.dataframe.height();
-            if new_rows > old_rows {
-                view.state.col_widths.clear();  // recalc widths
-            }
+            if new_rows > old_rows { view.state.col_widths.clear(); }
         }
     }
 
