@@ -146,8 +146,6 @@ impl ViewState {
     /// Row count: from disk_rows for parquet, else dataframe height
     pub fn rows(&self) -> usize { self.disk_rows.unwrap_or_else(|| self.dataframe.height()) }
     pub fn cols(&self) -> usize { self.dataframe.width() }
-    /// Check if view is backed by lazy parquet (no in-memory df)
-    pub fn is_lazy_parquet(&self) -> bool { self.parquet_path.is_some() }
     /// Check if view uses row selection (meta/freq) vs column selection (table)
     pub fn is_row_sel(&self) -> bool { self.name == "metadata" || self.name.starts_with("Freq:") }
 }

@@ -1,7 +1,6 @@
 mod app;
 mod backend;
 mod command;
-mod connector;
 mod funcs;
 mod keymap;
 mod os;

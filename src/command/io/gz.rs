@@ -236,14 +236,6 @@ fn stream_impl(gz_path: &str, out_path: &Path, raw: bool, tx: &Sender<String>) -
     Ok(())
 }
 
-fn write_chunk(df: &DataFrame, path: &Path) -> Result<()> {
-    let mut df = df.clone();
-    ParquetWriter::new(std::fs::File::create(path)?)
-        .finish(&mut df)
-        .map_err(|e| anyhow!("Write error: {}", e))?;
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
