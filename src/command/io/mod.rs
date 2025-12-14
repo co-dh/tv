@@ -81,7 +81,7 @@ impl Command for From {
                     let (rows, _cols) = parquet::metadata(path)?;
                     if rows == 0 { return Err(anyhow!("File is empty")); }
                     let id = app.next_id();
-                    app.stack.push(ViewState::new_parquet(id, self.file_path.clone(), self.file_path.clone(), rows));
+                    app.stack.push(ViewState::new_parquet(id, self.file_path.clone(), self.file_path.clone(), rows, app.backend_type));
                 }
                 Some(ext) => return Err(anyhow!("Unsupported file format: {}", ext)),
                 None => return Err(anyhow!("Could not determine file type")),

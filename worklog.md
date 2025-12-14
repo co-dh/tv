@@ -192,3 +192,25 @@
 
 ### Tools
 - `tool/measure.py` - Halstead metrics measurement script
+
+## 2024-12-14: Backend refactoring & binary optimization
+
+### Backend moved from app to view level
+- Each view now owns its backend via `ViewState::backend()`
+- File-based views (parquet) use Polars/DuckApi/DuckCli
+- In-memory views (ls, ps, csv) use Memory backend
+- Simplified freq.rs, transform.rs, meta.rs - no more if/else for file vs memory
+
+### Memory backend simplified to newtype
+- `Memory<'a>(pub &'a DataFrame, pub Vec<String>)` - tuple struct (df, keys)
+- Added Rust documentation for newbie programmers
+- Explains lifetimes, tuple struct access, ? operator, map_err, lazy/collect
+
+### Binary size reduced
+- Added release profile: lto=true, strip=true, codegen-units=1
+- Binary: 152MB → 95MB (38% reduction)
+- Startup time: 3ms (unchanged, fast)
+
+### Documentation
+- Documented all backend module functions
+- Added module-level docs explaining 4 backends and usage pattern

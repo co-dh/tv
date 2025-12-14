@@ -68,33 +68,17 @@ impl Command for Frequency {
         if app.is_loading() { return Err(anyhow!("Wait for loading to complete")); }
         let view = app.req()?;
         let parent_id = view.id;
-        let parent_rows = view.rows();  // disk_rows for parquet
+        let parent_rows = view.rows();
         let parent_name = view.name.clone();
+        let path = view.path().to_string();
+        let key_cols = view.key_cols();
 
-        // Get column names from parquet (backend) or in-memory DataFrame
-        let pq_path = view.filename.as_ref().filter(|p| p.ends_with(".parquet"))
-            .or(view.parquet_path.as_ref());
-        let col_names: Vec<String> = if let Some(path) = pq_path {
-            app.backend.cols(path)?
-        } else {
-            view.dataframe.get_column_names().iter().map(|s| s.to_string()).collect()
-        };
-
+        // Use view's backend (file or memory)
+        let col_names = view.backend().cols(&path)?;
         if !col_names.contains(&self.col_name) {
             return Err(anyhow!("Column '{}' not found", self.col_name));
         }
-
-        // Get key columns (if any) - exclude target column
-        let key_cols: Vec<String> = view.col_separator.map(|sep| {
-            col_names[..sep].iter().filter(|c| *c != &self.col_name).cloned().collect()
-        }).unwrap_or_default();
-
-        // Use backend for all freq operations
-        let result = if let Some(path) = pq_path {
-            add_freq_cols(app.backend.freq(path, &self.col_name)?)?
-        } else {
-            add_freq_cols(app.backend.freq_df(&view.dataframe, &self.col_name, &key_cols)?)?
-        };
+        let result = add_freq_cols(view.backend().freq(&path, &self.col_name)?)?;
 
         let id = app.next_id();
         let mut new_view = ViewState::new_freq(

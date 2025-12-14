@@ -1,12 +1,16 @@
-//! DuckDB API backend - native crate with Arrow transfer
+//! DuckDB API backend - native Rust crate with Arrow transfer.
+//! Uses duckdb crate for SQL execution, Arrow for zero-copy data transfer.
+//! Faster than CLI for small queries, supports full DuckDB SQL syntax.
 use super::Backend;
 use anyhow::Result;
 use polars::prelude::*;
 
+/// DuckDB native API backend. In-memory connection, Arrow-based transfer.
 pub struct DuckApi;
 
 impl DuckApi {
-    /// Execute SQL via DuckDB, return polars DataFrame (Arrow transfer)
+    /// Execute SQL query and return polars DataFrame.
+    /// Uses Arrow RecordBatches for efficient data transfer from DuckDB.
     pub fn query(&self, sql: &str) -> Result<DataFrame> {
         use duckdb::Connection;
         let conn = Connection::open_in_memory()?;
@@ -31,7 +35,8 @@ impl DuckApi {
     }
 }
 
-/// Convert Arrow array to polars Series
+/// Convert DuckDB Arrow array to polars Series.
+/// Handles common types: Int32, Int64, Float64, Utf8, LargeUtf8.
 fn arrow_to_series(name: &str, arr: &duckdb::arrow::array::ArrayRef) -> Result<Series> {
     use duckdb::arrow::array::*;
     use duckdb::arrow::datatypes::DataType as ArrowDT;
@@ -97,10 +102,6 @@ impl Backend for DuckApi {
         self.query(&format!("SELECT * FROM '{}' WHERE {}", path, where_clause))
     }
 
-    /// Freq from in-memory DataFrame (delegates to memory backend)
-    fn freq_df(&self, df: &DataFrame, col: &str, keys: &[String]) -> Result<DataFrame> {
-        super::Memory.freq_df(df, col, keys)
-    }
 }
 
 #[cfg(test)]

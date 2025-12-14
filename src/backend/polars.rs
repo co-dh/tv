@@ -1,24 +1,26 @@
-//! Polars backend - streaming engine for parquet files
+//! Polars backend - native streaming engine for parquet files.
+//! Default backend. Uses LazyFrame with streaming engine for memory efficiency.
 use super::Backend;
 use anyhow::{anyhow, Result};
 use polars::prelude::*;
 
+/// Polars streaming backend. Zero-copy parquet access via LazyFrame.
 pub struct Polars;
 
 impl Backend for Polars {
-    /// Get column names from parquet file
+    /// Read column names from parquet file metadata (no data loaded).
     fn cols(&self, path: &str) -> Result<Vec<String>> {
         Ok(self.schema(path)?.into_iter().map(|(n, _)| n).collect())
     }
 
-    /// Get schema (column name, type) from parquet file
+    /// Read schema from parquet metadata. Returns polars dtype strings.
     fn schema(&self, path: &str) -> Result<Vec<(String, String)>> {
         let file = std::fs::File::open(path)?;
         let schema = ParquetReader::new(file).schema()?;
         Ok(schema.iter().map(|(n, f)| (n.to_string(), format!("{:?}", f.dtype()))).collect())
     }
 
-    /// Freq from parquet using streaming engine
+    /// Frequency count using streaming engine. Memory-efficient for large files.
     fn freq(&self, path: &str, name: &str) -> Result<DataFrame> {
         LazyFrame::scan_parquet(PlPath::new(path), ScanArgsParquet::default())?
             .group_by([col(name)])
@@ -28,17 +30,12 @@ impl Backend for Polars {
             .map_err(|e| anyhow!("{}", e))
     }
 
-    /// Filter parquet using SQL WHERE clause
+    /// Filter using polars SQL context with lazy evaluation.
     fn filter(&self, path: &str, where_clause: &str) -> Result<DataFrame> {
         let mut ctx = polars::sql::SQLContext::new();
         ctx.register("df", LazyFrame::scan_parquet(PlPath::new(path), ScanArgsParquet::default())?);
         ctx.execute(&format!("SELECT * FROM df WHERE {}", where_clause))?
             .collect()
             .map_err(|e| anyhow!("{}", e))
-    }
-
-    /// Freq from in-memory DataFrame (delegates to memory backend logic)
-    fn freq_df(&self, df: &DataFrame, col: &str, keys: &[String]) -> Result<DataFrame> {
-        super::Memory.freq_df(df, col, keys)
     }
 }

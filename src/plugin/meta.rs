@@ -60,17 +60,13 @@ impl Command for Metadata {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         // Block meta while gz is still loading
         if app.is_loading() { return Err(anyhow!("Wait for loading to complete")); }
-        let (parent_id, parent_col, parent_rows, parent_name, cached, df, col_sep, pq_path) = {
+        let (parent_id, parent_col, parent_rows, parent_name, cached, df, col_sep, pq_path, col_names, schema) = {
             let view = app.req()?;
+            let path = view.path().to_string();
+            let cols = view.backend().cols(&path)?;
+            let schema = view.backend().schema(&path)?;
             (view.id, view.state.cc, view.rows(), view.name.clone(),
-             view.meta_cache.clone(), view.dataframe.clone(), view.col_separator, view.parquet_path.clone())
-        };
-
-        // Get column names from parquet (backend) or in-memory DataFrame
-        let col_names: Vec<String> = if let Some(ref path) = pq_path {
-            app.backend.cols(path)?
-        } else {
-            df.get_column_names().iter().map(|s| s.to_string()).collect()
+             view.meta_cache.clone(), view.dataframe.clone(), view.col_separator, view.parquet_path.clone(), cols, schema)
         };
         let key_cols: Vec<String> = col_sep.map(|sep| col_names[..sep].to_vec()).unwrap_or_default();
 
@@ -87,11 +83,10 @@ impl Command for Metadata {
 
         // Lazy parquet: always background compute from disk
         if let Some(path) = pq_path {
-            let dtypes = app.backend.schema(&path)?;
             let n = col_names.len();
             let placeholder = DataFrame::new(vec![
                 Series::new("column".into(), col_names).into(),
-                Series::new("type".into(), dtypes.iter().map(|(_, dt)| dt.clone()).collect::<Vec<_>>()).into(),
+                Series::new("type".into(), schema.iter().map(|(_, dt)| dt.clone()).collect::<Vec<_>>()).into(),
                 Series::new("null%".into(), vec!["..."; n]).into(),
                 Series::new("distinct".into(), vec!["..."; n]).into(),
                 Series::new("min".into(), vec!["..."; n]).into(),

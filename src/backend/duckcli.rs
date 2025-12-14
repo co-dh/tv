@@ -1,12 +1,15 @@
-//! DuckDB CLI backend - shell out to duckdb command
+//! DuckDB CLI backend - shell out to duckdb command.
+//! Fallback when native duckdb crate has issues. Requires duckdb in PATH.
+//! Slower than DuckApi due to CSV serialization overhead.
 use super::Backend;
 use anyhow::{anyhow, Result};
 use polars::prelude::*;
 
+/// DuckDB CLI backend. Spawns duckdb process, parses CSV output.
 pub struct DuckCli;
 
 impl DuckCli {
-    /// Run duckdb CLI and parse CSV output to DataFrame
+    /// Execute SQL via duckdb CLI, parse CSV output to DataFrame.
     fn query(&self, sql: &str) -> Result<DataFrame> {
         use std::process::Command;
         let out = Command::new("duckdb")
@@ -51,11 +54,6 @@ impl Backend for DuckCli {
     /// Filter parquet using duckdb CLI
     fn filter(&self, path: &str, where_clause: &str) -> Result<DataFrame> {
         self.query(&format!("SELECT * FROM '{}' WHERE {}", path, where_clause))
-    }
-
-    /// Freq from in-memory DataFrame (delegates to memory backend)
-    fn freq_df(&self, df: &DataFrame, col: &str, keys: &[String]) -> Result<DataFrame> {
-        super::Memory.freq_df(df, col, keys)
     }
 }
 

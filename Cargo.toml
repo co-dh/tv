@@ -3,6 +3,11 @@ name = "tv"
 version = "0.1.0"
 edition = "2021"
 
+[profile.release]
+lto = true        # link-time optimization
+strip = true      # strip debug symbols
+codegen-units = 1 # single codegen unit for better optimization
+
 [dependencies]
 polars = { version = "0.52", features = ["lazy", "csv", "parquet", "strings", "sql", "new_streaming"] }
 polars-ops = { version = "0.52", features = ["cov"] }
