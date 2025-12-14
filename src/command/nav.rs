@@ -5,19 +5,13 @@ use anyhow::Result;
 
 /// Unified row navigation: goto +n/-n/0/max
 pub struct Goto { pub arg: String }
+const BIG: isize = 1_000_000_000;
 impl Command for Goto {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         let a = self.arg.trim();
-        match a {
-            "0" => app.nav_row(isize::MIN),   // top
-            "max" => app.nav_row(isize::MAX), // bottom
-            _ => {
-                // +n/-n or just n
-                if let Ok(n) = a.trim_start_matches('+').parse::<isize>() {
-                    app.nav_row(n);
-                }
-            }
-        }
+        // Parse: 0->-BIG(top), max->BIG(bot), +n/-n as-is
+        let n = match a { "0" => -BIG, "max" => BIG, _ => a.trim_start_matches('+').parse().unwrap_or(0) };
+        app.nav_row(n);
         Ok(())
     }
     fn to_str(&self) -> String { format!("goto {}", self.arg) }
@@ -29,15 +23,9 @@ pub struct GotoCol { pub arg: String }
 impl Command for GotoCol {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         let a = self.arg.trim();
-        match a {
-            "0" => if let Some(v) = app.view_mut() { v.state.cc = 0; },
-            "max" => if let Some(v) = app.view_mut() { v.state.cc = v.cols().saturating_sub(1); },
-            _ => {
-                if let Ok(n) = a.trim_start_matches('+').parse::<isize>() {
-                    app.nav_col(n);
-                }
-            }
-        }
+        // Parse: 0->-BIG(left), max->BIG(right), +n/-n as-is
+        let n = match a { "0" => -BIG, "max" => BIG, _ => a.trim_start_matches('+').parse().unwrap_or(0) };
+        app.nav_col(n);
         Ok(())
     }
     fn to_str(&self) -> String { format!("goto_col {}", self.arg) }

@@ -13,9 +13,17 @@ pub use polars::Polars;
 pub use memory::Memory;
 pub use gz::Gz;
 
+use crate::state::ViewState;
 use anyhow::{anyhow, Result};
 use ::polars::prelude::*;
 use std::path::Path;
+use std::sync::mpsc::Receiver;
+
+/// Result of loading a file: ViewState + optional background loader
+pub struct LoadResult {
+    pub view: ViewState,
+    pub bg_loader: Option<Receiver<gz::GzChunk>>,
+}
 
 // ── Common DataFrame ops (used by Memory & Gz) ──────────────────────────────
 
@@ -67,8 +75,15 @@ pub trait Backend: Send + Sync {
     /// Get distinct values for a column
     fn distinct(&self, path: &str, col: &str) -> Result<Vec<String>>;
 
-    /// Save dataframe to parquet
-    fn save(&self, df: &DataFrame, path: &Path) -> Result<()>;
+    /// Save dataframe (parquet or csv based on extension)
+    fn save(&self, df: &DataFrame, path: &Path) -> Result<()> {
+        match path.extension().and_then(|s| s.to_str()) {
+            Some("csv") => {
+                polars::save_csv(df, path)
+            }
+            _ => df_save(df, path),
+        }
+    }
 
     /// Compute frequency counts for a column, sorted descending.
     /// Returns DataFrame with [col, Cnt] columns.
@@ -80,4 +95,9 @@ pub trait Backend: Send + Sync {
 
     /// Sort by column and return top N rows (efficient for TUI viewport).
     fn sort_head(&self, path: &str, col: &str, desc: bool, limit: usize) -> Result<DataFrame>;
+
+    /// Load file into ViewState (default: not supported)
+    fn load(&self, _path: &str, _id: usize) -> Result<LoadResult> {
+        Err(anyhow!("Load not supported by this backend"))
+    }
 }

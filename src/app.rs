@@ -167,16 +167,11 @@ impl AppContext {
         if let Some(v) = self.stack.cur_mut() { v.state.viewport = (rows, cols); }
     }
 
-    /// Navigate rows: +down, -up, MIN=top, MAX=bot
+    /// Navigate rows: +down, -up (large values clamp to bounds)
     pub fn nav_row(&mut self, d: isize) {
         if let Some(v) = self.view_mut() {
             let n = v.rows();
-            match d {
-                isize::MIN => v.state.top(),
-                isize::MAX => v.state.bot(n),
-                _ if d < 0 => v.state.up((-d) as usize),
-                _ => v.state.down(d as usize, n),
-            }
+            if d < 0 { v.state.up((-d) as usize); } else { v.state.down(d as usize, n); }
         }
     }
 

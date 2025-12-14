@@ -2,16 +2,11 @@
 pub mod convert;
 
 use crate::app::AppContext;
-use crate::backend::{gz, polars as pq, Backend, Polars};
+use crate::backend::{gz, Backend, Polars};
 use crate::command::Command;
-use crate::os;
-use crate::state::ViewState;
-use crate::theme::load_config_value;
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use convert::convert_epoch_cols;
 use std::path::Path;
-
-const MAX_PREVIEW_ROWS: usize = 100_000;
 
 /// Load file command (CSV, Parquet, or gzipped CSV)
 pub struct From {
@@ -19,60 +14,17 @@ pub struct From {
 }
 
 impl Command for From {
+    /// Load file: dispatch to gz or Polars backend
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         let p = &self.file_path;
+        let id = app.next_id();
 
-        // Glob pattern for parquet
-        if p.contains('*') || p.contains('?') {
-            let df = pq::load_glob(p, MAX_PREVIEW_ROWS as u32)?;
-            if df.height() == 0 { return Err(anyhow!("No data found matching pattern")); }
-            let df = convert_epoch_cols(df);
-            app.msg(format!("Preview: {} rows, {} cols from {}", df.height(), df.width(), p));
-            app.stack = crate::state::StateStack::init(ViewState::new(app.next_id(), p.to_string(), df, None));
-            return Ok(());
-        }
+        // Dispatch: .gz -> gz backend, else -> Polars backend
+        let is_gz = Path::new(p).file_name().and_then(|s| s.to_str()).map(|s| s.ends_with(".gz")).unwrap_or(false);
+        let result = if is_gz { gz::load(p, id) } else { Polars.load(p, id) }?;
 
-        let path = Path::new(p);
-        if !path.exists() { return Err(anyhow!("File not found: {}", p)); }
-
-        let fname = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
-        let is_gz = fname.ends_with(".gz");
-
-        if is_gz {
-            // Get memory limit from config
-            let mem_pct: u64 = load_config_value("gz_mem_pct").and_then(|s| s.parse().ok()).unwrap_or(10);
-            let mem_limit = os::mem_total() * mem_pct / 100;
-
-            let (df, bg_rx) = gz::load_streaming(path, mem_limit)?;
-            let df = convert_epoch_cols(df);
-            if df.height() == 0 { return Err(anyhow!("File is empty")); }
-            let id = app.next_id();
-            // partial = true if there's background loading (may hit mem limit)
-            let partial = bg_rx.is_some();
-            app.stack.push(ViewState::new_gz(
-                id, self.file_path.clone(), df,
-                Some(self.file_path.clone()), self.file_path.clone(), partial,
-            ));
-            app.bg_loader = bg_rx;
-        } else {
-            match path.extension().and_then(|s| s.to_str()) {
-                Some("csv") => {
-                    let df = convert_epoch_cols(pq::load_csv(path)?);
-                    if df.height() == 0 { return Err(anyhow!("File is empty")); }
-                    let id = app.next_id();
-                    app.stack.push(ViewState::new(id, self.file_path.clone(), df, Some(self.file_path.clone())));
-                }
-                Some("parquet") => {
-                    // Lazy parquet: no in-memory DataFrame, all ops go to disk
-                    let (rows, cols) = Polars.metadata(p)?;
-                    if rows == 0 { return Err(anyhow!("File is empty")); }
-                    let id = app.next_id();
-                    app.stack.push(ViewState::new_parquet(id, self.file_path.clone(), self.file_path.clone(), rows, cols));
-                }
-                Some(ext) => return Err(anyhow!("Unsupported file format: {}", ext)),
-                None => return Err(anyhow!("Could not determine file type")),
-            };
-        }
+        app.stack.push(result.view);
+        app.bg_loader = result.bg_loader;
         Ok(())
     }
 
@@ -85,12 +37,13 @@ pub struct Save {
 }
 
 impl Command for Save {
+    /// Save view to file: dispatch to backend.save or streaming gz
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         let view = app.req()?;
         let path = Path::new(&self.file_path);
-        let is_parquet = matches!(path.extension().and_then(|s| s.to_str()), Some("parquet") | None);
+        let is_parquet = !matches!(path.extension().and_then(|s| s.to_str()), Some("csv"));
 
-        // Streaming save if gz_source exists and saving to parquet
+        // Streaming save for gz source -> parquet (re-reads from disk)
         if is_parquet && view.gz_source.is_some() {
             let gz = view.gz_source.clone().unwrap();
             let raw = app.raw_save;
@@ -99,16 +52,9 @@ impl Command for Save {
             return Ok(());
         }
 
-        // Normal save
-        match path.extension().and_then(|s| s.to_str()) {
-            Some("parquet") | None => {
-                let df = convert_epoch_cols(view.dataframe.clone());
-                Polars.save(&df, path)?;
-            }
-            Some("csv") => pq::save_csv(&view.dataframe, path)?,
-            Some(ext) => return Err(anyhow!("Unsupported save format: {}", ext)),
-        }
-        Ok(())
+        // Normal save via backend
+        let df = if is_parquet { convert_epoch_cols(view.dataframe.clone()) } else { view.dataframe.clone() };
+        view.backend().save(&df, path)
     }
 
     fn to_str(&self) -> String { format!("save {}", self.file_path) }

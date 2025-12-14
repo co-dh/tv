@@ -1,6 +1,8 @@
 //! Polars backend - native streaming engine for parquet files.
 //! All parquet operations (load, save, fetch, freq, filter, distinct, etc.)
-use super::Backend;
+use super::{Backend, LoadResult};
+use crate::command::io::convert::convert_epoch_cols;
+use crate::state::ViewState;
 use anyhow::{anyhow, Result};
 use polars::prelude::*;
 use std::path::Path;
@@ -55,15 +57,6 @@ impl Backend for Polars {
         Ok(vals)
     }
 
-    /// Write DataFrame to parquet file
-    fn save(&self, df: &DataFrame, path: &Path) -> Result<()> {
-        let mut df = df.clone();
-        ParquetWriter::new(std::fs::File::create(path)?)
-            .finish(&mut df)
-            .map_err(|e| anyhow!("Failed to write Parquet: {}", e))?;
-        Ok(())
-    }
-
     /// Frequency count via streaming group_by (handles large files)
     fn freq(&self, path: &str, name: &str) -> Result<DataFrame> {
         LazyFrame::scan_parquet(PlPath::new(path), ScanArgsParquet::default())?
@@ -90,6 +83,34 @@ impl Backend for Polars {
             .limit(limit as u32)
             .collect()
             .map_err(|e| anyhow!("{}", e))
+    }
+
+    /// Load CSV, parquet, or glob pattern into ViewState
+    fn load(&self, path: &str, id: usize) -> Result<LoadResult> {
+        const MAX_PREVIEW: u32 = 100_000;
+        // Glob pattern
+        if path.contains('*') || path.contains('?') {
+            let df = load_glob(path, MAX_PREVIEW)?;
+            if df.height() == 0 { return Err(anyhow!("No data found")); }
+            let df = convert_epoch_cols(df);
+            return Ok(LoadResult { view: ViewState::new(id, path.into(), df, None), bg_loader: None });
+        }
+        let p = Path::new(path);
+        if !p.exists() { return Err(anyhow!("File not found: {}", path)); }
+        match p.extension().and_then(|s| s.to_str()) {
+            Some("csv") => {
+                let df = convert_epoch_cols(load_csv(p)?);
+                if df.height() == 0 { return Err(anyhow!("File is empty")); }
+                Ok(LoadResult { view: ViewState::new(id, path.into(), df, Some(path.into())), bg_loader: None })
+            }
+            Some("parquet") => {
+                let (rows, cols) = self.metadata(path)?;
+                if rows == 0 { return Err(anyhow!("File is empty")); }
+                Ok(LoadResult { view: ViewState::new_parquet(id, path.into(), path.into(), rows, cols), bg_loader: None })
+            }
+            Some(ext) => Err(anyhow!("Unsupported: {}", ext)),
+            None => Err(anyhow!("Unknown file type")),
+        }
     }
 }
 

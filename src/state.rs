@@ -48,13 +48,6 @@ impl TableState {
     /// Jump to first row
     pub fn top(&mut self) { self.cr = 0; self.r0 = 0; }
 
-    /// Jump to last row
-    pub fn bot(&mut self, max: usize) {
-        if max == 0 { return; }
-        self.cr = max - 1;
-        self.r0 = self.cr.saturating_sub((self.viewport.0 as usize).saturating_sub(3));
-    }
-
     /// Ensure cursor is visible in viewport
     pub fn visible(&mut self) {
         let vis = (self.viewport.0 as usize).saturating_sub(2);
@@ -204,8 +197,6 @@ pub struct StateStack { stack: Vec<ViewState> }
 impl StateStack {
     /// Empty stack
     pub fn new() -> Self { Self { stack: Vec::new() } }
-    /// Stack with initial view
-    pub fn init(v: ViewState) -> Self { Self { stack: vec![v] } }
     /// Push new view on top
     pub fn push(&mut self, v: ViewState) { self.stack.push(v); }
     /// Pop top view (keeps at least one)

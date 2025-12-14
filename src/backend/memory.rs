@@ -1,10 +1,9 @@
 //! Memory backend - in-memory DataFrame operations.
 //! Used for OS commands (ls, ps, tcp), CSV files, and filtered results.
 //! Path parameter is ignored - data comes from stored DataFrame reference.
-use super::{Backend, df_filter, df_sort_head, df_distinct, df_save};
+use super::{Backend, df_filter, df_sort_head, df_distinct};
 use anyhow::{anyhow, Result};
 use polars::prelude::*;
-use std::path::Path;
 
 /// Memory backend: tuple struct (df, keys).
 /// - `'a` = lifetime parameter, ensures struct doesn't outlive the DataFrame it borrows
@@ -38,8 +37,6 @@ impl Backend for Memory<'_> {
 
     /// Distinct values via common helper
     fn distinct(&self, _: &str, col: &str) -> Result<Vec<String>> { df_distinct(self.0, col) }
-    /// Save to parquet via common helper
-    fn save(&self, df: &DataFrame, path: &Path) -> Result<()> { df_save(df, path) }
 
     /// Frequency count - simple value_counts or keyed group_by
     fn freq(&self, _: &str, c: &str) -> Result<DataFrame> {

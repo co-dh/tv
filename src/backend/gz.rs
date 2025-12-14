@@ -1,7 +1,8 @@
 //! Gz backend - streaming gzipped CSV with memory limits.
 //! Refuses expensive operations on partial (memory-limited) data.
-use super::{Backend, df_filter, df_sort_head, df_distinct, df_save};
+use super::{Backend, LoadResult, df_filter, df_sort_head, df_distinct};
 use crate::command::io::convert::{convert_epoch_cols, apply_schema, convert_types};
+use crate::state::ViewState;
 use super::polars::{detect_sep, parse_csv_buf};
 use anyhow::{anyhow, Result};
 use polars::prelude::*;
@@ -50,9 +51,6 @@ impl Backend for Gz<'_> {
         if self.partial { return Err(anyhow!("File not fully loaded (memory limit)")); }
         df_distinct(self.df, col)
     }
-
-    /// Save to parquet via common helper
-    fn save(&self, df: &DataFrame, path: &Path) -> Result<()> { df_save(df, path) }
 
     /// Frequency count - blocked if partial load
     fn freq(&self, _: &str, col: &str) -> Result<DataFrame> {
@@ -119,6 +117,23 @@ pub fn load_streaming(path: &Path, mem_limit: u64) -> Result<(DataFrame, Option<
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || stream_chunks(reader, header_bytes, sep, mem_limit, total_bytes, tx, child, schema));
     Ok((df, Some(rx)))
+}
+
+/// Load gz file into ViewState with streaming background loader
+pub fn load(path: &str, id: usize) -> Result<LoadResult> {
+    let p = Path::new(path);
+    if !p.exists() { return Err(anyhow!("File not found: {}", path)); }
+    // Calculate memory limit from config
+    let mem_pct: u64 = crate::theme::load_config_value("gz_mem_pct").and_then(|s| s.parse().ok()).unwrap_or(10);
+    let mem_limit = crate::os::mem_total() * mem_pct / 100;
+    let (df, bg_rx) = load_streaming(p, mem_limit)?;
+    let df = convert_epoch_cols(df);
+    if df.height() == 0 { return Err(anyhow!("File is empty")); }
+    let partial = bg_rx.is_some();
+    Ok(LoadResult {
+        view: ViewState::new_gz(id, path.into(), df, Some(path.into()), path.into(), partial),
+        bg_loader: bg_rx,
+    })
 }
 
 /// Background thread: read chunks until EOF or memory limit
