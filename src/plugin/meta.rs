@@ -295,9 +295,9 @@ fn compute_stats_grouped(df: &DataFrame, keys: &[String]) -> Result<DataFrame> {
 
 /// Compute stats from parquet file on disk (lazy)
 fn compute_stats_from_parquet(path: &str) -> Result<DataFrame> {
-    use polars::prelude::ScanArgsParquet;
+    use polars::prelude::{ScanArgsParquet, PlPath};
     let args = ScanArgsParquet::default();
-    let lazy = LazyFrame::scan_parquet(path, args).map_err(|e| anyhow!("{}", e))?;
+    let lazy = LazyFrame::scan_parquet(PlPath::new(path), args).map_err(|e| anyhow!("{}", e))?;
     let schema = parquet::schema(Path::new(path))?;
     let (rows, _) = parquet::metadata(Path::new(path))?;
     let n = rows as f64;

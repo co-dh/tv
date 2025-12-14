@@ -65,7 +65,7 @@ impl Connector for MemConn {
     fn name(&self) -> &str { &self.name }
 
     fn schema(&self) -> Result<Schema> {
-        Ok(self.df.schema().to_owned())
+        Ok(self.df.schema().as_ref().clone())
     }
 
     fn head(&self, n: usize) -> Result<DataFrame> {
@@ -139,7 +139,7 @@ impl Connector for DuckConn {
 
     fn schema(&self) -> Result<Schema> {
         let df = self.head(1)?;
-        Ok(df.schema().to_owned())
+        Ok(df.schema().as_ref().clone())
     }
 
     fn head(&self, n: usize) -> Result<DataFrame> {
@@ -217,7 +217,7 @@ impl Connector for GzConn {
     fn name(&self) -> &str { &self.name }
 
     fn schema(&self) -> Result<Schema> {
-        Ok(self.preview.schema().to_owned())
+        Ok(self.preview.schema().as_ref().clone())
     }
 
     fn head(&self, n: usize) -> Result<DataFrame> {

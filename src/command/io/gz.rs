@@ -66,7 +66,7 @@ pub fn load_streaming(path: &Path, mem_limit: u64) -> Result<(DataFrame, Option<
 
     // Parse and capture raw schema BEFORE epoch conversion
     let raw_df = parse_buf(buf, sep, 500)?;
-    let schema = Arc::new(raw_df.schema().clone());
+    let schema = Arc::clone(raw_df.schema()); // Clone Arc for thread
     let df = convert_epoch_cols(raw_df);
 
     // If EOF or already at mem limit, no background loading
@@ -78,7 +78,7 @@ pub fn load_streaming(path: &Path, mem_limit: u64) -> Result<(DataFrame, Option<
     // Continue loading in background with same schema
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
-        stream_chunks(reader, header_bytes, sep, mem_limit, total_bytes, tx, child, schema);
+        stream_chunks(reader, header_bytes, sep, mem_limit, total_bytes, tx, child, schema.clone());
     });
 
     Ok((df, Some(rx)))

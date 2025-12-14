@@ -3,6 +3,9 @@ use anyhow::{anyhow, Result};
 use polars::prelude::*;
 use std::path::Path;
 
+/// Convert &Path to PlPath for scan_parquet
+fn to_plpath(path: &Path) -> PlPath { PlPath::Local(path.into()) }
+
 /// Get parquet metadata (row count, column count) without loading data
 pub fn metadata(path: &Path) -> Result<(usize, usize)> {
     let file = std::fs::File::open(path).map_err(|e| anyhow!("Open: {}", e))?;
@@ -20,7 +23,7 @@ pub fn load(path: &Path, limit: u32) -> Result<(DataFrame, usize)> {
         .map(|m| m.num_rows).unwrap_or(0);
     // Lazy load with limit
     let args = ScanArgsParquet::default();
-    let df = LazyFrame::scan_parquet(path, args)
+    let df = LazyFrame::scan_parquet(to_plpath(path), args)
         .map_err(|e| anyhow!("Failed to scan parquet: {}", e))?
         .limit(limit).collect()
         .map_err(|e| anyhow!("Failed to read Parquet: {}", e))?;
@@ -39,7 +42,7 @@ pub fn save(df: &DataFrame, path: &Path) -> Result<()> {
 /// Filter parquet file on disk and return result (polars lazy)
 pub fn filter(path: &Path, expr: Expr) -> Result<DataFrame> {
     let args = ScanArgsParquet::default();
-    LazyFrame::scan_parquet(path, args)
+    LazyFrame::scan_parquet(to_plpath(path), args)
         .map_err(|e| anyhow!("Scan: {}", e))?
         .filter(expr)
         .collect()
@@ -49,7 +52,7 @@ pub fn filter(path: &Path, expr: Expr) -> Result<DataFrame> {
 /// Count rows matching filter from parquet file on disk (polars lazy)
 pub fn filter_count(path: &Path, expr: Expr) -> Result<usize> {
     let args = ScanArgsParquet::default();
-    let df = LazyFrame::scan_parquet(path, args)
+    let df = LazyFrame::scan_parquet(to_plpath(path), args)
         .map_err(|e| anyhow!("Scan: {}", e))?
         .filter(expr)
         .select([len()])
@@ -61,22 +64,22 @@ pub fn filter_count(path: &Path, expr: Expr) -> Result<usize> {
         .unwrap_or(0) as usize)
 }
 
-/// Get frequency counts for a column from parquet file on disk (lazy)
+/// Get frequency counts for a column from parquet file on disk (streaming)
 pub fn freq_from_disk(path: &Path, name: &str) -> Result<DataFrame> {
     let args = ScanArgsParquet::default();
-    LazyFrame::scan_parquet(path, args)
+    LazyFrame::scan_parquet(to_plpath(path), args)
         .map_err(|e| anyhow!("Scan: {}", e))?
         .group_by([col(name)])
         .agg([len().alias("Cnt")])
         .sort(["Cnt"], SortMultipleOptions::default().with_order_descending(true))
-        .collect()
+        .collect_with_engine(Engine::Streaming)
         .map_err(|e| anyhow!("Freq: {}", e))
 }
 
 /// Fetch window of rows from parquet (for rendering visible viewport)
 pub fn fetch_rows(path: &Path, offset: usize, limit: usize) -> Result<DataFrame> {
     let args = ScanArgsParquet::default();
-    LazyFrame::scan_parquet(path, args)
+    LazyFrame::scan_parquet(to_plpath(path), args)
         .map_err(|e| anyhow!("Scan: {}", e))?
         .slice(offset as i64, limit as u32)
         .collect()
@@ -94,7 +97,7 @@ pub fn schema(path: &Path) -> Result<Vec<(String, String)>> {
 /// Get distinct values for a column from parquet file on disk (lazy, no full load)
 pub fn distinct(path: &Path, name: &str) -> Result<Vec<String>> {
     let args = ScanArgsParquet::default();
-    let df = LazyFrame::scan_parquet(path, args)
+    let df = LazyFrame::scan_parquet(to_plpath(path), args)
         .map_err(|e| anyhow!("Scan: {}", e))?
         .select([col(name)])
         .unique(None, UniqueKeepStrategy::First)
@@ -110,7 +113,7 @@ pub fn distinct(path: &Path, name: &str) -> Result<Vec<String>> {
 /// Load parquet files matching glob pattern (preview only)
 pub fn load_glob(pattern: &str, limit: u32) -> Result<DataFrame> {
     let args = ScanArgsParquet::default();
-    let lf = LazyFrame::scan_parquet(pattern, args)
+    let lf = LazyFrame::scan_parquet(PlPath::new(pattern), args)
         .map_err(|e| anyhow!("Failed to scan parquet: {}", e))?;
     lf.limit(limit).collect()
         .map_err(|e| {
