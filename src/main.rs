@@ -17,7 +17,7 @@ use backend::Backend;
 use command::executor::CommandExecutor;
 use command::io::{From, Save};
 use command::nav::{Goto, GotoCol, ToggleInfo, Decimals, ToggleSel, ClearSel, SelAll, SelRows};
-use command::transform::{Agg, DelCol, Filter, RenameCol, Select, Sort, Take, ToTime, Xkey};
+use command::transform::{Agg, Cast, DelCol, Derive, Filter, RenameCol, Select, Sort, Take, ToTime, Xkey};
 use command::view::{Dup, Pop, Swap};
 use plugin::corr::Correlation;
 use plugin::freq::Frequency;
@@ -388,15 +388,16 @@ fn handle_cmd(app: &mut AppContext, cmd: &str) -> Result<bool> {
         "prev_match" => find_match(app, false),
         "search_cell" => {
             if let Some(view) = app.view() {
-                if let Some(col_name) = view.state.cur_col(&view.dataframe) {
-                    let col = &view.dataframe.get_columns()[view.state.cc];
-                    if let Ok(value) = col.get(view.state.cr) {
-                        let is_str = matches!(col.dtype(), polars::prelude::DataType::String);
-                        let val = unquote(&value.to_string());
-                        let expr = if is_str { format!("{} = '{}'", col_name, val) } else { format!("{} = {}", col_name, val) };
-                        app.search.col_name = None;
-                        app.search.value = Some(expr.clone());
-                        app.msg(format!("Search: {}", expr));
+                if let Some(col_name) = view.col_name(view.state.cc) {
+                    if let Some(col) = view.dataframe.get_columns().get(view.state.cc) {
+                        if let Ok(value) = col.get(view.state.cr) {
+                            let is_str = matches!(col.dtype(), polars::prelude::DataType::String);
+                            let val = unquote(&value.to_string());
+                            let expr = if is_str { format!("{} = '{}'", col_name, val) } else { format!("{} = {}", col_name, val) };
+                            app.search.col_name = None;
+                            app.search.value = Some(expr.clone());
+                            app.msg(format!("Search: {}", expr));
+                        }
                     }
                 }
             }
@@ -415,30 +416,16 @@ fn handle_cmd(app: &mut AppContext, cmd: &str) -> Result<bool> {
         "sort" => on_col(app, |c| Box::new(Sort { col_name: c, descending: false })),
         "sort-" => on_col(app, |c| Box::new(Sort { col_name: c, descending: true })),
         "rename" => {
-            if let Some(view) = app.view() {
-                if let Some(old_name) = view.state.cur_col(&view.dataframe) {
-                    if let Some(new_name) = prompt(app, &format!("Rename '{}' to: ", old_name))? {
-                        run(app, Box::new(RenameCol { old_name, new_name }));
-                    }
+            if let Some(old_name) = app.view().and_then(|v| v.col_name(v.state.cc)) {
+                if let Some(new_name) = prompt(app, &format!("Rename '{}' to: ", old_name))? {
+                    run(app, Box::new(RenameCol { old_name, new_name }));
                 }
             }
         }
-        "derive" => {
-            if let Some(view) = app.view() {
-                if let Some(col_name) = view.state.cur_col(&view.dataframe) {
-                    let new_name = format!("{}_copy", col_name);
-                    if let Ok(c) = view.dataframe.column(&col_name).cloned() {
-                        if let Some(v) = app.view_mut() {
-                            let new_col = c.as_materialized_series().clone().with_name(new_name.into());
-                            if let Err(e) = v.dataframe.with_column(new_col) { app.err(e); }
-                        }
-                    }
-                }
-            }
-        }
+        "derive" => on_col(app, |col| Box::new(Derive { col_name: col })),
         "convert" => do_convert(app)?,
         "aggregate" => {
-            if let Some(col) = app.view().and_then(|v| v.state.cur_col(&v.dataframe)) {
+            if let Some(col) = app.view().and_then(|v| v.col_name(v.state.cc)) {
                 let result = picker::fzf(vec!["count".into(), "sum".into(), "mean".into(), "min".into(), "max".into(), "std".into()], "Aggregate: ");
                 app.needs_redraw = true;
                 if let Ok(Some(func)) = result { run(app, Box::new(Agg { col, func })); }
@@ -449,12 +436,11 @@ fn handle_cmd(app: &mut AppContext, cmd: &str) -> Result<bool> {
             if !dispatch(app, "delete") {
                 let col_names: Vec<String> = app.view().map(|v| {
                     if v.selected_cols.is_empty() {
-                        v.state.cur_col(&v.dataframe).into_iter().collect()
+                        v.col_name(v.state.cc).into_iter().collect()
                     } else {
-                        let names: Vec<String> = v.dataframe.get_column_names().iter().map(|s| s.to_string()).collect();
                         let mut sel: Vec<usize> = v.selected_cols.iter().copied().collect();
                         sel.sort_by(|a, b| b.cmp(a));
-                        sel.iter().filter_map(|&i| names.get(i).cloned()).collect()
+                        sel.iter().filter_map(|&i| v.col_name(i)).collect()
                     }
                 }).unwrap_or_default();
                 if !col_names.is_empty() {
@@ -464,19 +450,18 @@ fn handle_cmd(app: &mut AppContext, cmd: &str) -> Result<bool> {
             }
         }
         "xkey" => {
-            if let Some(view) = app.view() {
-                let names: Vec<String> = view.dataframe.get_column_names().iter().map(|s| s.to_string()).collect();
-                let col_names: Vec<String> = if view.selected_cols.is_empty() {
-                    view.state.cur_col(&view.dataframe).into_iter().collect()
+            let col_names: Vec<String> = app.view().map(|v| {
+                if v.selected_cols.is_empty() {
+                    v.col_name(v.state.cc).into_iter().collect()
                 } else {
-                    let mut sel: Vec<usize> = view.selected_cols.iter().copied().collect();
+                    let mut sel: Vec<usize> = v.selected_cols.iter().copied().collect();
                     sel.sort();
-                    sel.into_iter().filter_map(|i| names.get(i).cloned()).collect()
-                };
-                if !col_names.is_empty() {
-                    run(app, Box::new(Xkey { col_names }));
-                    if let Some(v) = app.view_mut() { v.selected_cols.clear(); }
+                    sel.into_iter().filter_map(|i| v.col_name(i)).collect()
                 }
+            }).unwrap_or_default();
+            if !col_names.is_empty() {
+                run(app, Box::new(Xkey { col_names }));
+                if let Some(v) = app.view_mut() { v.selected_cols.clear(); }
             }
         }
         // View management
@@ -523,7 +508,7 @@ fn handle_cmd(app: &mut AppContext, cmd: &str) -> Result<bool> {
 /// Search with fzf (/)
 fn do_search(app: &mut AppContext) -> Result<()> {
     let info = app.view().and_then(|v| {
-        let col_name = v.state.cur_col(&v.dataframe)?;
+        let col_name = v.col_name(v.state.cc)?;
         let file = v.filename.as_deref();
         Some((hints(&v.dataframe, &col_name, v.state.cr, file), col_name, v.name.starts_with("ls")))
     });
@@ -554,7 +539,7 @@ fn do_search(app: &mut AppContext) -> Result<()> {
 /// Filter with fzf (\)
 fn do_filter(app: &mut AppContext) -> Result<()> {
     let info = app.view().and_then(|v| {
-        let col_name = v.state.cur_col(&v.dataframe)?;
+        let col_name = v.col_name(v.state.cc)?;
         let is_str = v.dataframe.column(&col_name).ok()
             .map(|c| matches!(c.dtype(), polars::prelude::DataType::String)).unwrap_or(false);
         let file = v.filename.as_deref();
@@ -577,26 +562,13 @@ fn do_filter(app: &mut AppContext) -> Result<()> {
 
 /// Type conversion ($)
 fn do_convert(app: &mut AppContext) -> Result<()> {
-    if let Some(view) = app.view() {
-        if let Some(col_name) = view.state.cur_col(&view.dataframe) {
-            let types = vec!["String".into(), "Int64".into(), "Float64".into(), "Boolean".into()];
-            let result = picker::fzf(types, "Convert to: ");
-            app.needs_redraw = true;
-            if let Ok(Some(selected)) = result {
-                if let Some(v) = app.view_mut() {
-                    let res = match selected.as_str() {
-                        "String" => v.dataframe.column(&col_name).and_then(|c| c.cast(&polars::prelude::DataType::String)),
-                        "Int64" => v.dataframe.column(&col_name).and_then(|c| c.cast(&polars::prelude::DataType::Int64)),
-                        "Float64" => v.dataframe.column(&col_name).and_then(|c| c.cast(&polars::prelude::DataType::Float64)),
-                        "Boolean" => v.dataframe.column(&col_name).and_then(|c| c.cast(&polars::prelude::DataType::Boolean)),
-                        _ => Err(polars::prelude::PolarsError::ComputeError("Unknown type".into())),
-                    };
-                    match res {
-                        Ok(new_col) => if let Err(e) = v.dataframe.with_column(new_col) { app.err(e); },
-                        Err(e) => app.err(e),
-                    }
-                }
-            }
+    let col_name = app.view().and_then(|v| v.col_name(v.state.cc));
+    if let Some(col_name) = col_name {
+        let types = vec!["String".into(), "Int64".into(), "Float64".into(), "Boolean".into()];
+        let result = picker::fzf(types, "Convert to: ");
+        app.needs_redraw = true;
+        if let Ok(Some(dtype)) = result {
+            run(app, Box::new(Cast { col_name, dtype }));
         }
     }
     Ok(())

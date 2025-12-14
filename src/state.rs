@@ -23,10 +23,6 @@ impl TableState {
         self.col_widths.is_empty() || self.cr.abs_diff(self.widths_row) > self.viewport.0.saturating_sub(2) as usize
     }
 
-    pub fn cur_col(&self, df: &DataFrame) -> Option<String> {
-        df.get_column_names().get(self.cc).map(|s| s.to_string())
-    }
-
     pub fn down(&mut self, n: usize, max: usize) {
         if max == 0 { return; }
         self.cr = (self.cr + n).min(max - 1);

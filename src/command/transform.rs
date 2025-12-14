@@ -202,6 +202,44 @@ impl Command for ToTime {
     fn to_str(&self) -> String { format!("to_time {}", self.col_name) }
 }
 
+/// Cast column to new type
+pub struct Cast { pub col_name: String, pub dtype: String }
+
+impl Command for Cast {
+    fn exec(&mut self, app: &mut AppContext) -> Result<()> {
+        let v = app.req_mut()?;
+        let dt = match self.dtype.as_str() {
+            "String" => DataType::String,
+            "Int64" => DataType::Int64,
+            "Float64" => DataType::Float64,
+            "Boolean" => DataType::Boolean,
+            _ => return Err(anyhow!("Unknown type: {}", self.dtype)),
+        };
+        let c = v.dataframe.column(&self.col_name)?;
+        let new_col = c.cast(&dt)?;
+        v.dataframe.with_column(new_col)?;
+        v.state.col_widths.clear();
+        Ok(())
+    }
+    fn to_str(&self) -> String { format!("cast {} {}", self.col_name, self.dtype) }
+}
+
+/// Derive (copy) a column
+pub struct Derive { pub col_name: String }
+
+impl Command for Derive {
+    fn exec(&mut self, app: &mut AppContext) -> Result<()> {
+        let v = app.req_mut()?;
+        let c = v.dataframe.column(&self.col_name)?.clone();
+        let new_name = format!("{}_copy", self.col_name);
+        let new_col = c.as_materialized_series().clone().with_name(new_name.into());
+        v.dataframe.with_column(new_col)?;
+        v.state.col_widths.clear();
+        Ok(())
+    }
+    fn to_str(&self) -> String { format!("derive {}", self.col_name) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

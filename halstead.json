@@ -1,6 +1,6 @@
 {
-  "total_length": 36285.0,
-  "total_bugs": 55.44710881826276,
+  "total_length": 36207.0,
+  "total_bugs": 55.33017749363102,
   "files": [
     {
       "file": "./src/app.rs",
@@ -64,9 +64,9 @@
     },
     {
       "file": "./src/command/transform.rs",
-      "length": 1780.0,
-      "bugs": 2.605036621388262,
-      "volume": 13567.25223863235
+      "length": 1995.0,
+      "bugs": 2.9113763537886728,
+      "volume": 15376.181468501361
     },
     {
       "file": "./src/command/view.rs",
@@ -88,9 +88,9 @@
     },
     {
       "file": "./src/main.rs",
-      "length": 5714.0,
-      "bugs": 8.030728806027529,
-      "volume": 52267.12894111989
+      "length": 5448.0,
+      "bugs": 7.6482744424642535,
+      "volume": 49722.2859680497
     },
     {
       "file": "./src/os.rs",
@@ -166,9 +166,9 @@
     },
     {
       "file": "./src/state.rs",
-      "length": 1609.0,
-      "bugs": 2.777823215451766,
-      "volume": 11454.376186012123
+      "length": 1582.0,
+      "bugs": 2.737006521982887,
+      "volume": 11245.685690623064
     },
     {
       "file": "./src/theme.rs",
