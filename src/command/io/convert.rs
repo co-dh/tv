@@ -39,7 +39,8 @@ pub fn taq_to_ns(v: i64) -> i64 {
     (hh * 3600 + mm * 60 + ss) * 1_000_000_000 + frac
 }
 
-/// Convert integer/float columns with datetime-like names to datetime/time
+/// Convert integer/float columns with datetime-like names to datetime
+/// Note: TAQ time conversion is NOT automatic - use `to_time` command instead
 pub fn convert_epoch_cols(df: DataFrame) -> DataFrame {
     let mut cols: Vec<Column> = Vec::with_capacity(df.width());
     for c in df.get_columns() {
@@ -54,20 +55,12 @@ pub fn convert_epoch_cols(df: DataFrame) -> DataFrame {
         let Ok(i64_ca) = i64_s.i64() else { cols.push(c.clone()); continue; };
         let Some(v) = i64_ca.into_iter().flatten().next() else { cols.push(c.clone()); continue; };
 
-        // Try epoch conversion first
+        // Try epoch conversion (not TAQ time - that requires explicit command)
         if let Some(unit) = epoch_unit(v) {
             let mult = if v.abs() < 10_000_000_000 { 1000i64 } else { 1 };
             let scaled = i64_ca.clone() * mult;
             if let Ok(dt) = scaled.into_series().cast(&DataType::Datetime(unit, None)) {
                 cols.push(dt.into_column());
-                continue;
-            }
-        }
-        // Try TAQ time format
-        if is_taq_time(v) {
-            let ns_ca: Int64Chunked = i64_ca.apply(|v| v.map(taq_to_ns));
-            if let Ok(t) = ns_ca.into_series().cast(&DataType::Time) {
-                cols.push(t.into_column());
                 continue;
             }
         }
@@ -146,17 +139,6 @@ pub fn apply_schema(df: DataFrame, schema: &Schema) -> (DataFrame, Option<String
         }
         let target = target.unwrap();
 
-        // Try TAQ time conversion: String → i64 → TAQ → Time
-        if *target == DataType::Time && col.dtype() == &DataType::String {
-            if let Ok(i64_s) = col.cast(&DataType::Int64) {
-                if let Ok(i64_ca) = i64_s.as_materialized_series().i64() {
-                    let ns_ca: Int64Chunked = i64_ca.apply(|v| v.map(taq_to_ns));
-                    if let Ok(t) = ns_ca.into_series().cast(&DataType::Time) {
-                        if t.len() == n_rows { cols.push(t.into_column()); continue; }
-                    }
-                }
-            }
-        }
         // Try epoch conversion: String → i64 → Datetime
         if matches!(target, DataType::Datetime(_, _)) && col.dtype() == &DataType::String {
             if let Ok(i64_s) = col.cast(&DataType::Int64) {

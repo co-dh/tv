@@ -14,6 +14,16 @@ const MIN_ROWS: usize = 1_000;      // min rows before showing table
 const CHUNK_ROWS: usize = 100_000;  // rows per background chunk
 const FIRST_CHUNK_ROWS: usize = 100_000;
 
+fn commify(n: usize) -> String {
+    let s = n.to_string();
+    let mut r = String::with_capacity(s.len() + s.len() / 3);
+    for (i, c) in s.chars().rev().enumerate() {
+        if i > 0 && i % 3 == 0 { r.push(','); }
+        r.push(c);
+    }
+    r.chars().rev().collect()
+}
+
 /// Streaming chunk: Some(df) = more data, None = EOF reached (file fully loaded)
 pub type GzChunk = Option<DataFrame>;
 
@@ -190,40 +200,39 @@ fn stream_impl(gz_path: &str, out_path: &Path, raw: bool, tx: &Sender<String>) -
     let first_df = if raw { first_df } else { convert_types(first_df) };
     let schema = first_df.schema().to_owned();
 
-    // Write chunks immediately (true streaming)
-    let stem = out_path.file_stem().and_then(|s| s.to_str()).unwrap_or("out");
-    let parent = out_path.parent().unwrap_or(Path::new("."));
-    let mut chunk_num = 1usize;
-    let mut total_rows = 0usize;
+    // Create batched writer for streaming
+    let file = std::fs::File::create(out_path).map_err(|e| anyhow!("Create file: {}", e))?;
+    let mut writer = ParquetWriter::new(file).batched(&schema)
+        .map_err(|e| anyhow!("Create writer: {}", e))?;
 
     // Write first chunk
-    let chunk_path = parent.join(format!("{}_{:03}.parquet", stem, chunk_num));
-    write_chunk(&first_df, &chunk_path)?;
-    total_rows += first_df.height();
-    chunk_num += 1;
-    let _ = tx.send(format!("Written {} rows ({} chunks)", total_rows, chunk_num - 1));
+    let mut total_rows = first_df.height();
+    let mut first_df = first_df;
+    first_df.rechunk_mut();
+    writer.write_batch(&first_df).map_err(|e| anyhow!("Write batch: {}", e))?;
+    let _ = tx.send(format!("Written {} rows", commify(total_rows)));
 
-    // Stream remaining chunks
+    // Stream remaining chunks directly to parquet
     loop {
         let (buf, lines) = read_chunk(CHUNK_ROWS)?;
         if lines == 0 { break; }
 
         let df = parse(buf)?;
-        let df = if raw { df } else {
-            let (df, err) = apply_schema(df, &schema);
+        let mut df = if raw { df } else {
+            let (d, err) = apply_schema(df, &schema);
             if let Some(e) = err { let _ = tx.send(format!("Warning: {}", e)); }
-            df
+            d
         };
-
-        let chunk_path = parent.join(format!("{}_{:03}.parquet", stem, chunk_num));
-        write_chunk(&df, &chunk_path)?;
+        df.rechunk_mut();
+        writer.write_batch(&df).map_err(|e| anyhow!("Write batch: {}", e))?;
         total_rows += df.height();
-        chunk_num += 1;
-        let _ = tx.send(format!("Written {} rows ({} chunks)", total_rows, chunk_num - 1));
+        let _ = tx.send(format!("Written {} rows", commify(total_rows)));
     }
 
+    // Finalize parquet file
+    writer.finish().map_err(|e| anyhow!("Finish: {}", e))?;
     let _ = child.wait();
-    let _ = tx.send(format!("Done: {} rows in {} chunks", total_rows, chunk_num - 1));
+    let _ = tx.send(format!("Done: {} rows", commify(total_rows)));
     Ok(())
 }
 
@@ -241,18 +250,19 @@ mod tests {
     use std::io::Write;
 
     #[test]
-    fn test_stream_gz_to_parquet() {
+    fn test_gz_to_single_parquet() {
         let tmp = std::env::temp_dir();
-        let csv_path = tmp.join("test_bbo.csv");
-        let gz_path = tmp.join("test_bbo.csv.gz");
-        let out_path = tmp.join("test_bbo.parquet");
-        let chunk_path = tmp.join("test_bbo_001.parquet");
+        let csv_path = tmp.join("test_single.csv");
+        let gz_path = tmp.join("test_single.csv.gz");
+        let out_path = tmp.join("test_single.parquet");
+        let chunk_path = tmp.join("test_single_001.parquet");  // should NOT exist
 
         let csv = "National_BBO_Ind,price,volume\nO,10.5,100\nE,11,200\nA,12.5,300\n";
         let mut f = std::fs::File::create(&csv_path).unwrap();
         f.write_all(csv.as_bytes()).unwrap();
 
         let _ = std::fs::remove_file(&gz_path);
+        let _ = std::fs::remove_file(&out_path);
         let _ = std::fs::remove_file(&chunk_path);
         let status = std::process::Command::new("gzip").arg("-k").arg(&csv_path).status().unwrap();
         assert!(status.success());
@@ -262,10 +272,13 @@ mod tests {
 
         let msgs: Vec<_> = rx.iter().collect();
         assert!(!msgs.is_empty());
-        assert!(msgs.last().unwrap().contains("Done"));
-        assert!(chunk_path.exists());
+        assert!(msgs.last().unwrap().contains("Done"), "Last msg: {:?}", msgs.last());
 
-        let df = ParquetReader::new(std::fs::File::open(&chunk_path).unwrap()).finish().unwrap();
+        // Single file should exist, chunk file should NOT
+        assert!(out_path.exists(), "Single parquet file should exist");
+        assert!(!chunk_path.exists(), "Chunk file should NOT exist");
+
+        let df = ParquetReader::new(std::fs::File::open(&out_path).unwrap()).finish().unwrap();
         assert_eq!(df.height(), 3);
         assert_eq!(df.column("National_BBO_Ind").unwrap().dtype(), &DataType::String);
         assert_eq!(df.column("price").unwrap().dtype(), &DataType::Float64);
@@ -273,6 +286,6 @@ mod tests {
 
         let _ = std::fs::remove_file(csv_path);
         let _ = std::fs::remove_file(gz_path);
-        let _ = std::fs::remove_file(chunk_path);
+        let _ = std::fs::remove_file(out_path);
     }
 }
