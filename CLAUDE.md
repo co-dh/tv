@@ -126,3 +126,4 @@
 ## TAQ Time Format (Parquet)
 - Smart int to time conversion also applies to parquet saves (streaming)
 - Leading zeros in integers allowed for TAQ time detection
+- you should read cfg/key.csv to find the key of a command, instead of hard code . l and r for example.

@@ -244,6 +244,7 @@ fn on_col<F>(app: &mut AppContext, f: F) where F: FnOnce(String) -> Box<dyn comm
 /// Dispatch action to plugin (DRY helper)
 fn dispatch(app: &mut AppContext, action: &str) -> bool {
     let name = match app.view() { Some(v) => v.name.clone(), None => return false };
+    // mem::take to avoid borrow conflict: plugins.handle needs &mut app
     let plugins = std::mem::take(&mut app.plugins);
     let cmd = plugins.handle(&name, action, app);
     app.plugins = plugins;
@@ -541,14 +542,8 @@ fn on_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
             // W: Swap top two views
             run(app, Box::new(Swap));
         }
-        KeyCode::Char('l') => {  // l: Directory listing
-            let dir = std::env::current_dir().unwrap_or_default();
-            run(app, Box::new(Ls { dir, recursive: false }));
-        }
-        KeyCode::Char('r') => {  // r: Recursive directory listing (ls -r)
-            let dir = std::env::current_dir().unwrap_or_default();
-            run(app, Box::new(Ls { dir, recursive: true }));
-        }
+        KeyCode::Char('l') => run(app, Box::new(Ls { dir: std::env::current_dir().unwrap_or_default(), recursive: false })),
+        KeyCode::Char('r') => run(app, Box::new(Ls { dir: std::env::current_dir().unwrap_or_default(), recursive: true })),
         KeyCode::Char('C') => {
             // C: Correlation matrix (uses selected columns if >= 2, otherwise all numeric)
             if app.has_view() {

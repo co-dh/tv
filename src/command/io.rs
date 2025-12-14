@@ -151,19 +151,19 @@ impl From {
         let sep = detect_sep(&header);
         let header_bytes = header.as_bytes().to_vec();
 
-        // Read preview rows
+        // Read preview rows for immediate display while bg thread loads rest
         let mut buf = header.into_bytes();
         for _ in 0..MAX_PREVIEW_ROWS {
             let mut line = String::new();
             if reader.read_line(&mut line)? == 0 {
-                // File fully read, no background needed
+                // Small file fits in preview - no bg thread needed
                 let _ = child.wait();
                 return Ok((parse_csv_buf(buf, sep, 500)?, None));
             }
             buf.extend_from_slice(line.as_bytes());
         }
 
-        // Parse preview
+        // Parse preview with high schema inference for accurate types
         let df = parse_csv_buf(buf, sep, 500)?;
 
         // Get memory limit from config

@@ -9,7 +9,7 @@ use anyhow::{anyhow, Result};
 /// If expression looks like SQL (contains LIKE, AND, OR, etc.), pass through directly
 pub fn filter_to_sql(expr: &str) -> Result<String> {
     let upper = expr.to_uppercase();
-    // If it looks like SQL, pass through directly
+    // Pass SQL through directly - polars sql() accepts these, no need to compile via PRQL
     if upper.contains(" LIKE ") || upper.contains(" IN ") || upper.contains(" BETWEEN ")
         || upper.contains(" AND ") || upper.contains(" OR ")
         || (expr.contains(" = ") && !expr.contains("==") && !expr.contains(">=") && !expr.contains("<=")) {

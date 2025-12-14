@@ -84,7 +84,7 @@ impl Renderer {
             for x in xs.iter_mut() { *x -= shift; }
         }
 
-        // Visible area (reserve 2 rows for header+status, +1 if tabs shown)
+        // Reserve rows at bottom: header(1) + status(1) + tabs(1 if shown)
         let bottom_reserve = if show_tabs { 3 } else { 2 };
         let end_row = (state.r0 + (area.height as usize).saturating_sub(bottom_reserve)).min(df.height());
 
