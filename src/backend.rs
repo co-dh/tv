@@ -44,40 +44,61 @@ impl DuckApi {
         use duckdb::Connection;
         let conn = Connection::open_in_memory()?;
         let mut stmt = conn.prepare(sql)?;
-        let mut rows = stmt.query([])?;
-
-        // Get column names
-        let names: Vec<String> = rows.as_ref()
-            .map(|r| r.column_names().iter().map(|s| s.to_string()).collect())
-            .unwrap_or_default();
-        let ncols = names.len();
-
-        // Collect values
-        let mut cols: Vec<Vec<String>> = vec![vec![]; ncols];
-        while let Some(row) = rows.next()? {
-            for i in 0..ncols {
-                let val: String = row.get::<_, Option<String>>(i)
-                    .unwrap_or(None)
-                    .unwrap_or_else(|| "null".to_string());
-                cols[i].push(val);
+        // Use query_arrow for efficient Arrow-based transfer
+        let rbs: Vec<duckdb::arrow::record_batch::RecordBatch> = stmt.query_arrow([])?.collect();
+        if rbs.is_empty() { return Ok(DataFrame::empty()); }
+        // Convert Arrow RecordBatches to polars DataFrame
+        let mut dfs = Vec::new();
+        for rb in rbs {
+            let schema = rb.schema();
+            let mut cols: Vec<Column> = Vec::new();
+            for (i, field) in schema.fields().iter().enumerate() {
+                let arr = rb.column(i);
+                let s = arrow_to_series(field.name(), arr)?;
+                cols.push(s.into());
             }
+            dfs.push(DataFrame::new(cols)?);
         }
+        // Vertical concat
+        let mut result = dfs.remove(0);
+        for df in dfs { result.vstack_mut(&df)?; }
+        Ok(result)
+    }
+}
 
-        // Build DataFrame, infer types
-        let series: Vec<Column> = names.iter().zip(cols.iter())
-            .map(|(name, vals)| {
-                let s = Series::new(name.into(), vals);
-                if let Ok(i) = s.cast(&DataType::Int64) {
-                    if !i.is_null().any() { return i.into(); }
-                }
-                if let Ok(f) = s.cast(&DataType::Float64) {
-                    if !f.is_null().any() { return f.into(); }
-                }
-                s.into()
-            })
-            .collect();
-
-        DataFrame::new(series).map_err(|e| anyhow!("{}", e))
+/// Convert Arrow array to polars Series
+fn arrow_to_series(name: &str, arr: &duckdb::arrow::array::ArrayRef) -> Result<Series> {
+    use duckdb::arrow::array::*;
+    use duckdb::arrow::datatypes::DataType as ArrowDT;
+    let name = PlSmallStr::from(name);
+    match arr.data_type() {
+        ArrowDT::Int64 => {
+            let a = arr.as_any().downcast_ref::<Int64Array>().unwrap();
+            Ok(Series::new(name, a.values().as_ref()))
+        }
+        ArrowDT::Int32 => {
+            let a = arr.as_any().downcast_ref::<Int32Array>().unwrap();
+            Ok(Series::new(name, a.values().as_ref()))
+        }
+        ArrowDT::Float64 => {
+            let a = arr.as_any().downcast_ref::<Float64Array>().unwrap();
+            Ok(Series::new(name, a.values().as_ref()))
+        }
+        ArrowDT::Utf8 => {
+            let a = arr.as_any().downcast_ref::<StringArray>().unwrap();
+            let vals: Vec<&str> = (0..a.len()).map(|i| a.value(i)).collect();
+            Ok(Series::new(name, vals))
+        }
+        ArrowDT::LargeUtf8 => {
+            let a = arr.as_any().downcast_ref::<LargeStringArray>().unwrap();
+            let vals: Vec<&str> = (0..a.len()).map(|i| a.value(i)).collect();
+            Ok(Series::new(name, vals))
+        }
+        _ => {
+            // Fallback: convert to string
+            let vals: Vec<String> = (0..arr.len()).map(|_| format!("{:?}", arr.as_ref())).collect();
+            Ok(Series::new(name, vals))
+        }
     }
 }
 

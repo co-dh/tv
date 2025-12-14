@@ -29,31 +29,10 @@ use std::fs;
 use std::io::{self, Write};
 
 fn main() -> Result<()> {
-    // Get command line args
     let args: Vec<String> = std::env::args().collect();
 
-    // Check for -c argument (inline script)
-    if let Some(idx) = args.iter().position(|a| a == "-c") {
-        if args.len() <= idx + 1 {
-            eprintln!("Usage: tv -c '<commands>'");
-            std::process::exit(1);
-        }
-        return run_commands(&args[idx + 1]);
-    }
-
-    // Check for --script argument
-    if let Some(idx) = args.iter().position(|a| a == "--script") {
-        // Script mode: run commands from file and print result
-        if args.len() <= idx + 1 {
-            eprintln!("Usage: tv --script <script_file>");
-            std::process::exit(1);
-        }
-        return run_script(&args[idx + 1]);
-    }
-
-    // Check for --raw flag (skip type detection on save)
+    // Parse flags first (before early returns)
     let raw_save = args.iter().any(|a| a == "--raw");
-    // Check for backend flags
     let backend = if args.iter().any(|a| a == "--duckcli") {
         backend::BackendType::DuckCli
     } else if args.iter().any(|a| a == "--duckapi") {
@@ -61,6 +40,24 @@ fn main() -> Result<()> {
     } else {
         backend::BackendType::Polars
     };
+
+    // Check for -c argument (inline script)
+    if let Some(idx) = args.iter().position(|a| a == "-c") {
+        if args.len() <= idx + 1 {
+            eprintln!("Usage: tv -c '<commands>'");
+            std::process::exit(1);
+        }
+        return run_commands(&args[idx + 1], backend);
+    }
+
+    // Check for --script argument
+    if let Some(idx) = args.iter().position(|a| a == "--script") {
+        if args.len() <= idx + 1 {
+            eprintln!("Usage: tv --script <script_file>");
+            std::process::exit(1);
+        }
+        return run_script(&args[idx + 1], backend);
+    }
 
     // Initialize ratatui terminal
     let mut tui = render::init()?;
@@ -133,8 +130,9 @@ fn main() -> Result<()> {
 }
 
 /// Run batch commands (used by both -c and --script)
-fn run_batch<I: Iterator<Item = String>>(lines: I) -> Result<()> {
+fn run_batch<I: Iterator<Item = String>>(lines: I, backend: backend::BackendType) -> Result<()> {
     let mut app = AppContext::new();
+    app.set_backend(backend);
     app.viewport(50, 120);
     'outer: for line in lines {
         let line = line.trim();
@@ -157,13 +155,13 @@ fn run_batch<I: Iterator<Item = String>>(lines: I) -> Result<()> {
 }
 
 /// Run commands from inline string (-c option)
-fn run_commands(commands: &str) -> Result<()> {
-    run_batch(std::iter::once(commands.to_string()))
+fn run_commands(commands: &str, backend: backend::BackendType) -> Result<()> {
+    run_batch(std::iter::once(commands.to_string()), backend)
 }
 
 /// Run commands from a script file
-fn run_script(script_path: &str) -> Result<()> {
-    run_batch(fs::read_to_string(script_path)?.lines().map(String::from))
+fn run_script(script_path: &str, backend: backend::BackendType) -> Result<()> {
+    run_batch(fs::read_to_string(script_path)?.lines().map(String::from), backend)
 }
 
 /// Wait for background save to complete (for script mode)

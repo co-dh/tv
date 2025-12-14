@@ -162,10 +162,17 @@ impl Command for FreqEnter {
 
 fn add_freq_cols(mut df: DataFrame) -> Result<DataFrame> {
     let cnt_col = df.column("Cnt")?.as_materialized_series();
-    let total: u32 = cnt_col.sum().unwrap_or(0);
-    let counts: Vec<u32> = cnt_col.u32()
-        .map(|ca| ca.into_iter().map(|v| v.unwrap_or(0)).collect())
-        .unwrap_or_default();
+    let total: i64 = cnt_col.sum().unwrap_or(0);
+    // Handle u32 (polars) or i32/i64 (duckdb) count types
+    let counts: Vec<i64> = if let Ok(ca) = cnt_col.u32() {
+        ca.into_iter().map(|v| v.unwrap_or(0) as i64).collect()
+    } else if let Ok(ca) = cnt_col.i32() {
+        ca.into_iter().map(|v| v.unwrap_or(0) as i64).collect()
+    } else if let Ok(ca) = cnt_col.i64() {
+        ca.into_iter().map(|v| v.unwrap_or(0)).collect()
+    } else {
+        vec![0; df.height()]
+    };
     let pcts: Vec<f64> = counts.iter().map(|&c| 100.0 * c as f64 / total as f64).collect();
     let bars: Vec<String> = pcts.iter().map(|&p| "#".repeat(p.floor() as usize)).collect();
     df.with_column(Series::new("Pct".into(), pcts))?;
