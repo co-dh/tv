@@ -24,18 +24,6 @@ pub fn save(df: &DataFrame, path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Get frequency counts for a column from parquet file on disk (streaming)
-pub fn freq_from_disk(path: &Path, name: &str) -> Result<DataFrame> {
-    let args = ScanArgsParquet::default();
-    LazyFrame::scan_parquet(to_plpath(path), args)
-        .map_err(|e| anyhow!("Scan: {}", e))?
-        .group_by([col(name)])
-        .agg([len().alias("Cnt")])
-        .sort(["Cnt"], SortMultipleOptions::default().with_order_descending(true))
-        .collect_with_engine(Engine::Streaming)
-        .map_err(|e| anyhow!("Freq: {}", e))
-}
-
 /// Fetch window of rows from parquet (for rendering visible viewport)
 pub fn fetch_rows(path: &Path, offset: usize, limit: usize) -> Result<DataFrame> {
     let args = ScanArgsParquet::default();
@@ -116,24 +104,6 @@ fn find_schema_mismatch(pattern: &str) -> Option<anyhow::Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_freq_from_disk() {
-        let tmp = std::env::temp_dir().join("test_freq_disk.parquet");
-        // Create parquet: 1000 rows, category A (first 100), B (next 400), C (last 500)
-        let df = DataFrame::new(vec![
-            Column::new("cat".into(), (0..1000).map(|i| {
-                if i < 100 { "A" } else if i < 500 { "B" } else { "C" }
-            }).collect::<Vec<&str>>()),
-        ]).unwrap();
-        save(&df, &tmp).unwrap();
-
-        // Freq from disk should see all 3 categories
-        let freq = freq_from_disk(&tmp, "cat").unwrap();
-        assert_eq!(freq.height(), 3, "Should have 3 categories from disk");
-
-        let _ = std::fs::remove_file(tmp);
-    }
 
     #[test]
     fn test_distinct_from_disk() {
