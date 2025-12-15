@@ -1,4 +1,3 @@
-use crate::funcs::Funcs;
 use crate::keymap::KeyMap;
 use crate::plugin::Registry;
 use crate::state::{StateStack, ViewState};
@@ -29,7 +28,6 @@ pub struct AppContext {
     pub float_decimals: usize,     // decimal places for floats
     pub keymap: KeyMap,            // key bindings
     pub theme: Theme,              // color theme
-    pub funcs: Funcs,              // user-defined functions
     pub plugins: Registry,         // plugin registry
     pub bg_loader: Option<Receiver<crate::backend::gz::GzChunk>>,  // background gz loader
     pub bg_saver: Option<Receiver<String>>,      // background save status
@@ -44,12 +42,11 @@ impl AppContext {
     pub fn new() -> Self {
         let keymap = KeyMap::new();
         let theme = Theme::load_active();
-        let funcs = Funcs::load(std::path::Path::new("cfg/funcs.4th"));
         let plugins = Registry::new(std::path::Path::new("cfg/plugins.csv"));
-        // History file: ~/.tv/history.4th
+        // History file: ~/.tv/history
         let history_file = dirs::home_dir()
-            .map(|h| h.join(".tv").join("history.4th"))
-            .unwrap_or_else(|| PathBuf::from("history.4th"));
+            .map(|h| h.join(".tv").join("history"))
+            .unwrap_or_else(|| PathBuf::from("history"));
         if let Some(dir) = history_file.parent() { let _ = std::fs::create_dir_all(dir); }
         Self {
             stack: StateStack::new(),
@@ -62,7 +59,6 @@ impl AppContext {
             float_decimals: 3,
             keymap,
             theme,
-            funcs,
             plugins,
             bg_loader: None,
             bg_saver: None,

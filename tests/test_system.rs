@@ -17,7 +17,7 @@ fn test_ps_command() {
 fn test_failed_command_recorded_in_history() {
     let id = unique_id();
     let csv = setup_test_csv(id);
-    let hist = dirs::home_dir().unwrap().join(".tv/history.4th");
+    let hist = dirs::home_dir().unwrap().join(".tv/history");
 
     let before = std::fs::read_to_string(&hist).unwrap_or_default();
     let before_lines = before.lines().count();

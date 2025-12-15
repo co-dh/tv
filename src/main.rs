@@ -1,7 +1,6 @@
 mod app;
 mod backend;
 mod command;
-mod funcs;
 mod keymap;
 mod os;
 mod picker;
@@ -139,7 +138,7 @@ fn run_batch<I: Iterator<Item = String>>(lines: I) -> Result<()> {
     'outer: for line in lines {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') { continue; }
-        for cmd_str in app.funcs.expand(line).split('|').map(str::trim) {
+        for cmd_str in line.split('|').map(str::trim) {
             if cmd_str.is_empty() { continue; }
             if cmd_str == "quit" { break 'outer; }
             if let Some(cmd) = parse(cmd_str, &mut app) {
@@ -379,17 +378,6 @@ fn parse(line: &str, app: &mut AppContext) -> Option<Box<dyn command::Command>> 
         if result.is_some() { return result; }
     }
     None
-}
-
-/// Parse and execute command string, return success
-fn exec_str(cmd_str: &str, app: &mut AppContext) -> bool {
-    for cmd_part in app.funcs.expand(cmd_str).split('|').map(str::trim) {
-        if cmd_part.is_empty() { continue; }
-        if let Some(cmd) = parse(cmd_part, app) {
-            if let Err(e) = CommandExecutor::exec(app, cmd) { app.err(e); return false; }
-        } else { app.msg(format!("Unknown command: {}", cmd_part)); return false; }
-    }
-    true
 }
 
 /// Execute command on current column
@@ -645,9 +633,9 @@ fn handle_cmd(app: &mut AppContext, cmd: &str) -> Result<bool> {
         }
         // Plugin dispatch (Enter, etc.)
         "enter" | "filter_parent" | "delete_sel" => { dispatch(app, cmd); }
-        // Forth functions (meta view)
-        "sel_null" => { exec_str("sel_null", app); }
-        "sel_single" => { exec_str("sel_single", app); }
+        // Meta view: select null/single-value columns
+        "sel_null" => { run(app, Box::new(SelRows { expr: "`null%` == '100.0'".into() })); }
+        "sel_single" => { run(app, Box::new(SelRows { expr: "distinct == '1'".into() })); }
         _ => {}
     }
     Ok(true)
