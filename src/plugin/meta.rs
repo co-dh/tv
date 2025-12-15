@@ -98,7 +98,7 @@ impl Command for Metadata {
             app.stack.push(v);
 
             let (tx, rx) = std::sync::mpsc::channel();
-            std::thread::spawn(move || { if let Ok(r) = compute_stats_from_parquet(&path) { let _ = tx.send(r); } });
+            std::thread::spawn(move || { if let Ok(r) = pq_stats(&path) { let _ = tx.send(r); } });
             app.bg_meta = Some((parent_id, rx));
         } else if parent_rows <= BG_THRESHOLD {
             let meta_df = if key_cols.is_empty() { compute_stats(&df)? } else { compute_stats_grouped(&df, &key_cols)? };
@@ -285,40 +285,41 @@ fn compute_stats_grouped(df: &DataFrame, keys: &[String]) -> Result<DataFrame> {
     Ok(DataFrame::new(result)?)
 }
 
-/// Compute stats from parquet file on disk (lazy)
-fn compute_stats_from_parquet(path: &str) -> Result<DataFrame> {
+/// Compute stats from parquet (streaming, column-by-column to avoid OOM)
+fn pq_stats(path: &str) -> Result<DataFrame> {
     use crate::backend::{Backend, Polars};
-    use polars::prelude::{ScanArgsParquet, PlPath};
-    let args = ScanArgsParquet::default();
-    let lazy = LazyFrame::scan_parquet(PlPath::new(path), args).map_err(|e| anyhow!("{}", e))?;
+    use polars::prelude::{ScanArgsParquet, PlPath, Engine};
     let schema = Polars.schema(path)?;
     let (rows, _) = Polars.metadata(path)?;
     let n = rows as f64;
 
     let cols: Vec<String> = schema.iter().map(|(name, _)| name.clone()).collect();
     let dtypes: Vec<String> = schema.iter().map(|(_, dt)| dt.clone()).collect();
-
-    let is_num: Vec<bool> = dtypes.iter().map(|dt| matches!(dt.as_str(),
-        "Int8"|"Int16"|"Int32"|"Int64"|"UInt8"|"UInt16"|"UInt32"|"UInt64"|"Float32"|"Float64")).collect();
-
-    let null_df = lazy.clone().select(cols.iter().map(|c| col(c).null_count().alias(c)).collect::<Vec<_>>()).collect()?;
-    let min_df = lazy.clone().select(cols.iter().map(|c| col(c).min().alias(c)).collect::<Vec<_>>()).collect()?;
-    let max_df = lazy.clone().select(cols.iter().map(|c| col(c).max().alias(c)).collect::<Vec<_>>()).collect()?;
-    let dist_df = lazy.clone().select(cols.iter().map(|c| col(c).n_unique().alias(c)).collect::<Vec<_>>()).collect()?;
-
-    let num_cols: Vec<&String> = cols.iter().zip(&is_num).filter(|(_, &b)| b).map(|(c, _)| c).collect();
-    let mean_df = if !num_cols.is_empty() { Some(lazy.clone().select(num_cols.iter().map(|c| col(*c).mean().alias(*c)).collect::<Vec<_>>()).collect()?) } else { None };
-    let std_df = if !num_cols.is_empty() { Some(lazy.select(num_cols.iter().map(|c| col(*c).std(1).alias(*c)).collect::<Vec<_>>()).collect()?) } else { None };
-
     let (mut nulls, mut mins, mut maxs, mut dists, mut meds, mut sigs) = (vec![], vec![], vec![], vec![], vec![], vec![]);
+
+    // Process each column separately (streaming) to avoid OOM
     for (i, c) in cols.iter().enumerate() {
-        nulls.push(format!("{:.1}", 100.0 * get_f64(&null_df, c) / n));
-        mins.push(get_str(&min_df, c));
-        maxs.push(get_str(&max_df, c));
-        dists.push(format!("{}", get_u32(&dist_df, c)));
-        if is_num[i] {
-            meds.push(mean_df.as_ref().map(|df| get_str(df, c)).unwrap_or_default());
-            sigs.push(std_df.as_ref().map(|df| get_str(df, c)).unwrap_or_default());
+        let lf = || LazyFrame::scan_parquet(PlPath::new(path), ScanArgsParquet::default()).ok();
+        let is_num = matches!(dtypes[i].as_str(), "Int8"|"Int16"|"Int32"|"Int64"|"UInt8"|"UInt16"|"UInt32"|"UInt64"|"Float32"|"Float64");
+
+        // null count (streaming)
+        let nc = lf().and_then(|l| l.select([col(c).null_count()]).collect_with_engine(Engine::Streaming).ok())
+            .and_then(|df| df.column(c).ok()?.get(0).ok()?.try_extract::<u32>().ok()).unwrap_or(0);
+        nulls.push(format!("{:.1}", 100.0 * nc as f64 / n));
+
+        // min/max (streaming)
+        mins.push(lf().and_then(|l| l.select([col(c).min()]).collect_with_engine(Engine::Streaming).ok()).map(|df| get_str(&df, c)).unwrap_or_default());
+        maxs.push(lf().and_then(|l| l.select([col(c).max()]).collect_with_engine(Engine::Streaming).ok()).map(|df| get_str(&df, c)).unwrap_or_default());
+
+        // distinct (streaming)
+        let dc = lf().and_then(|l| l.select([col(c).n_unique()]).collect_with_engine(Engine::Streaming).ok())
+            .and_then(|df| df.column(c).ok()?.get(0).ok()?.try_extract::<u32>().ok()).unwrap_or(0);
+        dists.push(format!("{}", dc));
+
+        // mean/std for numeric (streaming)
+        if is_num {
+            meds.push(lf().and_then(|l| l.select([col(c).mean()]).collect_with_engine(Engine::Streaming).ok()).map(|df| get_str(&df, c)).unwrap_or_default());
+            sigs.push(lf().and_then(|l| l.select([col(c).std(1)]).collect_with_engine(Engine::Streaming).ok()).map(|df| get_str(&df, c)).unwrap_or_default());
         } else { meds.push(String::new()); sigs.push(String::new()); }
     }
 
