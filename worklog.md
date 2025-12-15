@@ -1,5 +1,37 @@
 # Worklog
 
+## 2025-12-15: Lazy Filtered Parquet Views
+
+### Problem
+Filter on parquet loaded entire filtered result into memory, losing lazy benefits.
+Freq on filtered view ran against in-memory data, not disk.
+
+### Solution
+- Add `filter_clause` field to ViewState for lazy filtered views
+- Add unified `sql()` helper in `backend/mod.rs` (DRY SQL execution)
+- Add Backend trait methods: `fetch_where`, `count_where`, `freq_where`
+- Implement in all backends (Polars, Memory, Gz) using same SQL path
+
+### Changes
+- Filter on parquet creates lazy view (keeps `parquet_path` + `filter_clause`)
+- Row count computed via `SELECT COUNT(*) WHERE filter` from disk
+- Viewport fetched via `SELECT * WHERE filter LIMIT/OFFSET` from disk
+- Freq on filtered view uses `SELECT col, COUNT(*) WHERE filter GROUP BY`
+- Pre-generated test parquet files in `tests/data/` (filtered_test, freq_test, sort_test, meta_test)
+
+### Files
+- `src/backend/mod.rs` - `sql()` helper, trait methods
+- `src/backend/polars.rs` - `lf()` helper, implementations
+- `src/backend/memory.rs` - implementations using `sql()`
+- `src/backend/gz.rs` - implementations (blocked if partial)
+- `src/state.rs` - `filter_clause` field, `new_filtered()` constructor
+- `src/command/transform.rs` - Filter creates lazy view for parquet
+- `src/plugin/freq.rs` - uses `freq_where` when filter_clause set
+- `src/render/renderer.rs` - uses `fetch_where` for filtered views
+- `tests/data/*.parquet` - pre-generated test files
+
+---
+
 ## 2025-12-15: Split Integration Tests by View
 
 ### Changes
