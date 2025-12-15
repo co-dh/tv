@@ -1,6 +1,6 @@
 //! Gz backend - streaming gzipped CSV with memory limits.
 //! Refuses expensive operations on partial (memory-limited) data.
-use super::{Backend, LoadResult, df_filter, df_sort_head, df_distinct};
+use super::{Backend, LoadResult, df_filter, df_sort_head, df_distinct, df_cols, df_schema, df_metadata, df_fetch, df_freq, df_count_where, df_fetch_where, df_freq_where};
 use crate::command::io::convert::{convert_epoch_cols, apply_schema, convert_types};
 use crate::state::ViewState;
 use super::polars::{detect_sep, parse_csv_buf};
@@ -25,67 +25,45 @@ pub struct Gz<'a> {
     pub partial: bool,
 }
 
+/// Error message for partial load operations
+const PARTIAL_ERR: &str = "File not fully loaded (memory limit)";
+
 impl Backend for Gz<'_> {
-    /// Column names from in-memory DataFrame
-    fn cols(&self, _: &str) -> Result<Vec<String>> {
-        Ok(self.df.get_column_names().iter().map(|s| s.to_string()).collect())
-    }
-
-    /// Schema from in-memory DataFrame
-    fn schema(&self, _: &str) -> Result<Vec<(String, String)>> {
-        Ok(self.df.schema().iter().map(|(n, dt)| (n.to_string(), format!("{:?}", dt))).collect())
-    }
-
-    /// Row count and columns from in-memory DataFrame
-    fn metadata(&self, _: &str) -> Result<(usize, Vec<String>)> {
-        Ok((self.df.height(), self.df.get_column_names().iter().map(|s| s.to_string()).collect()))
-    }
-
-    /// Slice in-memory DataFrame for viewport
-    fn fetch_rows(&self, _: &str, offset: usize, limit: usize) -> Result<DataFrame> {
-        Ok(self.df.slice(offset as i64, limit))
-    }
-
-    /// Distinct values - blocked if partial load (memory limit hit)
-    fn distinct(&self, _: &str, col: &str) -> Result<Vec<String>> {
-        if self.partial { return Err(anyhow!("File not fully loaded (memory limit)")); }
-        df_distinct(self.df, col)
-    }
-
-    /// Frequency count - blocked if partial load
-    fn freq(&self, _: &str, col: &str) -> Result<DataFrame> {
-        if self.partial { return Err(anyhow!("File not fully loaded (memory limit)")); }
-        self.df.column(col)?.as_materialized_series()
-            .value_counts(true, false, "Cnt".into(), false)
-            .map_err(|e| anyhow!("{}", e))
-    }
-
-    /// Filter with limit - blocked if partial load
-    fn filter(&self, _: &str, w: &str, limit: usize) -> Result<DataFrame> {
-        if self.partial { return Err(anyhow!("File not fully loaded (memory limit)")); }
-        df_filter(self.df, w, limit)
-    }
-
-    /// Sort and limit via common helper (always allowed)
+    fn cols(&self, _: &str) -> Result<Vec<String>> { Ok(df_cols(self.df)) }
+    fn schema(&self, _: &str) -> Result<Vec<(String, String)>> { Ok(df_schema(self.df)) }
+    fn metadata(&self, _: &str) -> Result<(usize, Vec<String>)> { Ok(df_metadata(self.df)) }
+    fn fetch_rows(&self, _: &str, offset: usize, limit: usize) -> Result<DataFrame> { Ok(df_fetch(self.df, offset, limit)) }
     fn sort_head(&self, _: &str, col: &str, desc: bool, limit: usize) -> Result<DataFrame> { df_sort_head(self.df, col, desc, limit) }
 
-    /// Fetch rows with WHERE clause - blocked if partial
+    /// Distinct - blocked if partial
+    fn distinct(&self, _: &str, col: &str) -> Result<Vec<String>> {
+        if self.partial { return Err(anyhow!(PARTIAL_ERR)); }
+        df_distinct(self.df, col)
+    }
+    /// Frequency count - blocked if partial
+    fn freq(&self, _: &str, col: &str) -> Result<DataFrame> {
+        if self.partial { return Err(anyhow!(PARTIAL_ERR)); }
+        df_freq(self.df, col)
+    }
+    /// Filter - blocked if partial
+    fn filter(&self, _: &str, w: &str, limit: usize) -> Result<DataFrame> {
+        if self.partial { return Err(anyhow!(PARTIAL_ERR)); }
+        df_filter(self.df, w, limit)
+    }
+    /// Fetch where - blocked if partial
     fn fetch_where(&self, _: &str, w: &str, offset: usize, limit: usize) -> Result<DataFrame> {
-        if self.partial { return Err(anyhow!("File not fully loaded (memory limit)")); }
-        super::sql(self.df.clone().lazy(), &format!("SELECT * FROM df WHERE {} LIMIT {} OFFSET {}", w, limit, offset))
+        if self.partial { return Err(anyhow!(PARTIAL_ERR)); }
+        df_fetch_where(self.df, w, offset, limit)
     }
-
-    /// Count rows matching WHERE clause - blocked if partial
+    /// Count where - blocked if partial
     fn count_where(&self, _: &str, w: &str) -> Result<usize> {
-        if self.partial { return Err(anyhow!("File not fully loaded (memory limit)")); }
-        let r = super::sql(self.df.clone().lazy(), &format!("SELECT COUNT(*) as cnt FROM df WHERE {}", w))?;
-        Ok(r.column("cnt")?.get(0)?.try_extract::<u32>().unwrap_or(0) as usize)
+        if self.partial { return Err(anyhow!(PARTIAL_ERR)); }
+        df_count_where(self.df, w)
     }
-
-    /// Frequency count with WHERE clause - blocked if partial
+    /// Freq where - blocked if partial
     fn freq_where(&self, _: &str, col: &str, w: &str) -> Result<DataFrame> {
-        if self.partial { return Err(anyhow!("File not fully loaded (memory limit)")); }
-        super::sql(self.df.clone().lazy(), &format!("SELECT \"{}\", COUNT(*) as Cnt FROM df WHERE {} GROUP BY \"{}\" ORDER BY Cnt DESC", col, w, col))
+        if self.partial { return Err(anyhow!(PARTIAL_ERR)); }
+        df_freq_where(self.df, col, w)
     }
 }
 

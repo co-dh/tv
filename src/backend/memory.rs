@@ -1,7 +1,7 @@
 //! Memory backend - in-memory DataFrame operations.
 //! Used for OS commands (ls, ps, tcp), CSV files, and filtered results.
 //! Path parameter is ignored - data comes from stored DataFrame reference.
-use super::{Backend, df_filter, df_sort_head, df_distinct};
+use super::{Backend, df_filter, df_sort_head, df_distinct, df_cols, df_schema, df_metadata, df_fetch, df_freq, df_count_where, df_fetch_where, df_freq_where};
 use anyhow::{anyhow, Result};
 use polars::prelude::*;
 
@@ -14,67 +14,29 @@ pub struct Memory<'a>(pub &'a DataFrame, pub Vec<String>);
 /// `impl Backend for Memory<'_>` - implement trait for Memory with any lifetime
 /// `'_` = elided lifetime, compiler infers it
 impl Backend for Memory<'_> {
-    /// Column names from in-memory DataFrame
-    fn cols(&self, _: &str) -> Result<Vec<String>> {
-        Ok(self.0.get_column_names().iter().map(|s| s.to_string()).collect())
-    }
-
-    /// Schema from in-memory DataFrame
-    fn schema(&self, _: &str) -> Result<Vec<(String, String)>> {
-        Ok(self.0.schema().iter().map(|(n, dt)| (n.to_string(), format!("{:?}", dt))).collect())
-    }
-
-    /// Row count and columns from in-memory DataFrame
-    fn metadata(&self, _: &str) -> Result<(usize, Vec<String>)> {
-        let df = self.0;
-        Ok((df.height(), df.get_column_names().iter().map(|s| s.to_string()).collect()))
-    }
-
-    /// Slice in-memory DataFrame for viewport
-    fn fetch_rows(&self, _: &str, offset: usize, limit: usize) -> Result<DataFrame> {
-        Ok(self.0.slice(offset as i64, limit))
-    }
-
-    /// Distinct values via common helper
+    fn cols(&self, _: &str) -> Result<Vec<String>> { Ok(df_cols(self.0)) }
+    fn schema(&self, _: &str) -> Result<Vec<(String, String)>> { Ok(df_schema(self.0)) }
+    fn metadata(&self, _: &str) -> Result<(usize, Vec<String>)> { Ok(df_metadata(self.0)) }
+    fn fetch_rows(&self, _: &str, offset: usize, limit: usize) -> Result<DataFrame> { Ok(df_fetch(self.0, offset, limit)) }
     fn distinct(&self, _: &str, col: &str) -> Result<Vec<String>> { df_distinct(self.0, col) }
+    fn filter(&self, _: &str, w: &str, limit: usize) -> Result<DataFrame> { df_filter(self.0, w, limit) }
+    fn sort_head(&self, _: &str, col: &str, desc: bool, limit: usize) -> Result<DataFrame> { df_sort_head(self.0, col, desc, limit) }
+    fn fetch_where(&self, _: &str, w: &str, offset: usize, limit: usize) -> Result<DataFrame> { df_fetch_where(self.0, w, offset, limit) }
+    fn count_where(&self, _: &str, w: &str) -> Result<usize> { df_count_where(self.0, w) }
+    fn freq_where(&self, _: &str, col: &str, w: &str) -> Result<DataFrame> { df_freq_where(self.0, col, w) }
 
     /// Frequency count - simple value_counts or keyed group_by
     fn freq(&self, _: &str, c: &str) -> Result<DataFrame> {
         let (df, keys) = (self.0, &self.1);
-        if keys.is_empty() {  // simple: value_counts on single column
-            df.column(c)?.as_materialized_series()
-                .value_counts(true, false, "Cnt".into(), false)
-                .map_err(|e| anyhow!("{}", e))
-        } else {  // keyed: group_by [keys..., col] then count
-            let mut g: Vec<Expr> = keys.iter().map(|k| col(k)).collect();
-            g.push(col(c));
-            df.clone().lazy()
-                .group_by(g).agg([len().alias("Cnt")])
-                .sort(["Cnt"], SortMultipleOptions::default().with_order_descending(true))
-                .collect()
-                .map_err(|e| anyhow!("{}", e))
-        }
-    }
-
-    /// Filter via common SQL helper with limit
-    fn filter(&self, _: &str, w: &str, limit: usize) -> Result<DataFrame> { df_filter(self.0, w, limit) }
-    /// Sort and limit via common helper
-    fn sort_head(&self, _: &str, col: &str, desc: bool, limit: usize) -> Result<DataFrame> { df_sort_head(self.0, col, desc, limit) }
-
-    /// Fetch rows with WHERE clause
-    fn fetch_where(&self, _: &str, w: &str, offset: usize, limit: usize) -> Result<DataFrame> {
-        super::sql(self.0.clone().lazy(), &format!("SELECT * FROM df WHERE {} LIMIT {} OFFSET {}", w, limit, offset))
-    }
-
-    /// Count rows matching WHERE clause
-    fn count_where(&self, _: &str, w: &str) -> Result<usize> {
-        let r = super::sql(self.0.clone().lazy(), &format!("SELECT COUNT(*) as cnt FROM df WHERE {}", w))?;
-        Ok(r.column("cnt")?.get(0)?.try_extract::<u32>().unwrap_or(0) as usize)
-    }
-
-    /// Frequency count with WHERE clause
-    fn freq_where(&self, _: &str, col: &str, w: &str) -> Result<DataFrame> {
-        super::sql(self.0.clone().lazy(), &format!("SELECT \"{}\", COUNT(*) as Cnt FROM df WHERE {} GROUP BY \"{}\" ORDER BY Cnt DESC", col, w, col))
+        if keys.is_empty() { return df_freq(df, c); }
+        // keyed: group_by [keys..., col] then count
+        let mut g: Vec<Expr> = keys.iter().map(|k| col(k)).collect();
+        g.push(col(c));
+        df.clone().lazy()
+            .group_by(g).agg([len().alias("Cnt")])
+            .sort(["Cnt"], SortMultipleOptions::default().with_order_descending(true))
+            .collect()
+            .map_err(|e| anyhow!("{}", e))
     }
 }
 

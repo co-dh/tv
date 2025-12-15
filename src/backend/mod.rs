@@ -27,19 +27,16 @@ pub struct LoadResult {
 
 // ── Common DataFrame ops (used by Memory & Gz) ──────────────────────────────
 
-/// Filter DataFrame using SQL WHERE clause, limit to avoid OOM
+/// Filter DataFrame using SQL WHERE clause (streaming)
 pub fn df_filter(df: &DataFrame, w: &str, limit: usize) -> Result<DataFrame> {
-    let mut ctx = ::polars::sql::SQLContext::new();
-    ctx.register("df", df.clone().lazy());
-    ctx.execute(&format!("SELECT * FROM df WHERE {} LIMIT {}", w, limit))?
-        .collect().map_err(|e| anyhow!("{}", e))
+    sql(df.clone().lazy(), &format!("SELECT * FROM df WHERE {} LIMIT {}", w, limit))
 }
 
-/// Execute SQL on LazyFrame (common helper for all SQL ops)
+/// Execute SQL on LazyFrame with streaming engine
 pub fn sql(lf: LazyFrame, query: &str) -> Result<DataFrame> {
     let mut ctx = ::polars::sql::SQLContext::new();
     ctx.register("df", lf);
-    ctx.execute(query)?.collect().map_err(|e| anyhow!("{}", e))
+    ctx.execute(query)?.collect_with_engine(Engine::Streaming).map_err(|e| anyhow!("{}", e))
 }
 
 /// Sort DataFrame and take top N rows
@@ -54,6 +51,51 @@ pub fn df_distinct(df: &DataFrame, col: &str) -> Result<Vec<String>> {
     let c = df.column(col).map_err(|e| anyhow!("{}", e))?;
     let uniq = c.unique().map_err(|e| anyhow!("{}", e))?;
     Ok((0..uniq.len()).filter_map(|i| uniq.get(i).ok().map(|v| v.to_string())).filter(|v| v != "null").collect())
+}
+
+// ── In-memory DataFrame helpers (shared by Memory and Gz backends) ──
+
+/// Column names from in-memory DataFrame
+pub fn df_cols(df: &DataFrame) -> Vec<String> {
+    df.get_column_names().iter().map(|s| s.to_string()).collect()
+}
+
+/// Schema from in-memory DataFrame
+pub fn df_schema(df: &DataFrame) -> Vec<(String, String)> {
+    df.schema().iter().map(|(n, dt)| (n.to_string(), format!("{:?}", dt))).collect()
+}
+
+/// Row count and columns from in-memory DataFrame
+pub fn df_metadata(df: &DataFrame) -> (usize, Vec<String>) {
+    (df.height(), df_cols(df))
+}
+
+/// Slice in-memory DataFrame for viewport
+pub fn df_fetch(df: &DataFrame, offset: usize, limit: usize) -> DataFrame {
+    df.slice(offset as i64, limit)
+}
+
+/// Frequency count using value_counts
+pub fn df_freq(df: &DataFrame, col: &str) -> Result<DataFrame> {
+    df.column(col)?.as_materialized_series()
+        .value_counts(true, false, "Cnt".into(), false)
+        .map_err(|e| anyhow!("{}", e))
+}
+
+/// Count rows matching WHERE clause
+pub fn df_count_where(df: &DataFrame, w: &str) -> Result<usize> {
+    let r = sql(df.clone().lazy(), &format!("SELECT COUNT(*) as cnt FROM df WHERE {}", w))?;
+    Ok(r.column("cnt")?.get(0)?.try_extract::<u32>().unwrap_or(0) as usize)
+}
+
+/// Fetch rows with WHERE clause
+pub fn df_fetch_where(df: &DataFrame, w: &str, offset: usize, limit: usize) -> Result<DataFrame> {
+    sql(df.clone().lazy(), &format!("SELECT * FROM df WHERE {} LIMIT {} OFFSET {}", w, limit, offset))
+}
+
+/// Frequency count with WHERE clause
+pub fn df_freq_where(df: &DataFrame, col: &str, w: &str) -> Result<DataFrame> {
+    sql(df.clone().lazy(), &format!("SELECT \"{}\", COUNT(*) as Cnt FROM df WHERE {} GROUP BY \"{}\" ORDER BY Cnt DESC", col, w, col))
 }
 
 /// Save DataFrame to parquet

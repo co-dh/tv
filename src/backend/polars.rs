@@ -49,20 +49,14 @@ impl Backend for Polars {
             .map_err(|e| anyhow!("Fetch: {}", e))
     }
 
-    /// Fetch rows with WHERE clause (for filtered parquet views, streaming)
+    /// Fetch rows with WHERE clause (streaming)
     fn fetch_where(&self, path: &str, w: &str, offset: usize, limit: usize) -> Result<DataFrame> {
-        let mut ctx = ::polars::sql::SQLContext::new();
-        ctx.register("df", self.lf(path)?);
-        let lf = ctx.execute(&format!("SELECT * FROM df WHERE {} LIMIT {} OFFSET {}", w, limit, offset))?;
-        lf.collect_with_engine(Engine::Streaming).map_err(|e| anyhow!("{}", e))
+        super::sql(self.lf(path)?, &format!("SELECT * FROM df WHERE {} LIMIT {} OFFSET {}", w, limit, offset))
     }
 
-    /// Count rows matching WHERE clause (streaming to avoid OOM)
+    /// Count rows matching WHERE clause (streaming)
     fn count_where(&self, path: &str, w: &str) -> Result<usize> {
-        let mut ctx = ::polars::sql::SQLContext::new();
-        ctx.register("df", self.lf(path)?);
-        let lf = ctx.execute(&format!("SELECT COUNT(*) as cnt FROM df WHERE {}", w))?;
-        let r = lf.collect_with_engine(Engine::Streaming)?;
+        let r = super::sql(self.lf(path)?, &format!("SELECT COUNT(*) as cnt FROM df WHERE {}", w))?;
         Ok(r.column("cnt")?.get(0)?.try_extract::<u32>().unwrap_or(0) as usize)
     }
 
@@ -93,19 +87,12 @@ impl Backend for Polars {
 
     /// Frequency count with WHERE clause (streaming)
     fn freq_where(&self, path: &str, col: &str, w: &str) -> Result<DataFrame> {
-        let mut ctx = ::polars::sql::SQLContext::new();
-        ctx.register("df", self.lf(path)?);
-        let lf = ctx.execute(&format!("SELECT \"{}\", COUNT(*) as Cnt FROM df WHERE {} GROUP BY \"{}\" ORDER BY Cnt DESC", col, w, col))?;
-        lf.collect_with_engine(Engine::Streaming).map_err(|e| anyhow!("{}", e))
+        super::sql(self.lf(path)?, &format!("SELECT \"{}\", COUNT(*) as Cnt FROM df WHERE {} GROUP BY \"{}\" ORDER BY Cnt DESC", col, w, col))
     }
 
-    /// Filter via SQL WHERE on LazyFrame with LIMIT (streaming to avoid OOM)
-    fn filter(&self, path: &str, where_clause: &str, limit: usize) -> Result<DataFrame> {
-        let mut ctx = polars::sql::SQLContext::new();
-        ctx.register("df", LazyFrame::scan_parquet(PlPath::new(path), ScanArgsParquet::default())?);
-        ctx.execute(&format!("SELECT * FROM df WHERE {} LIMIT {}", where_clause, limit))?
-            .collect_with_engine(Engine::Streaming)
-            .map_err(|e| anyhow!("{}", e))
+    /// Filter via SQL WHERE with LIMIT (streaming)
+    fn filter(&self, path: &str, w: &str, limit: usize) -> Result<DataFrame> {
+        super::sql(self.lf(path)?, &format!("SELECT * FROM df WHERE {} LIMIT {}", w, limit))
     }
 
     /// Sort and limit via LazyFrame (streaming to avoid OOM on large files)
