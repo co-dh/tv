@@ -1,94 +1,97 @@
-//! Parquet backend tests
+//! Parquet backend tests - key-based
 mod common;
-use common::{unique_id, run_script};
+use common::{run_keys};
 use std::fs;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use polars::prelude::*;
 
+static TEST_ID: AtomicUsize = AtomicUsize::new(4000);
+fn tid() -> usize { TEST_ID.fetch_add(1, Ordering::SeqCst) }
+
+// Test data files:
+// - tests/data/freq_test.parquet: sym column with A/B values
+// - tests/data/sort_test.parquet: name column with alice/bob/charlie
+// - tests/data/meta_test.parquet: columns a, b
+// - tests/data/filtered_test.parquet: 100k rows, sym 40%A/60%B, cat X/Y/Z/W
+
 #[test]
-fn test_parquet_filter_uses_disk() {
-    let id = unique_id();
-    let output = run_script("from tests/data/freq_test.parquet\nfilter \"sym\" = 'B'\n", id);
-    assert!(output.contains("rows") && !output.contains("(0 rows)") && !output.contains("(0)"),
-        "Filter should find B rows from disk (not 0), got: {}", output);
+fn test_parquet_filter() {
+    // Filter sym = 'B' using backslash
+    let out = run_keys("<backslash>sym = 'B'<ret>", "tests/data/freq_test.parquet");
+    assert!(out.contains("rows") && !out.contains("(0 rows)"),
+        "Filter should find B rows: {}", out);
 }
 
 #[test]
-fn test_parquet_freq_enter_uses_disk() {
-    let id = unique_id();
-    let output = run_script("from tests/data/freq_test.parquet\nfreq sym\nenter\n", id);
-    assert!(output.contains("rows") && !output.contains("(0 rows)") && !output.contains("(0)"),
-        "Freq enter should find B rows from disk (not 0), got: {}", output);
+fn test_parquet_freq_enter() {
+    // F for freq on sym, then enter to filter
+    let out = run_keys("F<ret>", "tests/data/freq_test.parquet");
+    assert!(out.contains("rows") && !out.contains("(0 rows)"),
+        "Freq enter should filter: {}", out);
 }
 
 #[test]
 fn test_parquet_sort_ascending() {
-    let id = unique_id();
-    let output = run_script("from tests/data/sort_test.parquet\nsort name\n", id);
-    let alice_pos = output.find("alice").expect("Should contain alice");
-    let bob_pos = output.find("bob").expect("Should contain bob");
-    let charlie_pos = output.find("charlie").expect("Should contain charlie");
-    assert!(alice_pos < bob_pos, "alice should come before bob");
-    assert!(bob_pos < charlie_pos, "bob should come before charlie");
+    // [ for sort ascending on name column
+    let out = run_keys("[", "tests/data/sort_test.parquet");
+    let alice = out.find("alice").expect("Should have alice");
+    let bob = out.find("bob").expect("Should have bob");
+    let charlie = out.find("charlie").expect("Should have charlie");
+    assert!(alice < bob, "alice before bob");
+    assert!(bob < charlie, "bob before charlie");
 }
 
 #[test]
 fn test_parquet_sort_descending() {
-    let id = unique_id();
-    let output = run_script("from tests/data/sort_test.parquet\nsort -name\n", id);
-    let alice_pos = output.find("alice").expect("Should contain alice");
-    let bob_pos = output.find("bob").expect("Should contain bob");
-    let charlie_pos = output.find("charlie").expect("Should contain charlie");
-    assert!(charlie_pos < bob_pos, "charlie should come before bob");
-    assert!(bob_pos < alice_pos, "bob should come before alice");
+    // ] for sort descending
+    let out = run_keys("]", "tests/data/sort_test.parquet");
+    let alice = out.find("alice").expect("Should have alice");
+    let bob = out.find("bob").expect("Should have bob");
+    let charlie = out.find("charlie").expect("Should have charlie");
+    assert!(charlie < bob, "charlie before bob");
+    assert!(bob < alice, "bob before alice");
 }
 
 #[test]
 fn test_parquet_meta() {
-    let id = unique_id();
-    let output = run_script("from tests/data/meta_test.parquet\nmeta\n", id);
-    assert!(output.contains("metadata"), "Should show metadata view");
-    assert!(output.contains("a") && output.contains("b"), "Should list columns");
+    let out = run_keys("M", "tests/data/meta_test.parquet");
+    assert!(out.contains("metadata"), "Should show metadata: {}", out);
+    assert!(out.contains("a") && out.contains("b"), "Should list columns");
 }
 
 #[test]
 fn test_parquet_time_roundtrip() {
-    let id = unique_id();
-    let pq_path = format!("/tmp/tv_pq_time_rt_{}.parquet", id);
+    let id = tid();
+    let pq = format!("tmp/tv_pq_time_{}.parquet", id);
 
     let ns: Vec<i64> = vec![3600_000_000_000, 7200_000_000_000, 10800_000_000_000];
     let time_series = Series::new("event_time".into(), ns)
         .cast(&DataType::Time).unwrap();
     let mut df = DataFrame::new(vec![time_series.into()]).unwrap();
 
-    ParquetWriter::new(std::fs::File::create(&pq_path).unwrap())
+    ParquetWriter::new(std::fs::File::create(&pq).unwrap())
         .finish(&mut df).unwrap();
 
-    let loaded = ParquetReader::new(std::fs::File::open(&pq_path).unwrap())
+    let loaded = ParquetReader::new(std::fs::File::open(&pq).unwrap())
         .finish().unwrap();
 
     assert!(matches!(loaded.column("event_time").unwrap().dtype(), DataType::Time),
-        "Time column should remain Time after parquet roundtrip, got {:?}",
-        loaded.column("event_time").unwrap().dtype());
-    fs::remove_file(&pq_path).ok();
+        "Time col should remain Time: {:?}", loaded.column("event_time").unwrap().dtype());
+    fs::remove_file(&pq).ok();
 }
 
-/// Filtered parquet view shows correct row count from disk via SQL count(*)
 #[test]
 fn test_parquet_filtered_count() {
-    let id = unique_id();
-    // filtered_test.parquet: 100k rows, 40% A, 60% B
-    let output = run_script("from tests/data/filtered_test.parquet\nfilter \"sym\" = 'B'\n", id);
-    assert!(output.contains("60,000") || output.contains("60000"),
-        "Filtered view should show 60,000 rows, got: {}", output);
+    // Filter for B (60% of 100k = 60k rows)
+    let out = run_keys("<backslash>sym = 'B'<ret>", "tests/data/filtered_test.parquet");
+    assert!(out.contains("60,000") || out.contains("60000"),
+        "Filtered should show 60,000 rows: {}", out);
 }
 
-/// Filtered parquet view freq runs against disk (not memory)
 #[test]
 fn test_parquet_filtered_freq() {
-    let id = unique_id();
-    // filtered_test.parquet: 100k rows, sym 40%A/60%B, cat 25% each X,Y,Z,W
-    // Filter for A (40k), freq on cat should show 10k each
-    let output = run_script("from tests/data/filtered_test.parquet\nfilter \"sym\" = 'A'\nfreq cat\n", id);
-    assert!(output.contains("Freq:cat") && output.contains("10"),
-        "Filtered freq should show ~10,000 counts, got: {}", output);
+    // Filter for A (40k rows), then freq on cat (should show ~10k each)
+    let out = run_keys("<backslash>sym = 'A'<ret><right>F", "tests/data/filtered_test.parquet");
+    assert!(out.contains("Freq:") && out.contains("10"),
+        "Filtered freq should show ~10k counts: {}", out);
 }

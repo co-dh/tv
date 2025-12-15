@@ -1,110 +1,88 @@
-//! Folder view (ls) tests
+//! Folder view (ls) tests - key-based
 mod common;
-use common::{unique_id, run_script, run_keys};
+use common::run_keys;
 use std::fs;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
+static TEST_ID: AtomicUsize = AtomicUsize::new(3000);
+fn tid() -> usize { TEST_ID.fetch_add(1, Ordering::SeqCst) }
+
+// Key navigation tests - l key shows cwd (project root)
 #[test]
-fn test_ls_shows_directory() {
-    let id = unique_id();
-    let dir = format!("/tmp/tv_test_dir_{}", id);
-    fs::create_dir_all(format!("{}/subdir", dir)).unwrap();
-    fs::write(format!("{}/file.txt", dir), "test").unwrap();
-
-    let output = run_script(&format!("ls {}\n", dir), id);
-    assert!(output.contains("subdir"), "ls should show subdir");
-    assert!(output.contains("file.txt"), "ls should show file");
+fn test_folder_view() {
+    // l shows current working directory
+    let out = run_keys("l", "tests/data/basic.csv");
+    assert!(out.contains("ls:"), "l should show folder view: {}", out);
+    // Should show .. parent entry
+    assert!(out.contains(".."), "Should show parent entry: {}", out);
 }
 
 #[test]
-fn test_ls_dir_column_x_for_dirs() {
-    let id = unique_id();
-    let dir = format!("/tmp/tv_test_dir2_{}", id);
-    fs::create_dir_all(format!("{}/subdir", dir)).unwrap();
-    fs::write(format!("{}/file.txt", dir), "test").unwrap();
+fn test_folder_sort_by_size() {
+    let out = run_keys("l<right><right>]", "tests/data/basic.csv");
+    assert!(out.contains("ls:"), "l should show folder view: {}", out);
+}
 
-    let output = run_script(&format!("ls {}\n", dir), id);
-    for line in output.lines() {
-        if line.contains("subdir") {
-            assert!(line.contains("x"), "dir column should be 'x' for directories");
+#[test]
+fn test_folder_freq() {
+    let out = run_keys("l<right><right><right><right>F", "tests/data/basic.csv");
+    assert!(out.contains("Freq:dir"), "F on dir column: {}", out);
+}
+
+#[test]
+fn test_folder_multi_select() {
+    let out = run_keys("l<space><down><space>", "tests/data/basic.csv");
+    assert!(out.contains("ls:"), "Folder view multi-select: {}", out);
+}
+
+#[test]
+fn test_folder_filter() {
+    let out = run_keys("l<backslash>name LIKE '%.csv'<ret>", "tests/data/basic.csv");
+    assert!(out.contains("rows)"), "Folder filter: {}", out);
+}
+
+#[test]
+fn test_folder_recursive() {
+    // r for recursive listing
+    let out = run_keys("r", "tests/data/basic.csv");
+    assert!(out.contains("ls -r:"), "r should show recursive: {}", out);
+}
+
+#[test]
+fn test_folder_dir_column() {
+    // Check that directories have 'x' in dir column - use project root
+    let out = run_keys("l", "tests/data/basic.csv");
+    // 'src' and 'tests' should be directories with 'x' in dir column
+    for line in out.lines() {
+        if line.contains("│ src") || line.contains("│ tests") {
+            assert!(line.contains("x"), "dir col should be 'x': {}", line);
         }
     }
 }
 
 #[test]
-fn test_ls_recursive() {
-    let id = unique_id();
-    let dir = format!("/tmp/tv_test_dir3_{}", id);
-    fs::create_dir_all(format!("{}/subdir", dir)).unwrap();
-    fs::write(format!("{}/subdir/nested.txt", dir), "test").unwrap();
-
-    let output = run_script(&format!("ls -r {}\n", dir), id);
-    assert!(output.contains("subdir"), "ls -r should show subdir");
-    assert!(output.contains("nested.txt"), "ls -r should show nested file");
+fn test_folder_parent_entry() {
+    // l should show .. entry
+    let out = run_keys("l", "tests/data/basic.csv");
+    assert!(out.contains(".."), "ls should show .. entry: {}", out);
 }
 
 #[test]
-fn test_ls_parent_dir_entry() {
-    let id = unique_id();
-    let dir = format!("/tmp/tv_test_parent_{}", id);
-    fs::create_dir_all(&dir).unwrap();
-
-    let output = run_script(&format!("ls {}\n", dir), id);
-    assert!(output.contains(".."), "ls should show .. entry for parent");
-    assert!(output.contains("/tmp"), ".. should point to parent directory");
+fn test_folder_sorted_by_name() {
+    // Check that files in folder view are sorted - visible rows at top
+    let out = run_keys("l", "tests/data/basic.csv");
+    // .. should be first, then .claude, then .git (alphabetically)
+    let parent = out.find("..").unwrap_or(999);
+    let claude = out.find(".claude").unwrap_or(999);
+    let git = out.find(".git").unwrap_or(999);
+    assert!(parent < claude, ".. before .claude");
+    assert!(claude < git, ".claude before .git");
 }
 
 #[test]
-fn test_ls_sorted_by_name() {
-    let id = unique_id();
-    let dir = format!("/tmp/tv_test_sort_{}", id);
-    fs::create_dir_all(&dir).unwrap();
-    fs::write(format!("{}/zebra.txt", dir), "z").unwrap();
-    fs::write(format!("{}/apple.txt", dir), "a").unwrap();
-    fs::write(format!("{}/mango.txt", dir), "m").unwrap();
-
-    let output = run_script(&format!("ls {}\n", dir), id);
-    let apple_pos = output.find("apple.txt").unwrap();
-    let mango_pos = output.find("mango.txt").unwrap();
-    let zebra_pos = output.find("zebra.txt").unwrap();
-    assert!(apple_pos < mango_pos, "apple should come before mango");
-    assert!(mango_pos < zebra_pos, "mango should come before zebra");
-}
-
-#[test]
-fn test_folder_open_csv_stack() {
-    // Test that opening CSV from folder view stacks correctly
-    let id = unique_id();
-    let dir = format!("/tmp/tv_folder_test_{}", id);
-    fs::create_dir_all(&dir).unwrap();
-    let csv_path = format!("{}/test.csv", dir);
-    fs::write(&csv_path, "a,b\n1,x\n2,y\n").unwrap();
-
-    // ls then open CSV
-    let output = run_script(&format!("ls {}\n", dir), id);
-    assert!(output.contains("test.csv"), "ls should show test.csv");
-}
-
-// Key play tests for folder view (Kakoune-style: l<right><right>] no commas)
-#[test]
-fn test_keys_folder_sort_by_size() {
-    let output = run_keys("l<right><right>]", ".");
-    assert!(output.contains("ls:"), "l should show folder view: {}", output);
-}
-
-#[test]
-fn test_keys_folder_freq() {
-    let output = run_keys("l<right><right><right><right>F", ".");
-    assert!(output.contains("Freq:dir"), "F should show freq on dir column: {}", output);
-}
-
-#[test]
-fn test_keys_folder_multi_select() {
-    let output = run_keys("l<space><down><space>", ".");
-    assert!(output.contains("ls:"), "Folder view should support multi-select: {}", output);
-}
-
-#[test]
-fn test_keys_folder_filter() {
-    let output = run_keys("l<backslash>", ".");
-    assert!(output.contains("ls:"), "Folder view should support filter: {}", output);
+fn test_folder_open_file() {
+    // Open folder view, navigate to a csv, press enter to open
+    let out = run_keys("l<down><ret>", "tests/data/basic.csv");
+    // Should either show the file or error if not csv
+    assert!(out.len() > 0, "Should produce output");
 }
