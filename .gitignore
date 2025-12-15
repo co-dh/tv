@@ -1,10 +1,9 @@
 /target
 commands.txt
 *.csv
-!cfg/key.csv
 !cfg/config.csv
 !cfg/themes.csv
 !cfg/plugins.csv
+!tests/data/*.csv
 *.parquet
-tests/data/
 tmp/

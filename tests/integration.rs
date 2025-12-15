@@ -1294,48 +1294,29 @@ fn run_keys(keys: &str, file: &str) -> String {
 #[test]
 fn test_keys_freq_enter() {
     // Test F (freq) + Enter (filter_parent) via key replay
-    let id = unique_id();
-    let path = format!("/tmp/tv_keys_freq_{}.csv", id);
-    fs::write(&path, "a,b\n1,x\n2,y\n3,x\n4,z\n5,x\n").unwrap();
-    // F=freq on col 0 (a), then move right to col b, F=freq, Enter=filter_parent
-    let output = run_keys("Right,F,Enter", &path);
+    let output = run_keys("Right,F,Enter", "tests/data/basic.csv");
     assert!(output.contains("b=x") || output.contains("(3 rows)"), "F+Enter should filter to first value: {}", output);
-    fs::remove_file(&path).ok();
 }
 
 #[test]
 fn test_keys_sort_asc() {
     // Test [ (sort ascending) via key replay
-    let id = unique_id();
-    let path = format!("/tmp/tv_keys_sort_{}.csv", id);
-    fs::write(&path, "a,b\n3,x\n1,y\n2,z\n").unwrap();
-    let output = run_keys("[", &path);
-    // First row should be 1 after sort
+    let output = run_keys("[", "tests/data/unsorted.csv");
     assert!(output.contains("│ 1"), "[ should sort ascending, first row should be 1: {}", output);
-    fs::remove_file(&path).ok();
 }
 
 #[test]
 fn test_keys_sort_desc() {
     // Test ] (sort descending) via key replay
-    let id = unique_id();
-    let path = format!("/tmp/tv_keys_sortd_{}.csv", id);
-    fs::write(&path, "a,b\n1,x\n3,y\n2,z\n").unwrap();
-    let output = run_keys("]", &path);
-    // First row should be 3 after sort desc
+    let output = run_keys("]", "tests/data/unsorted.csv");
     assert!(output.contains("│ 3"), "] should sort descending, first row should be 3: {}", output);
-    fs::remove_file(&path).ok();
 }
 
 #[test]
 fn test_keys_meta() {
     // Test M (meta) via key replay
-    let id = unique_id();
-    let path = format!("/tmp/tv_keys_meta_{}.csv", id);
-    fs::write(&path, "a,b\n1,x\n2,y\n3,z\n").unwrap();
-    let output = run_keys("M", &path);
+    let output = run_keys("M", "tests/data/basic.csv");
     assert!(output.contains("Meta:") || output.contains("metadata"), "M should show meta view: {}", output);
-    fs::remove_file(&path).ok();
 }
 
 #[test]
