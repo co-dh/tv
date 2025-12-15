@@ -18,7 +18,7 @@ impl Plugin for MetaPlugin {
     fn matches(&self, name: &str) -> bool { name == "metadata" }
 
     fn handle(&self, cmd: &str, app: &mut AppContext) -> Option<Box<dyn Command>> {
-        let col_names = get_selected_col_names(app, cmd == "delete")?;
+        let col_names = sel_cols(app, cmd == "delete")?;
         match cmd {
             "enter" => Some(Box::new(MetaEnter { col_names })),
             "delete" => Some(Box::new(MetaDelete { col_names })),
@@ -32,7 +32,7 @@ impl Plugin for MetaPlugin {
 }
 
 /// Get column names from selected rows (first column values)
-fn get_selected_col_names(app: &AppContext, reverse: bool) -> Option<Vec<String>> {
+fn sel_cols(app: &AppContext, reverse: bool) -> Option<Vec<String>> {
     app.view().and_then(|v| {
         let mut rows: Vec<usize> = if v.selected_rows.is_empty() {
             vec![v.state.cr]
@@ -101,7 +101,7 @@ impl Command for Metadata {
             std::thread::spawn(move || { if let Ok(r) = pq_stats(&path) { let _ = tx.send(r); } });
             app.bg_meta = Some((parent_id, rx));
         } else if parent_rows <= BG_THRESHOLD {
-            let meta_df = if key_cols.is_empty() { compute_stats(&df)? } else { compute_stats_grouped(&df, &key_cols)? };
+            let meta_df = if key_cols.is_empty() { compute_stats(&df)? } else { grp_stats(&df, &key_cols)? };
             if key_cols.is_empty() {
                 if let Some(parent) = app.stack.find_mut(parent_id) { parent.meta_cache = Some(meta_df.clone()); }
             }
@@ -224,7 +224,7 @@ fn compute_stats(df: &DataFrame) -> Result<DataFrame> {
     ])?)
 }
 
-fn compute_stats_grouped(df: &DataFrame, keys: &[String]) -> Result<DataFrame> {
+fn grp_stats(df: &DataFrame, keys: &[String]) -> Result<DataFrame> {
     let all: Vec<String> = df.get_column_names().iter().map(|s| s.to_string()).collect();
     let non_keys: Vec<&String> = all.iter().filter(|c| !keys.contains(c)).collect();
 

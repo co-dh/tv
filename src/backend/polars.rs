@@ -171,13 +171,13 @@ pub fn load_glob(pattern: &str, limit: u32) -> Result<DataFrame> {
     lf.limit(limit).collect()
         .map_err(|e| {
             if e.to_string().contains("mismatch") {
-                find_schema_mismatch(pattern).unwrap_or_else(|| anyhow!("{}", e))
+                schema_diff(pattern).unwrap_or_else(|| anyhow!("{}", e))
             } else { anyhow!("{}", e) }
         })
 }
 
 /// Find which parquet file has schema mismatch by comparing all files
-fn find_schema_mismatch(pattern: &str) -> Option<anyhow::Error> {
+fn schema_diff(pattern: &str) -> Option<anyhow::Error> {
     let output = std::process::Command::new("sh")
         .args(["-c", &format!("ls -1 {} 2>/dev/null", pattern)])
         .output().ok()?;

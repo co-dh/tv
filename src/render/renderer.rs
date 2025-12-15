@@ -40,7 +40,7 @@ impl Renderer {
             }
             Self::render_status_bar(frame, view, &message, is_loading, area, &theme);
         } else {
-            Self::render_empty_message(frame, &message, area);
+            Self::empty_msg(frame, &message, area);
         }
     }
 
@@ -61,7 +61,7 @@ impl Renderer {
         // Calculate column widths if needed
         if view.state.need_widths() {
             let widths: Vec<u16> = (0..df.width())
-                .map(|col_idx| Self::calculate_column_width(df, col_idx, &view.state, decimals))
+                .map(|col_idx| Self::col_width(df, col_idx, &view.state, decimals))
                 .collect();
             view.state.col_widths = widths;
             view.state.widths_row = view.state.cr;
@@ -325,7 +325,7 @@ impl Renderer {
     }
 
     /// Calculate column width
-    fn calculate_column_width(df: &DataFrame, col_idx: usize, state: &TableState, decimals: usize) -> u16 {
+    fn col_width(df: &DataFrame, col_idx: usize, state: &TableState, decimals: usize) -> u16 {
         const MAX_WIDTH: usize = 30;
         const MIN_WIDTH: usize = 3;
 
@@ -526,7 +526,7 @@ impl Renderer {
     }
 
     /// Render empty message
-    fn render_empty_message(frame: &mut Frame, message: &str, area: Rect) {
+    fn empty_msg(frame: &mut Frame, message: &str, area: Rect) {
         let buf = frame.buffer_mut();
         let y = area.height / 2;
         for (i, ch) in message.chars().enumerate() {
