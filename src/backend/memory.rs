@@ -56,8 +56,8 @@ impl Backend for Memory<'_> {
         }
     }
 
-    /// Filter via common SQL helper
-    fn filter(&self, _: &str, w: &str) -> Result<DataFrame> { df_filter(self.0, w) }
+    /// Filter via common SQL helper with limit
+    fn filter(&self, _: &str, w: &str, limit: usize) -> Result<DataFrame> { df_filter(self.0, w, limit) }
     /// Sort and limit via common helper
     fn sort_head(&self, _: &str, col: &str, desc: bool, limit: usize) -> Result<DataFrame> { df_sort_head(self.0, col, desc, limit) }
 }
@@ -129,7 +129,7 @@ mod tests {
         let df = DataFrame::new(vec![
             Column::new("a".into(), vec![1, 2, 3, 4, 5]),
         ]).unwrap();
-        assert_eq!(Memory(&df, vec![]).filter("", "a > 3").unwrap().height(), 2);
+        assert_eq!(Memory(&df, vec![]).filter("", "a > 3", 1000).unwrap().height(), 2);
     }
 
     #[test]

@@ -27,11 +27,11 @@ pub struct LoadResult {
 
 // ── Common DataFrame ops (used by Memory & Gz) ──────────────────────────────
 
-/// Filter DataFrame using SQL WHERE clause
-pub fn df_filter(df: &DataFrame, w: &str) -> Result<DataFrame> {
+/// Filter DataFrame using SQL WHERE clause, limit to avoid OOM
+pub fn df_filter(df: &DataFrame, w: &str, limit: usize) -> Result<DataFrame> {
     let mut ctx = ::polars::sql::SQLContext::new();
     ctx.register("df", df.clone().lazy());
-    ctx.execute(&format!("SELECT * FROM df WHERE {}", w))?
+    ctx.execute(&format!("SELECT * FROM df WHERE {} LIMIT {}", w, limit))?
         .collect().map_err(|e| anyhow!("{}", e))
 }
 
@@ -89,9 +89,9 @@ pub trait Backend: Send + Sync {
     /// Returns DataFrame with [col, Cnt] columns.
     fn freq(&self, path: &str, col: &str) -> Result<DataFrame>;
 
-    /// Filter rows using SQL WHERE clause syntax.
-    /// Returns DataFrame with matching rows.
-    fn filter(&self, path: &str, where_clause: &str) -> Result<DataFrame>;
+    /// Filter rows using SQL WHERE clause syntax, limit results.
+    /// Returns DataFrame with up to `limit` matching rows.
+    fn filter(&self, path: &str, where_clause: &str, limit: usize) -> Result<DataFrame>;
 
     /// Sort by column and return top N rows (efficient for TUI viewport).
     fn sort_head(&self, path: &str, col: &str, desc: bool, limit: usize) -> Result<DataFrame>;

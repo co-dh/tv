@@ -851,10 +851,13 @@ fn test_parquet_filter_uses_disk() {
     ParquetWriter::new(std::fs::File::create(&path).unwrap())
         .finish(&mut df.clone()).unwrap();
 
-    // Filter for B - should find 100k rows from DISK, not 0 from memory
+    // Filter for B - should find rows from DISK (not 0 from memory)
+    // Result is limited but should have at least some B rows
     let output = run_script(&format!("from {}\nfilter \"symbol\" = 'B'\n", path), id);
-    assert!(output.contains("100000 rows") || output.contains("100,000 rows") || output.contains("(100000") || output.contains("(100,000"),
-        "Filter should find 100000 B rows from disk, got: {}", output);
+    // If it used memory (only A in preview), it would show 0 rows
+    // Check for "rows" in output and no "(0 rows)" or "(0"
+    assert!(output.contains("rows") && !output.contains("(0 rows)") && !output.contains("(0)"),
+        "Filter should find B rows from disk (not 0), got: {}", output);
 }
 
 // =============================================================================
@@ -1183,7 +1186,7 @@ fn test_parquet_freq_enter_uses_disk() {
     // Parquet: 200k rows - first 100k "A", next 100k "B"
     // Memory preview only loads 100k, so only "A" in memory
     // Freq should see both A and B (from disk)
-    // Enter on "B" should find 100k rows (from disk, not 0 from memory)
+    // Enter on "B" should find rows from disk (not 0 from memory)
     use polars::prelude::*;
     let id = unique_id();
     let path = format!("/tmp/tv_pq_freq_enter_{}.parquet", id);
@@ -1197,11 +1200,10 @@ fn test_parquet_freq_enter_uses_disk() {
     // Freq then enter on B (row 0) - should filter from disk
     // Freq sorts by Cnt desc; both have 100k, B comes first alphabetically
     let output = run_script(&format!("from {}\nfreq sym\nenter\n", path), id);
-    // If FilterIn uses disk: sym=B view with 100k rows
+    // If FilterIn uses disk: sym=B view with some rows (limited)
     // If FilterIn uses memory: sym=B view with 0 rows (B not in preview)
-    assert!(output.contains("100000 rows") || output.contains("100,000 rows") ||
-            output.contains("(100000") || output.contains("(100,000"),
-        "Freq enter should find 100000 B rows from disk, got: {}", output);
+    assert!(output.contains("rows") && !output.contains("(0 rows)") && !output.contains("(0)"),
+        "Freq enter should find B rows from disk (not 0), got: {}", output);
     fs::remove_file(&path).ok();
 }
 
@@ -1372,4 +1374,13 @@ fn test_keys_folder_freq() {
     // l=ls, Right 4 times to dir column, F=freq
     let output = run_keys("l,Right,Right,Right,Right,F", ".");
     assert!(output.contains("Freq:dir"), "F should show freq on dir column: {}", output);
+}
+
+#[test]
+fn test_keys_folder_multi_select() {
+    // l=ls, Space to select, Down, Space to select another
+    // Verifies folder view supports toggle_sel (Space key)
+    let output = run_keys("l,Space,Down,Space", ".");
+    // Should still show folder view (didn't crash)
+    assert!(output.contains("ls:"), "Folder view should support multi-select: {}", output);
 }

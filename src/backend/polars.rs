@@ -67,12 +67,12 @@ impl Backend for Polars {
             .map_err(|e| anyhow!("{}", e))
     }
 
-    /// Filter via SQL WHERE on LazyFrame
-    fn filter(&self, path: &str, where_clause: &str) -> Result<DataFrame> {
+    /// Filter via SQL WHERE on LazyFrame with LIMIT (streaming to avoid OOM)
+    fn filter(&self, path: &str, where_clause: &str, limit: usize) -> Result<DataFrame> {
         let mut ctx = polars::sql::SQLContext::new();
         ctx.register("df", LazyFrame::scan_parquet(PlPath::new(path), ScanArgsParquet::default())?);
-        ctx.execute(&format!("SELECT * FROM df WHERE {}", where_clause))?
-            .collect()
+        ctx.execute(&format!("SELECT * FROM df WHERE {} LIMIT {}", where_clause, limit))?
+            .collect_with_engine(Engine::Streaming)
             .map_err(|e| anyhow!("{}", e))
     }
 

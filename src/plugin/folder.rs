@@ -30,18 +30,32 @@ impl Plugin for FolderPlugin {
     fn matches(&self, name: &str) -> bool { name.starts_with("ls") }
 
     fn handle(&self, cmd: &str, app: &mut AppContext) -> Option<Box<dyn Command>> {
-        let (path, is_dir, dir) = app.view().and_then(|v| {
-            let df = &v.dataframe;
-            let path = df.column("path").ok()?.get(v.state.cr).ok()
-                .map(|v| v.to_string().trim_matches('"').to_string())?;
-            let is_dir = df.column("dir").ok()
-                .and_then(|c| c.get(v.state.cr).ok())
-                .map(|v| v.to_string().trim_matches('"') == "x")
-                .unwrap_or(false);
-            // Extract parent dir from view name (ls:path or ls -r:path)
-            let dir = v.name.split(':').nth(1).map(|s| PathBuf::from(s)).unwrap_or_else(|| PathBuf::from("."));
-            Some((path, is_dir, dir))
-        })?;
+        let v = app.view()?;
+        let df = &v.dataframe;
+        // Extract parent dir from view name (ls:path or ls -r:path)
+        let dir = v.name.split(':').nth(1).map(|s| PathBuf::from(s)).unwrap_or_else(|| PathBuf::from("."));
+
+        // For delete: get all selected paths (or current row)
+        if cmd == "delete" {
+            let rows: Vec<usize> = if v.selected_rows.is_empty() { vec![v.state.cr] }
+                else { v.selected_rows.iter().copied().collect() };
+            let paths: Vec<String> = rows.iter().filter_map(|&r| {
+                df.column("path").ok()?.get(r).ok()
+                    .map(|v| v.to_string().trim_matches('"').to_string())
+            }).collect();
+            if !paths.is_empty() {
+                return Some(Box::new(DelFiles { paths, dir }));
+            }
+            return None;
+        }
+
+        // For enter: get current row info
+        let path = df.column("path").ok()?.get(v.state.cr).ok()
+            .map(|v| v.to_string().trim_matches('"').to_string())?;
+        let is_dir = df.column("dir").ok()
+            .and_then(|c| c.get(v.state.cr).ok())
+            .map(|v| v.to_string().trim_matches('"') == "x")
+            .unwrap_or(false);
 
         match cmd {
             "enter" => {
@@ -53,7 +67,6 @@ impl Plugin for FolderPlugin {
                     Some(Box::new(From { file_path: path }))
                 }
             }
-            "delete" => Some(Box::new(DelFile { path, dir })),
             _ => None,
         }
     }
@@ -85,24 +98,31 @@ impl Command for Ls {
     }
 }
 
-/// Delete file with confirmation
-pub struct DelFile { pub path: String, pub dir: PathBuf }
+/// Delete files with confirmation (supports multi-select)
+pub struct DelFiles { pub paths: Vec<String>, pub dir: PathBuf }
 
-impl Command for DelFile {
+impl Command for DelFiles {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         use crate::picker;
-        let name = Path::new(&self.path).file_name().and_then(|s| s.to_str()).unwrap_or(&self.path);
-        let prompt = format!("Delete '{}'? ", name);
-        let result = picker::fzf(vec!["No".into(), "Yes".into()], &prompt)?;
+        let n = self.paths.len();
+        let prompt = if n == 1 {
+            let name = Path::new(&self.paths[0]).file_name().and_then(|s| s.to_str()).unwrap_or(&self.paths[0]);
+            format!("Delete '{}'? ", name)
+        } else { format!("Delete {} files? ", n) };
+        let result = picker::fzf(vec!["Yes".into(), "No".into()], &prompt)?;
         app.needs_redraw = true;
         match result {
             Some(s) if s == "Yes" => {
-                std::fs::remove_file(&self.path)?;
-                app.msg(format!("Deleted: {}", self.path));
+                let mut deleted = 0;
+                for path in &self.paths {
+                    if std::fs::remove_file(path).is_ok() { deleted += 1; }
+                }
+                app.msg(format!("Deleted {} file(s)", deleted));
                 // Refresh by re-running ls on parent dir
                 let df = crate::os::ls(&self.dir)?;
                 if let Some(view) = app.view_mut() {
                     view.dataframe = df;
+                    view.selected_rows.clear();
                     if view.state.cr >= view.dataframe.height() {
                         view.state.cr = view.dataframe.height().saturating_sub(1);
                     }
@@ -112,7 +132,7 @@ impl Command for DelFile {
         }
         Ok(())
     }
-    fn to_str(&self) -> String { format!("del {}", self.path) }
+    fn to_str(&self) -> String { format!("del {} files", self.paths.len()) }
 }
 
 /// View text file with bat (leaves alternate screen, restores on exit)

@@ -60,10 +60,10 @@ impl Backend for Gz<'_> {
             .map_err(|e| anyhow!("{}", e))
     }
 
-    /// Filter - blocked if partial load
-    fn filter(&self, _: &str, w: &str) -> Result<DataFrame> {
+    /// Filter with limit - blocked if partial load
+    fn filter(&self, _: &str, w: &str, limit: usize) -> Result<DataFrame> {
         if self.partial { return Err(anyhow!("File not fully loaded (memory limit)")); }
-        df_filter(self.df, w)
+        df_filter(self.df, w, limit)
     }
 
     /// Sort and limit via common helper (always allowed)

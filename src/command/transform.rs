@@ -37,7 +37,7 @@ impl Command for Filter {
             let v = app.req()?;
             let where_clause = crate::prql::filter_to_sql(&self.expr)?;
             let path = v.path().to_string();
-            (v.backend().filter(&path, &where_clause)?, v.filename.clone())
+            (v.backend().filter(&path, &where_clause, FILTER_LIMIT)?, v.filename.clone())
         };
         let id = app.next_id();
         app.stack.push(crate::state::ViewState::new(id, self.expr.clone(), filtered, filename));
@@ -63,6 +63,7 @@ impl Command for Select {
 pub struct Sort { pub col_name: String, pub descending: bool }
 
 const SORT_LIMIT: usize = 10_000;
+const FILTER_LIMIT: usize = 10_000;
 
 impl Command for Sort {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
@@ -138,7 +139,7 @@ impl Command for FilterIn {
             let is_str = schema.iter().find(|(n, _)| n == &self.col)
                 .map(|(_, t)| t.contains("String") || t.contains("Utf8")).unwrap_or(true);
             let vals = self.values.iter().map(|v| if is_str { format!("'{}'", v) } else { v.clone() }).collect::<Vec<_>>().join(",");
-            (v.backend().filter(&path, &format!("\"{}\" IN ({})", self.col, vals))?, v.filename.clone())
+            (v.backend().filter(&path, &format!("\"{}\" IN ({})", self.col, vals), FILTER_LIMIT)?, v.filename.clone())
         };
         let id = app.next_id();
         let name = if self.values.len() == 1 { format!("{}={}", self.col, self.values[0]) }
