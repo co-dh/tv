@@ -76,8 +76,10 @@ pub trait Backend: Send + Sync {
     /// Get metadata: (row_count, column_names)
     fn metadata(&self, path: &str) -> Result<(usize, Vec<String>)>;
 
-    /// Fetch rows for viewport (offset, limit), with optional WHERE clause
-    fn fetch_rows(&self, path: &str, offset: usize, limit: usize) -> Result<DataFrame>;
+    /// Fetch rows for viewport (offset, limit) - default calls fetch_where with TRUE
+    fn fetch_rows(&self, path: &str, offset: usize, limit: usize) -> Result<DataFrame> {
+        self.fetch_where(path, "TRUE", offset, limit)
+    }
 
     /// Fetch rows with WHERE clause for filtered views
     fn fetch_where(&self, path: &str, where_clause: &str, offset: usize, limit: usize) -> Result<DataFrame>;
@@ -98,9 +100,10 @@ pub trait Backend: Send + Sync {
         }
     }
 
-    /// Compute frequency counts for a column, sorted descending.
-    /// Returns DataFrame with [col, Cnt] columns.
-    fn freq(&self, path: &str, col: &str) -> Result<DataFrame>;
+    /// Compute frequency counts for a column - default calls freq_where with TRUE
+    fn freq(&self, path: &str, col: &str) -> Result<DataFrame> {
+        self.freq_where(path, col, "TRUE")
+    }
 
     /// Compute frequency with WHERE clause for filtered views
     fn freq_where(&self, path: &str, col: &str, where_clause: &str) -> Result<DataFrame>;
