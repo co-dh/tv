@@ -95,3 +95,39 @@ fn test_parquet_filtered_freq() {
     assert!(out.contains("Freq:") && out.contains("10"),
         "Filtered freq should show ~10k counts: {}", out);
 }
+
+// === Chained filter tests ===
+
+#[test]
+fn test_parquet_chained_filter_count() {
+    // Filter sym='A' (40k), then filter cat='X' (10k) - should query disk
+    let out = run_keys("<backslash>sym = 'A'<ret><backslash>cat = 'X'<ret>", "tests/data/filtered_test.parquet");
+    assert!(out.contains("10000") || out.contains("10,000"),
+        "Chained filter should show 10,000 rows: {}", out);
+}
+
+#[test]
+fn test_parquet_chained_filter_name() {
+    // Chained filter view name should show both filters
+    let out = run_keys("<backslash>sym = 'A'<ret><backslash>cat = 'X'<ret>", "tests/data/filtered_test.parquet");
+    assert!(out.contains("& sym") && out.contains("& cat"),
+        "View name should show chained filters: {}", out);
+}
+
+#[test]
+fn test_parquet_filtered_freq_on_disk() {
+    // Freq on filtered view should query disk, not memory
+    // Filter for A (40k), freq on cat shows 4 values with ~10k each
+    let out = run_keys("<backslash>sym = 'A'<ret><right>F", "tests/data/filtered_test.parquet");
+    assert!(out.contains("(4 rows)"), "Filtered freq should have 4 cat values: {}", out);
+    assert!(out.contains("10000") || out.contains("10,000"),
+        "Each cat should have ~10k count: {}", out);
+}
+
+#[test]
+fn test_parquet_filter_shows_total_rows() {
+    // Filtered view should show total matching rows in header
+    let out = run_keys("<backslash>sym = 'B'<ret>", "tests/data/filtered_test.parquet");
+    assert!(out.contains("60000") || out.contains("60,000"),
+        "Filter B should show 60,000 total rows: {}", out);
+}

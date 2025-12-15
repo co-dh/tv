@@ -35,15 +35,21 @@ impl Command for Filter {
         if app.is_loading() { return Err(anyhow!("Wait for loading to complete")); }
         let id = app.next_id();
         let v = app.req()?;
-        let where_clause = crate::prql::filter_to_sql(&self.expr)?;
+        let new_clause = crate::prql::filter_to_sql(&self.expr)?;
         let path = v.path().to_string();
         // Lazy filtered view for parquet: keep parquet_path + filter_clause
         if v.parquet_path.is_some() {
-            let count = v.backend().count_where(&path, &where_clause)?;
+            // Chain filters: combine existing filter_clause with new one using AND
+            let combined = match &v.filter_clause {
+                Some(prev) => format!("({}) AND ({})", prev, new_clause),
+                None => new_clause,
+            };
+            let count = v.backend().count_where(&path, &combined)?;
             let cols = v.col_names.clone();
-            app.stack.push(crate::state::ViewState::new_filtered(id, self.expr.clone(), path, cols, where_clause, count));
+            let name = format!("{} & {}", v.name, self.expr);
+            app.stack.push(crate::state::ViewState::new_filtered(id, name, path, cols, combined, count));
         } else {
-            let filtered = v.backend().filter(&path, &where_clause, FILTER_LIMIT)?;
+            let filtered = v.backend().filter(&path, &new_clause, FILTER_LIMIT)?;
             let filename = v.filename.clone();
             app.stack.push(crate::state::ViewState::new(id, self.expr.clone(), filtered, filename));
         }
