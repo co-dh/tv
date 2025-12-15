@@ -142,6 +142,7 @@ fn run_batch<I: Iterator<Item = String>>(lines: I) -> Result<()> {
         }
     }
     wait_bg_save(&mut app);
+    wait_bg_meta(&mut app);
     print(&app);
     Ok(())
 }
@@ -159,8 +160,17 @@ fn run_script(script_path: &str) -> Result<()> {
 /// Block until background save completes
 fn wait_bg_save(app: &mut AppContext) {
     if let Some(rx) = app.bg_saver.take() {
-        for msg in rx {
-            eprintln!("{}", msg);  // print status to stderr
+        for msg in rx { eprintln!("{}", msg); }
+    }
+}
+
+/// Block until background meta completes
+fn wait_bg_meta(app: &mut AppContext) {
+    if let Some((pid, rx)) = app.bg_meta.take() {
+        if let Ok(df) = rx.recv() {
+            if let Some(v) = app.view_mut() {
+                if v.name == "metadata" && v.parent_id == Some(pid) { v.dataframe = df; }
+            }
         }
     }
 }
