@@ -258,19 +258,26 @@ mod tests {
 
     #[test]
     fn test_gz_to_parquet() {
+        use std::time::Duration;
         let tmp = std::env::temp_dir();
         let csv_path = tmp.join("test_gz.csv");
         let gz_path = tmp.join("test_gz.csv.gz");
         let out_path = tmp.join("test_gz.parquet");
 
-        std::fs::write(&csv_path, "a,b,c\n1,2.5,x\n3,4.5,y\n").unwrap();
+        // Cleanup before test
+        let _ = std::fs::remove_file(&csv_path);
         let _ = std::fs::remove_file(&gz_path);
+        let _ = std::fs::remove_file(&out_path);
+
+        std::fs::write(&csv_path, "a,b,c\n1,2.5,x\n3,4.5,y\n").unwrap();
         std::process::Command::new("gzip").arg("-k").arg(&csv_path).status().unwrap();
 
         let (tx, rx) = mpsc::channel();
         let _ = stream_save(gz_path.to_str().unwrap(), &out_path, false, &tx);
-        let msgs: Vec<_> = rx.iter().collect();
-        assert!(msgs.last().unwrap().contains("Done"));
+        // Collect with timeout to avoid hang
+        let mut msgs = vec![];
+        while let Ok(msg) = rx.recv_timeout(Duration::from_secs(5)) { msgs.push(msg); }
+        assert!(msgs.last().map(|s| s.contains("Done")).unwrap_or(false));
 
         let df = ParquetReader::new(std::fs::File::open(&out_path).unwrap()).finish().unwrap();
         assert_eq!(df.height(), 2);
