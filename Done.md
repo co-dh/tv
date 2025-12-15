@@ -156,3 +156,12 @@
   - test_system.rs (9 tests)
   - common/mod.rs (shared utilities)
 
+## Lazy Filtered Parquet Views
+- Filtered parquet views stay lazy (no memory load)
+- Filter creates view with filter_clause, keeps parquet_path
+- Row count computed via SQL count(*) from disk
+- Freq on filtered view uses SQL with WHERE clause
+- Unified sql() helper for all backends (DRY)
+- Backend trait: fetch_where, count_where, freq_where methods
+- Tests: test_parquet_filtered_count, test_parquet_filtered_freq
+

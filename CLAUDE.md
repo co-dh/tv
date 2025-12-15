@@ -15,8 +15,6 @@
 ## Do not repeat yourself. Not just on the syntax level, but also conceptually. Do not hold a in memory copy of parquet, but use a lazy frame.
 
 # Todo
-- in filtered view of lazy polars, display the total row count of the filtered view, with something like select count(*) from t where filter. use the backend's sql interface.
-- same in filtered view, when you run frequence on another column, it should just run against the disk version, not the memory. use sql interface.
-- since the in memory dataframe also support sql interface, you should do the same to it. so one code path for both.
-- add key play test for each of these. you can set the limit to small to test it.
-
+all the operation on lazy parquet need to against disk, not memory df. in fact, the stack top should be the lazyframe.
+- add comments to each functions, to newbie rust programmer but know c++.
+- unify fetch_where and fetch_rows with empty where. same for freq and freq_where.
