@@ -332,9 +332,13 @@ fn pq_stats(path: &str) -> Result<DataFrame> {
     ])?)
 }
 
+/// Extract f64 from first row of column (for single-row stats DF)
 fn get_f64(df: &DataFrame, c: &str) -> f64 { df.column(c).ok().and_then(|c| c.get(0).ok()).and_then(|v| v.try_extract::<u32>().ok()).unwrap_or(0) as f64 }
+/// Extract u32 from first row of column
 fn get_u32(df: &DataFrame, c: &str) -> u32 { df.column(c).ok().and_then(|c| c.get(0).ok()).and_then(|v| v.try_extract::<u32>().ok()).unwrap_or(0) }
+/// Extract string from first row of column
 fn get_str(df: &DataFrame, c: &str) -> String { df.column(c).ok().and_then(|c| c.get(0).ok()).map(|v| fmt(&v)).unwrap_or_default() }
+/// Format AnyValue to string, trimming quotes
 fn fmt(v: &AnyValue) -> String {
     match v {
         AnyValue::Null => String::new(),

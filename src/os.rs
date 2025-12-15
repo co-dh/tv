@@ -209,6 +209,7 @@ pub fn udp() -> anyhow::Result<DataFrame> {
     parse_net_file("/proc/net/udp")
 }
 
+/// Parse /proc/net/tcp or /proc/net/udp into DataFrame
 fn parse_net_file(path: &str) -> anyhow::Result<DataFrame> {
     let mut local_addrs: Vec<String> = Vec::new();
     let mut local_ports: Vec<u32> = Vec::new();
@@ -245,6 +246,7 @@ fn parse_net_file(path: &str) -> anyhow::Result<DataFrame> {
     ])?)
 }
 
+/// Parse hex IP:port string from /proc/net/* into (dotted IP, port)
 fn parse_addr(s: &str) -> (String, u32) {
     let parts: Vec<&str> = s.split(':').collect();
     if parts.len() == 2 {
@@ -257,6 +259,7 @@ fn parse_addr(s: &str) -> (String, u32) {
     }
 }
 
+/// Convert hex TCP state code to readable string
 fn parse_tcp_state(s: &str) -> String {
     match s {
         "01" => "ESTABLISHED",

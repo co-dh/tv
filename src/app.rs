@@ -40,6 +40,7 @@ pub struct AppContext {
 }
 
 impl AppContext {
+    /// Create new app context with default settings, keymap, theme, and plugins
     pub fn new() -> Self {
         let keymap = KeyMap::new();
         let theme = Theme::load_active();
@@ -147,22 +148,33 @@ impl AppContext {
         }
     }
 
+    /// Get next unique view ID (auto-increment)
     pub fn next_id(&mut self) -> usize { let i = self.next_id; self.next_id += 1; i }
+    /// Check if any view exists
     pub fn has_view(&self) -> bool { self.stack.has_view() }
+    /// Get current view (top of stack)
     pub fn view(&self) -> Option<&ViewState> { self.stack.cur() }
+    /// Get mutable current view
     pub fn view_mut(&mut self) -> Option<&mut ViewState> { self.stack.cur_mut() }
+    /// Get current view or error if none
     pub fn req(&self) -> Result<&ViewState> { self.view().ok_or_else(|| anyhow!("No table loaded")) }
+    /// Get mutable current view or error if none
     pub fn req_mut(&mut self) -> Result<&mut ViewState> { self.view_mut().ok_or_else(|| anyhow!("No table loaded")) }
 
+    /// Append command to history file
     pub fn record(&mut self, cmd: &str) -> Result<()> {
         writeln!(OpenOptions::new().create(true).append(true).open(&self.history_file)?, "{}", cmd)?;
         Ok(())
     }
 
+    /// Set status message
     pub fn msg(&mut self, s: String) { self.message = s; }
+    /// Set error message
     pub fn err(&mut self, e: impl std::fmt::Display) { self.message = format!("Error: {}", e); }
+    /// Set "no table" message
     pub fn no_table(&mut self) { self.message = "No table loaded".into(); }
 
+    /// Update viewport size (terminal rows/cols)
     pub fn viewport(&mut self, rows: u16, cols: u16) {
         if let Some(v) = self.stack.cur_mut() { v.state.viewport = (rows, cols); }
     }
@@ -184,6 +196,7 @@ impl AppContext {
         }
     }
 
+    /// Get page size for page up/down (viewport height - 2)
     pub fn page(&self) -> isize {
         self.view().map(|v| (v.state.viewport.0 as isize).saturating_sub(2)).unwrap_or(10)
     }
