@@ -165,3 +165,17 @@
 - Backend trait: fetch_where, count_where, freq_where methods
 - Tests: test_parquet_filtered_count, test_parquet_filtered_freq
 
+## Kakoune-style Key Tests
+- Converted all script tests to key-based tests using --keys mode
+- Key player state machine: text input mode for /, \, L, S, :, etc.
+- Special keys: <ret>, <esc>, <space>, <backslash>, <lt>, <gt>
+- Test data moved from /tmp to tests/data/ and committed
+- Tests: test_filter.rs (18), test_command.rs (24), test_folder.rs (10), test_meta.rs (6), test_parquet.rs (12), test_system.rs (8)
+
+## Chained Filters on Disk
+- Filtering already-filtered parquet view combines clauses with AND
+- Combined clause: (prev) AND (new) sent to disk
+- View name shows chain: "file & sym = 'A' & cat = 'X'"
+- Frequency on filtered view uses filter_clause to query disk
+- Tests: test_parquet_chained_filter_count, test_parquet_chained_filter_name, test_parquet_filtered_freq_on_disk
+

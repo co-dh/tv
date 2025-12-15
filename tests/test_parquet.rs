@@ -131,3 +131,25 @@ fn test_parquet_filter_shows_total_rows() {
     assert!(out.contains("60000") || out.contains("60,000"),
         "Filter B should show 60,000 total rows: {}", out);
 }
+
+// === Freq Enter should create lazy filtered view ===
+
+#[test]
+fn test_parquet_freq_enter_shows_total() {
+    // Freq on sym (sorted desc: B=60k, A=40k), Enter on B should show 60k rows
+    let out = run_keys("F<ret>", "tests/data/filtered_test.parquet");
+    // Should show 60,000 rows for sym=B, NOT 10,000
+    assert!(out.contains("60000") || out.contains("60,000"),
+        "Freq enter should show 60,000 total rows (not 10k): {}", out);
+    assert!(!out.contains("(10000 rows)") && !out.contains("(10,000 rows)"),
+        "Should NOT be limited to 10k: {}", out);
+}
+
+#[test]
+fn test_parquet_freq_enter_then_freq() {
+    // Freq on sym, Enter on B (60k), then Freq on cat should show 4 values with 15k each
+    let out = run_keys("F<ret><right>F", "tests/data/filtered_test.parquet");
+    assert!(out.contains("(4 rows)"), "Freq on cat should have 4 values: {}", out);
+    assert!(out.contains("15000") || out.contains("15,000"),
+        "Each cat should have ~15k count (25% of 60k): {}", out);
+}

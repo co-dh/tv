@@ -137,26 +137,36 @@ impl Command for Agg {
     fn record(&self) -> bool { false }
 }
 
-/// Filter by IN clause - uses backend.filter() for disk-based views
+/// Filter by IN clause - creates lazy filtered view for parquet
 pub struct FilterIn { pub col: String, pub values: Vec<String> }
 
 impl Command for FilterIn {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         if app.is_loading() { return Err(anyhow!("Wait for loading to complete")); }
-        let (filtered, filename) = {
-            let v = app.req()?;
-            let path = v.path().to_string();
-            let schema = v.backend().schema(&path)?;
-            // String types: String, Utf8, Utf8View
-            let is_str = schema.iter().find(|(n, _)| n == &self.col)
-                .map(|(_, t)| t.contains("String") || t.contains("Utf8")).unwrap_or(true);
-            let vals = self.values.iter().map(|v| if is_str { format!("'{}'", v) } else { v.clone() }).collect::<Vec<_>>().join(",");
-            (v.backend().filter(&path, &format!("\"{}\" IN ({})", self.col, vals), FILTER_LIMIT)?, v.filename.clone())
-        };
         let id = app.next_id();
+        let v = app.req()?;
+        let path = v.path().to_string();
+        let schema = v.backend().schema(&path)?;
+        let is_str = schema.iter().find(|(n, _)| n == &self.col)
+            .map(|(_, t)| t.contains("String") || t.contains("Utf8")).unwrap_or(true);
+        let vals = self.values.iter().map(|v| if is_str { format!("'{}'", v) } else { v.clone() }).collect::<Vec<_>>().join(",");
+        let new_clause = format!("\"{}\" IN ({})", self.col, vals);
         let name = if self.values.len() == 1 { format!("{}={}", self.col, self.values[0]) }
                    else { format!("{}∈{{{}}}", self.col, self.values.len()) };
-        app.stack.push(crate::state::ViewState::new(id, name, filtered, filename));
+        // Lazy filtered view for parquet: combine with existing filter
+        if v.parquet_path.is_some() {
+            let combined = match &v.filter_clause {
+                Some(prev) => format!("({}) AND ({})", prev, new_clause),
+                None => new_clause,
+            };
+            let count = v.backend().count_where(&path, &combined)?;
+            let cols = v.col_names.clone();
+            app.stack.push(crate::state::ViewState::new_filtered(id, name, path, cols, combined, count));
+        } else {
+            let filtered = v.backend().filter(&path, &new_clause, FILTER_LIMIT)?;
+            let filename = v.filename.clone();
+            app.stack.push(crate::state::ViewState::new(id, name, filtered, filename));
+        }
         Ok(())
     }
     fn to_str(&self) -> String { format!("filter_in {} {:?}", self.col, self.values) }
