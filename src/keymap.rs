@@ -19,31 +19,32 @@ pub struct KeyMap {
 
 impl KeyMap {
     /// Default key bindings (tab, key, command)
+    /// Key names follow Kakoune style: <ret>, <esc>, <space>, <up>, <c-x> etc.
     fn defaults() -> Vec<(&'static str, &'static str, &'static str)> {
         vec![
             // Common (all views)
             ("common", "q", "quit"),
-            ("common", "^C", "force_quit"),
-            ("common", "Up", "up"),
-            ("common", "Down", "down"),
-            ("common", "Left", "left"),
-            ("common", "Right", "right"),
-            ("common", "^D", "page_down"),
-            ("common", "^U", "page_up"),
+            ("common", "<c-c>", "force_quit"),
+            ("common", "<up>", "up"),
+            ("common", "<down>", "down"),
+            ("common", "<left>", "left"),
+            ("common", "<right>", "right"),
+            ("common", "<c-d>", "page_down"),
+            ("common", "<c-u>", "page_up"),
             ("common", "g", "top"),
             ("common", "G", "bottom"),
-            ("common", "Home", "top"),
-            ("common", "End", "bottom"),
+            ("common", "<home>", "top"),
+            ("common", "<end>", "bottom"),
             ("common", "I", "toggle_info"),
             ("common", ".", "decimals_inc"),
             ("common", ",", "decimals_dec"),
-            ("common", "Space", "toggle_sel"),
-            ("common", "Esc", "clear_sel"),
+            ("common", "<space>", "toggle_sel"),
+            ("common", "<esc>", "clear_sel"),
             // Table view
             ("table", "L", "from"),
             ("table", "S", "save"),
             ("table", "/", "search"),
-            ("table", "\\", "filter"),
+            ("table", "<backslash>", "filter"),
             ("table", "n", "next_match"),
             ("table", "N", "prev_match"),
             ("table", "*", "search_cell"),
@@ -67,24 +68,25 @@ impl KeyMap {
             ("table", "'", "next_bookmark"),
             ("table", "D", "delete"),
             ("table", "!", "xkey"),
-            ("table", "Enter", "enter"),
+            ("table", "<ret>", "enter"),
             // Folder view
-            ("folder", "Enter", "enter"),
+            ("folder", "<ret>", "enter"),
             ("folder", "/", "search"),
+            ("folder", "<backslash>", "filter"),
             ("folder", "D", "delete"),
             ("folder", "[", "sort"),
             ("folder", "]", "sort-"),
             ("folder", "F", "freq"),
             // Freq view
-            ("freq", "Enter", "filter_parent"),
+            ("freq", "<ret>", "filter_parent"),
             ("freq", "D", "delete"),
             // Meta view
-            ("meta", "Enter", "goto_col"),
+            ("meta", "<ret>", "goto_col"),
             ("meta", "D", "delete_sel"),
             ("meta", "0", "sel_null"),
             ("meta", "1", "sel_single"),
             // Corr view
-            ("corr", "Enter", "goto_col"),
+            ("corr", "<ret>", "goto_col"),
         ]
     }
 
@@ -238,9 +240,9 @@ impl KeyMap {
 
         // Add view-specific hints
         match tab {
-            "table" => hints.push(("Enter".to_string(), "sel+edit", 0)),
+            "table" => hints.push(("<ret>".to_string(), "sel+edit", 0)),
             "folder" => {
-                hints.push(("Enter".to_string(), "open", 0));
+                hints.push(("<ret>".to_string(), "open", 0));
                 hints.push(("D".to_string(), "del file", 0));
             }
             _ => {}
@@ -272,27 +274,27 @@ mod tests {
         let km = KeyMap::from_defaults();
         // Common keys
         assert_eq!(km.get_command("table", "q"), Some("quit"));
-        assert_eq!(km.get_command("table", "Up"), Some("up"));
+        assert_eq!(km.get_command("table", "<up>"), Some("up"));
         // Table keys
         assert_eq!(km.get_command("table", "F"), Some("freq"));
         assert_eq!(km.get_command("table", "["), Some("sort"));
-        assert_eq!(km.get_command("table", "Enter"), Some("enter"));
+        assert_eq!(km.get_command("table", "<ret>"), Some("enter"));
         // Freq view
-        assert_eq!(km.get_command("freq", "Enter"), Some("filter_parent"));
+        assert_eq!(km.get_command("freq", "<ret>"), Some("filter_parent"));
         // Freq inherits table keys
         assert_eq!(km.get_command("freq", "["), Some("sort"));
         assert_eq!(km.get_command("freq", "q"), Some("quit"));
         // Folder has its own sort/freq bindings
         assert_eq!(km.get_command("folder", "["), Some("sort"));
         assert_eq!(km.get_command("folder", "F"), Some("freq"));
-        assert_eq!(km.get_command("folder", "Enter"), Some("enter"));
+        assert_eq!(km.get_command("folder", "<ret>"), Some("enter"));
     }
 
     #[test]
     fn test_get_key() {
         let km = KeyMap::from_defaults();
         assert_eq!(km.get_key("table", "freq"), Some("F"));
-        assert_eq!(km.get_key("freq", "filter_parent"), Some("Enter"));
+        assert_eq!(km.get_key("freq", "filter_parent"), Some("<ret>"));
         assert_eq!(km.get_key("common", "quit"), Some("q"));
     }
 }

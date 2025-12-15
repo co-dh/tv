@@ -259,6 +259,35 @@ default,header_fg,#ffffff
 ...
 ```
 
+## Key Replay Mode
+
+Test keyboard interactions without TUI using `--keys`:
+
+```bash
+tv --keys 'F<ret>' data.csv        # Freq view, press Enter
+tv --keys 'l<right><right>]' .     # ls, move right 2x, sort desc
+tv --keys 'M<down><space>D' x.csv  # Meta, select row, delete col
+```
+
+Key names follow [Kakoune](https://kakoune.org) style (no commas between keys):
+
+| Key | Name |
+|-----|------|
+| Enter | `<ret>` |
+| Escape | `<esc>` |
+| Space | `<space>` |
+| Backspace | `<backspace>` |
+| Tab | `<tab>` |
+| Arrows | `<up>` `<down>` `<left>` `<right>` |
+| Home/End | `<home>` `<end>` |
+| Page Up/Down | `<pageup>` `<pagedown>` |
+| Delete | `<del>` |
+| Backslash | `<backslash>` |
+| Ctrl+x | `<c-x>` |
+| Shift+Tab | `<s-tab>` |
+
+Regular keys are just the character: `F`, `M`, `[`, `]`, `/`, etc.
+
 ## Command History
 
 Commands are logged to `~/.tv/history`. This file records all commands executed through the command executor.

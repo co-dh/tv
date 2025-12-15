@@ -1,4 +1,5 @@
 //! Key play tests (interactive mode simulation)
+//! Key names follow Kakoune style: F<ret><down> (no commas)
 mod common;
 use common::run_keys;
 
@@ -12,8 +13,8 @@ fn test_keys_csv_freq() {
 
 #[test]
 fn test_keys_csv_freq_enter() {
-    let output = run_keys("Right,F,Enter", "tests/data/basic.csv");
-    assert!(output.contains("b=x") || output.contains("(3 rows)"), "F+Enter should filter: {}", output);
+    let output = run_keys("<right>F<ret>", "tests/data/basic.csv");
+    assert!(output.contains("b=x") || output.contains("(3 rows)"), "F<ret> should filter: {}", output);
 }
 
 #[test]
@@ -44,19 +45,19 @@ fn test_keys_parquet_freq() {
 
 #[test]
 fn test_keys_parquet_freq_enter() {
-    let output = run_keys("F,Enter", "sample.parquet");
-    assert!(output.contains("(1 row"), "F+Enter should filter to 1 row: {}", output);
+    let output = run_keys("F<ret>", "sample.parquet");
+    assert!(output.contains("(1 row"), "F<ret> should filter to 1 row: {}", output);
 }
 
 #[test]
 fn test_keys_parquet_sort_asc() {
-    let output = run_keys("Right,[", "sample.parquet");
+    let output = run_keys("<right>[", "sample.parquet");
     assert!(output.contains("┆ 18  ┆"), "[ on age should sort asc: {}", output);
 }
 
 #[test]
 fn test_keys_parquet_sort_desc() {
-    let output = run_keys("Right,]", "sample.parquet");
+    let output = run_keys("<right>]", "sample.parquet");
     assert!(output.contains("┆ 73  ┆"), "] on age should sort desc: {}", output);
 }
 

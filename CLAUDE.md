@@ -17,4 +17,3 @@
 # Todo
 all the operation on lazy parquet need to against disk, not memory df. in fact, the stack top should be the lazyframe.
 - add comments to each functions, to newbie rust programmer but know c++.
-- \ filter not working in Folder view. add script test. it should be able to do multiple select.

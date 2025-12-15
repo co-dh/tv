@@ -57,7 +57,7 @@ fn main() -> Result<()> {
     // Check for --keys argument (key replay mode with immutable keymap)
     if let Some(idx) = args.iter().position(|a| a == "--keys") {
         if args.len() <= idx + 1 {
-            eprintln!("Usage: tv --keys 'F,Enter' file.parquet");
+            eprintln!("Usage: tv --keys 'F<ret>' file.parquet");
             std::process::exit(1);
         }
         let file = args.get(idx + 2).map(|s| s.as_str());
@@ -167,7 +167,26 @@ fn run_script(script_path: &str) -> Result<()> {
     run_batch(fs::read_to_string(script_path)?.lines().map(String::from))
 }
 
-/// Run key replay mode (--keys "F,Enter" file) - uses default keymap from code
+/// Parse Kakoune-style key sequence: "F<ret><down>" → ["F", "<ret>", "<down>"]
+fn parse_keys(s: &str) -> Vec<String> {
+    let mut keys = Vec::new();
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '<' {
+            let mut key = String::from("<");
+            while let Some(&ch) = chars.peek() {
+                key.push(chars.next().unwrap());
+                if ch == '>' { break; }
+            }
+            keys.push(key);
+        } else if !c.is_whitespace() {
+            keys.push(c.to_string());
+        }
+    }
+    keys
+}
+
+/// Run key replay mode (--keys "F<ret>" file) - uses default keymap from code
 fn run_keys(keys: &str, file: Option<&str>) -> Result<()> {
     let mut app = AppContext::new();
     app.viewport(50, 120);
@@ -177,11 +196,10 @@ fn run_keys(keys: &str, file: Option<&str>) -> Result<()> {
             eprintln!("Error loading {}: {}", path, e);
         }
     }
-    // Replay keys
-    for key in keys.split(',').map(str::trim) {
-        if key.is_empty() { continue; }
+    // Replay keys (Kakoune-style: F<ret><down>)
+    for key in parse_keys(keys) {
         let tab = cur_tab(&app);
-        if let Some(cmd) = app.keymap.get_command(tab, key).map(|s| s.to_string()) {
+        if let Some(cmd) = app.keymap.get_command(tab, &key).map(|s| s.to_string()) {
             let _ = handle_cmd(&mut app, &cmd);
         } else {
             eprintln!("No binding for key '{}' in tab '{}'", key, tab);
@@ -334,26 +352,26 @@ fn find_match(app: &mut AppContext, forward: bool) {
     } else { app.msg("No search active".into()); }
 }
 
-/// Convert KeyEvent to string for keymap lookup
+/// Convert KeyEvent to Kakoune-style key name for keymap lookup
 fn key_str(key: &KeyEvent) -> String {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     match key.code {
-        KeyCode::Char(c) if ctrl => format!("^{}", c.to_ascii_uppercase()),
+        KeyCode::Char(c) if ctrl => format!("<c-{}>", c.to_ascii_lowercase()),
         KeyCode::Char(c) => c.to_string(),
-        KeyCode::Enter => "Enter".into(),
-        KeyCode::Esc => "Esc".into(),
-        KeyCode::Up => "Up".into(),
-        KeyCode::Down => "Down".into(),
-        KeyCode::Left => "Left".into(),
-        KeyCode::Right => "Right".into(),
-        KeyCode::Home => "Home".into(),
-        KeyCode::End => "End".into(),
-        KeyCode::PageUp => "PageUp".into(),
-        KeyCode::PageDown => "PageDown".into(),
-        KeyCode::Tab => "Tab".into(),
-        KeyCode::BackTab => "BackTab".into(),
-        KeyCode::Delete => "Delete".into(),
-        KeyCode::Backspace => "Backspace".into(),
+        KeyCode::Enter => "<ret>".into(),
+        KeyCode::Esc => "<esc>".into(),
+        KeyCode::Up => "<up>".into(),
+        KeyCode::Down => "<down>".into(),
+        KeyCode::Left => "<left>".into(),
+        KeyCode::Right => "<right>".into(),
+        KeyCode::Home => "<home>".into(),
+        KeyCode::End => "<end>".into(),
+        KeyCode::PageUp => "<pageup>".into(),
+        KeyCode::PageDown => "<pagedown>".into(),
+        KeyCode::Tab => "<tab>".into(),
+        KeyCode::BackTab => "<s-tab>".into(),
+        KeyCode::Delete => "<del>".into(),
+        KeyCode::Backspace => "<backspace>".into(),
         _ => "?".into(),
     }
 }

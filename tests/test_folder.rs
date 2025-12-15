@@ -84,21 +84,27 @@ fn test_folder_open_csv_stack() {
     assert!(output.contains("test.csv"), "ls should show test.csv");
 }
 
-// Key play tests for folder view
+// Key play tests for folder view (Kakoune-style: l<right><right>] no commas)
 #[test]
 fn test_keys_folder_sort_by_size() {
-    let output = run_keys("l,Right,Right,]", ".");
+    let output = run_keys("l<right><right>]", ".");
     assert!(output.contains("ls:"), "l should show folder view: {}", output);
 }
 
 #[test]
 fn test_keys_folder_freq() {
-    let output = run_keys("l,Right,Right,Right,Right,F", ".");
+    let output = run_keys("l<right><right><right><right>F", ".");
     assert!(output.contains("Freq:dir"), "F should show freq on dir column: {}", output);
 }
 
 #[test]
 fn test_keys_folder_multi_select() {
-    let output = run_keys("l,Space,Down,Space", ".");
+    let output = run_keys("l<space><down><space>", ".");
     assert!(output.contains("ls:"), "Folder view should support multi-select: {}", output);
+}
+
+#[test]
+fn test_keys_folder_filter() {
+    let output = run_keys("l<backslash>", ".");
+    assert!(output.contains("ls:"), "Folder view should support filter: {}", output);
 }
