@@ -1172,3 +1172,106 @@ fn test_folder_open_csv_stack() {
     assert!(stdout.contains(&format!("=== ls:{}", dir)),
         "After pop from csv, should return to folder view.\nstdout: {}\nstderr: {}", stdout, stderr);
 }
+
+// =============================================================================
+// Parquet Backend × Operation Tests
+// =============================================================================
+
+#[test]
+fn test_parquet_freq_enter_uses_disk() {
+    // Bug: FilterIn used in-memory df, not backend.filter()
+    // Parquet: 200k rows - first 100k "A", next 100k "B"
+    // Memory preview only loads 100k, so only "A" in memory
+    // Freq should see both A and B (from disk)
+    // Enter on "B" should find 100k rows (from disk, not 0 from memory)
+    use polars::prelude::*;
+    let id = unique_id();
+    let path = format!("/tmp/tv_pq_freq_enter_{}.parquet", id);
+    let n = 200_000usize;
+    let df = df! {
+        "sym" => (0..n).map(|i| if i < n/2 { "A" } else { "B" }).collect::<Vec<&str>>()
+    }.unwrap();
+    ParquetWriter::new(std::fs::File::create(&path).unwrap())
+        .finish(&mut df.clone()).unwrap();
+
+    // Freq then enter on B (row 0) - should filter from disk
+    // Freq sorts by Cnt desc; both have 100k, B comes first alphabetically
+    let output = run_script(&format!("from {}\nfreq sym\nenter\n", path), id);
+    // If FilterIn uses disk: sym=B view with 100k rows
+    // If FilterIn uses memory: sym=B view with 0 rows (B not in preview)
+    assert!(output.contains("100000 rows") || output.contains("100,000 rows") ||
+            output.contains("(100000") || output.contains("(100,000"),
+        "Freq enter should find 100000 B rows from disk, got: {}", output);
+    fs::remove_file(&path).ok();
+}
+
+#[test]
+fn test_parquet_meta() {
+    // Meta on large parquet should work without OOM (streams column-by-column)
+    use polars::prelude::*;
+    let id = unique_id();
+    let path = format!("/tmp/tv_pq_meta_{}.parquet", id);
+    let df = df! { "a" => &[1i64, 2, 3], "b" => &["x", "y", "z"] }.unwrap();
+    ParquetWriter::new(std::fs::File::create(&path).unwrap()).finish(&mut df.clone()).unwrap();
+    let output = run_script(&format!("from {}\nmeta\n", path), id);
+    assert!(output.contains("metadata"), "Should show metadata view");
+    assert!(output.contains("a") && output.contains("b"), "Should list columns");
+    fs::remove_file(&path).ok();
+}
+
+#[test]
+fn test_csv_filter() {
+    // Memory backend filter
+    let id = unique_id();
+    let path = format!("/tmp/tv_csv_filter_{}.csv", id);
+    fs::write(&path, "a,b\n1,x\n2,y\n3,x\n4,z\n5,x\n").unwrap();
+    let output = run_script(&format!("from {}\nfilter b = 'x'\n", path), id);
+    assert!(output.contains("(3 rows)"), "CSV filter should find 3 rows");
+    fs::remove_file(&path).ok();
+}
+
+#[test]
+fn test_csv_freq() {
+    // Memory backend freq
+    let id = unique_id();
+    let path = format!("/tmp/tv_csv_freq_{}.csv", id);
+    fs::write(&path, "a,b\n1,x\n2,y\n3,x\n4,z\n5,x\n").unwrap();
+    let output = run_script(&format!("from {}\nfreq b\n", path), id);
+    assert!(output.contains("Freq:b"), "Should show freq view");
+    assert!(output.contains("x") && output.contains("3"), "x should have count 3");
+    fs::remove_file(&path).ok();
+}
+
+#[test]
+fn test_csv_sort() {
+    // Memory backend sort
+    let id = unique_id();
+    let path = format!("/tmp/tv_csv_sort_{}.csv", id);
+    fs::write(&path, "a,b\n3,x\n1,y\n2,z\n").unwrap();
+    let output = run_script(&format!("from {}\nsort a\n", path), id);
+    assert!(output.contains("(3 rows)"), "Sort should preserve rows");
+    fs::remove_file(&path).ok();
+}
+
+#[test]
+fn test_csv_meta() {
+    // Memory backend meta
+    let id = unique_id();
+    let path = format!("/tmp/tv_csv_meta_{}.csv", id);
+    fs::write(&path, "a,b\n1,x\n2,y\n3,z\n").unwrap();
+    let output = run_script(&format!("from {}\nmeta\n", path), id);
+    assert!(output.contains("metadata"), "Should show metadata view");
+    assert!(output.contains("a") && output.contains("b"), "Should list columns");
+    fs::remove_file(&path).ok();
+}
+
+#[test]
+fn test_csv_freq_enter() {
+    // Memory backend freq enter
+    let id = unique_id();
+    let path = format!("/tmp/tv_csv_freq_enter_{}.csv", id);
+    fs::write(&path, "a,b\n1,x\n2,y\n3,x\n4,z\n5,x\n").unwrap();
+    let output = run_script(&format!("from {}\nfreq b\nenter\n", path), id);
+    assert!(output.contains("b=x") || output.contains("(3 rows)"), "Should filter to x values: {}", output);
+    fs::remove_file(&path).ok();
+}

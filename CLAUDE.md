@@ -17,3 +17,11 @@
 # Todo
 all the operation on lazy parquet need to against disk, not memory df. in fact, the stack top should be the lazyframe.
 - add comments to each functions, to newbie rust programmer but know c++.
+
+- Fix Frequency Enter for Polars backend
+- make interactive test.
+- Add backend × operation interactive test matrix (exclude gz)
+- Add comments to all functions for newbie Rust programmers
+- Fix sort on Folder view, add test
+- Fix Frequency on Folder view, add test
+- Sort on parquet should use sort_head to avoid OOM

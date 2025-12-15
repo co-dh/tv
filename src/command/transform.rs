@@ -124,21 +124,26 @@ impl Command for Agg {
     fn record(&self) -> bool { false }
 }
 
-/// Filter by values (SQL IN clause) - used by frequency view
-pub struct FilterIn { pub col: String, pub values: Vec<String>, pub filename: Option<String> }
+/// Filter by IN clause - uses backend.filter() for disk-based views
+pub struct FilterIn { pub col: String, pub values: Vec<String> }
 
 impl Command for FilterIn {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
-        let df = app.req()?.dataframe.clone();
-        let is_str = matches!(df.column(&self.col)?.dtype(), DataType::String);
-        let vals = self.values.iter().map(|v| if is_str { format!("'{}'", v) } else { v.clone() }).collect::<Vec<_>>().join(",");
-        let mut ctx = polars::sql::SQLContext::new();
-        ctx.register("df", df.lazy());
-        let filtered = ctx.execute(&format!("SELECT * FROM df WHERE {} IN ({})", self.col, vals))?.collect()?;
+        if app.is_loading() { return Err(anyhow!("Wait for loading to complete")); }
+        let (filtered, filename) = {
+            let v = app.req()?;
+            let path = v.path().to_string();
+            let schema = v.backend().schema(&path)?;
+            // String types: String, Utf8, Utf8View
+            let is_str = schema.iter().find(|(n, _)| n == &self.col)
+                .map(|(_, t)| t.contains("String") || t.contains("Utf8")).unwrap_or(true);
+            let vals = self.values.iter().map(|v| if is_str { format!("'{}'", v) } else { v.clone() }).collect::<Vec<_>>().join(",");
+            (v.backend().filter(&path, &format!("\"{}\" IN ({})", self.col, vals))?, v.filename.clone())
+        };
         let id = app.next_id();
         let name = if self.values.len() == 1 { format!("{}={}", self.col, self.values[0]) }
                    else { format!("{}∈{{{}}}", self.col, self.values.len()) };
-        app.stack.push(crate::state::ViewState::new(id, name, filtered, self.filename.clone()));
+        app.stack.push(crate::state::ViewState::new(id, name, filtered, filename));
         Ok(())
     }
     fn to_str(&self) -> String { format!("filter_in {} {:?}", self.col, self.values) }

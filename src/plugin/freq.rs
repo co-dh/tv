@@ -23,25 +23,18 @@ impl Plugin for FreqPlugin {
 
     fn handle(&self, cmd: &str, app: &mut AppContext) -> Option<Box<dyn Command>> {
         match cmd {
-            "enter" => {
-                // Filter parent by selected value(s)
-                let info = app.view().and_then(|view| {
-                    let freq_col = view.freq_col.clone()?;
-                    let rows: Vec<usize> = if view.selected_rows.is_empty() {
-                        vec![view.state.cr]
-                    } else {
-                        view.selected_rows.iter().copied().collect()
-                    };
-                    let values: Vec<String> = rows.iter()
-                        .filter_map(|&r| view.dataframe.get_columns()[0].get(r).ok()
-                            .map(|v| v.to_string().trim_matches('"').to_string()))
+            "enter" | "filter_parent" => {
+                // Extract column name and selected values from freq view
+                let info = app.view().and_then(|v| {
+                    let col = v.freq_col.clone()?;
+                    let rows: Vec<usize> = if v.selected_rows.is_empty() { vec![v.state.cr] }
+                        else { v.selected_rows.iter().copied().collect() };
+                    let vals: Vec<String> = rows.iter()
+                        .filter_map(|&r| v.dataframe.get_columns()[0].get(r).ok().map(|x| x.to_string().trim_matches('"').to_string()))
                         .collect();
-                    Some((freq_col, values, view.filename.clone()))
+                    Some((col, vals))
                 });
-
-                info.map(|(col, values, filename)| {
-                    Box::new(FreqEnter { col, values, filename }) as Box<dyn Command>
-                })
+                info.map(|(col, values)| Box::new(FreqEnter { col, values }) as Box<dyn Command>)
             }
             _ => None,
         }
@@ -50,6 +43,7 @@ impl Plugin for FreqPlugin {
     fn parse(&self, cmd: &str, arg: &str) -> Option<Box<dyn Command>> {
         match cmd {
             "freq" | "frequency" if !arg.is_empty() => Some(Box::new(Frequency { col_name: arg.to_string() })),
+            "freq_enter" | "filter_parent" => Some(Box::new(FreqEnterCmd)),
             _ => None,
         }
     }
@@ -93,33 +87,44 @@ impl Command for Frequency {
     fn to_str(&self) -> String { format!("freq {}", self.col_name) }
 }
 
-/// Freq Enter: pop view and filter parent by selected values
-pub struct FreqEnter {
-    pub col: String,
-    pub values: Vec<String>,
-    pub filename: Option<String>,
-}
+/// Freq Enter: pop freq view and filter parent by selected values
+pub struct FreqEnter { pub col: String, pub values: Vec<String> }
 
 impl Command for FreqEnter {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         let _ = CommandExecutor::exec(app, Box::new(Pop));
-
         if !self.values.is_empty() {
-            let _ = CommandExecutor::exec(app, Box::new(FilterIn {
-                col: self.col.clone(),
-                values: self.values.clone(),
-                filename: self.filename.clone(),
-            }));
+            let _ = CommandExecutor::exec(app, Box::new(FilterIn { col: self.col.clone(), values: self.values.clone() }));
+            // Move cursor to filter column
             if let Some(v) = app.view_mut() {
-                if let Some(idx) = v.dataframe.get_column_names().iter().position(|c| c.as_str() == self.col) {
-                    v.state.cc = idx;
-                }
+                if let Some(i) = v.dataframe.get_column_names().iter().position(|c| c.as_str() == self.col) { v.state.cc = i; }
             }
         }
         Ok(())
     }
     fn to_str(&self) -> String { "freq_enter".to_string() }
     fn record(&self) -> bool { false }
+}
+
+/// Freq Enter command (parseable) - extracts col/values from current view at exec time
+pub struct FreqEnterCmd;
+
+impl Command for FreqEnterCmd {
+    fn exec(&mut self, app: &mut AppContext) -> Result<()> {
+        // Extract col and values from current freq view
+        let (col, values) = app.view().and_then(|v| {
+            let col = v.freq_col.clone()?;
+            let rows: Vec<usize> = if v.selected_rows.is_empty() { vec![v.state.cr] }
+                else { v.selected_rows.iter().copied().collect() };
+            let vals: Vec<String> = rows.iter()
+                .filter_map(|&r| v.dataframe.get_columns()[0].get(r).ok().map(|x| x.to_string().trim_matches('"').to_string()))
+                .collect();
+            Some((col, vals))
+        }).ok_or_else(|| anyhow!("Not a freq view"))?;
+        // Delegate to FreqEnter
+        FreqEnter { col, values }.exec(app)
+    }
+    fn to_str(&self) -> String { "freq_enter".to_string() }
 }
 
 // === Helpers ===

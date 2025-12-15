@@ -54,6 +54,16 @@ fn main() -> Result<()> {
         return run_script(&args[idx + 1]);
     }
 
+    // Check for --keys argument (key replay mode with immutable keymap)
+    if let Some(idx) = args.iter().position(|a| a == "--keys") {
+        if args.len() <= idx + 1 {
+            eprintln!("Usage: tv --keys 'F,Enter' file.parquet");
+            std::process::exit(1);
+        }
+        let file = args.get(idx + 2).map(|s| s.as_str());
+        return run_keys(&args[idx + 1], file);
+    }
+
     // Initialize ratatui terminal
     let mut tui = render::init()?;
 
@@ -132,7 +142,7 @@ fn run_batch<I: Iterator<Item = String>>(lines: I) -> Result<()> {
         for cmd_str in app.funcs.expand(line).split('|').map(str::trim) {
             if cmd_str.is_empty() { continue; }
             if cmd_str == "quit" { break 'outer; }
-            if let Some(cmd) = parse(cmd_str, &app) {
+            if let Some(cmd) = parse(cmd_str, &mut app) {
                 if let Err(e) = CommandExecutor::exec(&mut app, cmd) {
                     eprintln!("Error executing '{}': {}", cmd_str, e);
                 }
@@ -156,6 +166,35 @@ fn run_commands(commands: &str) -> Result<()> {
 fn run_script(script_path: &str) -> Result<()> {
     run_batch(fs::read_to_string(script_path)?.lines().map(String::from))
 }
+
+/// Run key replay mode (--keys "F,Enter" file) - uses immutable test keymap
+fn run_keys(keys: &str, file: Option<&str>) -> Result<()> {
+    let mut app = AppContext::new();
+    // Use immutable test keymap
+    app.keymap = keymap::KeyMap::load(std::path::Path::new("cfg/test_key.csv"))?;
+    app.viewport(50, 120);
+    // Load file if provided
+    if let Some(path) = file {
+        if let Err(e) = CommandExecutor::exec(&mut app, Box::new(From { file_path: path.to_string() })) {
+            eprintln!("Error loading {}: {}", path, e);
+        }
+    }
+    // Replay keys
+    for key in keys.split(',').map(str::trim) {
+        if key.is_empty() { continue; }
+        let tab = cur_tab(&app);
+        if let Some(cmd) = app.keymap.get_command(tab, key).map(|s| s.to_string()) {
+            let _ = handle_cmd(&mut app, &cmd);
+        } else {
+            eprintln!("No binding for key '{}' in tab '{}'", key, tab);
+        }
+    }
+    wait_bg_save(&mut app);
+    wait_bg_meta(&mut app);
+    print(&app);
+    Ok(())
+}
+
 
 /// Block until background save completes
 fn wait_bg_save(app: &mut AppContext) {
@@ -193,7 +232,7 @@ fn print(app: &AppContext) {
 }
 
 /// Parse command string into Command object
-fn parse(line: &str, app: &AppContext) -> Option<Box<dyn command::Command>> {
+fn parse(line: &str, app: &mut AppContext) -> Option<Box<dyn command::Command>> {
     let parts: Vec<&str> = line.splitn(2, ' ').collect();
     let cmd = parts[0].to_lowercase();
     let arg = parts.get(1).map(|s| s.trim()).unwrap_or("");
@@ -238,8 +277,17 @@ fn parse(line: &str, app: &AppContext) -> Option<Box<dyn command::Command>> {
         _ => {}
     }
 
-    // Try plugin commands
-    app.plugins.parse(&cmd, arg)
+    // Try plugin commands (parse method)
+    if let Some(c) = app.plugins.parse(&cmd, arg) { return Some(c); }
+
+    // Try plugin handle for context-dependent commands (enter, delete_sel, etc.)
+    if let Some(name) = app.view().map(|v| v.name.clone()) {
+        let plugins = std::mem::take(&mut app.plugins);
+        let result = plugins.handle(&name, &cmd, app);
+        app.plugins = plugins;
+        if result.is_some() { return result; }
+    }
+    None
 }
 
 /// Parse and execute command string, return success
