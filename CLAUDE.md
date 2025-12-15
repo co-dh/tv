@@ -18,4 +18,7 @@
 all the operation on lazy parquet need to against disk, not memory df. in fact, the stack top should be the lazyframe.
 - add comments to each functions, to newbie rust programmer but know c++.
 - search the code for /tmp in test code. save test file in tests/data/ and put in git instead.
+- if I filter by Exchange = 'P', and it can display only 10k rows, but it should report total rows in status bar of the filtered view of disk file.
+- if I filter again, it should create a new view with additional filter, not filter the in memory 10k row. same for frequence.
+-
 -
