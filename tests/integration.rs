@@ -1291,38 +1291,68 @@ fn run_keys(keys: &str, file: &str) -> String {
     format!("{}{}", stdout, stderr)
 }
 
+// === CSV (memory backend) key tests ===
+
 #[test]
-fn test_keys_freq_enter() {
-    // Test F (freq) + Enter (filter_parent) via key replay
+fn test_keys_csv_freq() {
+    let output = run_keys("F", "tests/data/basic.csv");
+    assert!(output.contains("Freq:a"), "F should show freq view: {}", output);
+}
+
+#[test]
+fn test_keys_csv_freq_enter() {
     let output = run_keys("Right,F,Enter", "tests/data/basic.csv");
-    assert!(output.contains("b=x") || output.contains("(3 rows)"), "F+Enter should filter to first value: {}", output);
+    assert!(output.contains("b=x") || output.contains("(3 rows)"), "F+Enter should filter: {}", output);
 }
 
 #[test]
-fn test_keys_sort_asc() {
-    // Test [ (sort ascending) via key replay
+fn test_keys_csv_sort_asc() {
     let output = run_keys("[", "tests/data/unsorted.csv");
-    assert!(output.contains("│ 1"), "[ should sort ascending, first row should be 1: {}", output);
+    assert!(output.contains("│ 1"), "[ should sort asc, first=1: {}", output);
 }
 
 #[test]
-fn test_keys_sort_desc() {
-    // Test ] (sort descending) via key replay
+fn test_keys_csv_sort_desc() {
     let output = run_keys("]", "tests/data/unsorted.csv");
-    assert!(output.contains("│ 3"), "] should sort descending, first row should be 3: {}", output);
+    assert!(output.contains("│ 3"), "] should sort desc, first=3: {}", output);
 }
 
 #[test]
-fn test_keys_meta() {
-    // Test M (meta) via key replay
+fn test_keys_csv_meta() {
     let output = run_keys("M", "tests/data/basic.csv");
-    assert!(output.contains("Meta:") || output.contains("metadata"), "M should show meta view: {}", output);
+    assert!(output.contains("metadata"), "M should show meta: {}", output);
+}
+
+// === Parquet (disk backend) key tests ===
+
+#[test]
+fn test_keys_parquet_freq() {
+    let output = run_keys("F", "sample.parquet");
+    assert!(output.contains("Freq:id"), "F should show freq view: {}", output);
 }
 
 #[test]
 fn test_keys_parquet_freq_enter() {
-    // Test F+Enter on parquet file (disk backend)
     let output = run_keys("F,Enter", "sample.parquet");
-    // Should filter to first value in first column
-    assert!(output.contains("(1 row") || output.contains("id="), "F+Enter on parquet should filter: {}", output);
+    assert!(output.contains("(1 row"), "F+Enter should filter to 1 row: {}", output);
+}
+
+#[test]
+fn test_keys_parquet_sort_asc() {
+    // Sort by age column (col 1), first row should have age 18
+    let output = run_keys("Right,[", "sample.parquet");
+    assert!(output.contains("┆ 18  ┆"), "[ on age should sort asc: {}", output);
+}
+
+#[test]
+fn test_keys_parquet_sort_desc() {
+    // Sort desc, first row should have age 73
+    let output = run_keys("Right,]", "sample.parquet");
+    assert!(output.contains("┆ 73  ┆"), "] on age should sort desc: {}", output);
+}
+
+#[test]
+fn test_keys_parquet_meta() {
+    let output = run_keys("M", "sample.parquet");
+    assert!(output.contains("metadata"), "M should show meta: {}", output);
 }
