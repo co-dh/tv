@@ -31,11 +31,11 @@ fn test_failed_command_recorded_in_history() {
     assert!(after.contains("filter nonexistent"), "History should contain the failed filter command");
 }
 
-// Forth-style User Functions
+// Meta view selection commands
 #[test]
-fn test_forth_func_sel_null() {
+fn test_meta_sel_null() {
     let id = unique_id();
-    let path = format!("/tmp/tv_forth_null_{}.csv", id);
+    let path = format!("/tmp/tv_sel_null_{}.csv", id);
     fs::write(&path, "a,b,c\n1,,x\n2,,y\n3,,z\n").unwrap();
 
     let output = run_script(&format!("from {}\nmeta\nsel_null\n", path), id);
@@ -44,9 +44,9 @@ fn test_forth_func_sel_null() {
 }
 
 #[test]
-fn test_forth_func_sel_single() {
+fn test_meta_sel_single() {
     let id = unique_id();
-    let path = format!("/tmp/tv_forth_single_{}.csv", id);
+    let path = format!("/tmp/tv_sel_single_{}.csv", id);
     fs::write(&path, "a,b,c\n1,x,same\n2,y,same\n3,z,same\n").unwrap();
     let output = run_script(&format!("from {}\nmeta\nsel_single\n", path), id);
     assert!(output.contains("(3 rows)"), "sel_single should keep all rows");
@@ -62,22 +62,13 @@ fn test_sel_rows_command() {
 }
 
 #[test]
-fn test_forth_func_expansion() {
+fn test_meta_sel_null_shows_all_cols() {
     let id = unique_id();
-    let path = format!("/tmp/tv_forth_expand_{}.csv", id);
+    let path = format!("/tmp/tv_meta_all_{}.csv", id);
     fs::write(&path, "a,b\n1,\n2,\n3,\n").unwrap();
     let output = run_script(&format!("from {}\nmeta\nsel_null\n", path), id);
     assert!(output.contains("(2 rows)"), "Should show all 2 columns in meta");
     assert!(output.contains("b"), "Should show column b (100% null)");
-}
-
-#[test]
-fn test_forth_comment_ignored() {
-    let id = unique_id();
-    let path = format!("/tmp/tv_forth_comment_{}.csv", id);
-    fs::write(&path, "Syntax,val\na,1\nb,2\n").unwrap();
-    let output = run_script(&format!("from {}\n", path), id);
-    assert!(output.contains("Syntax"), "Column 'Syntax' should not be replaced by function expansion");
 }
 
 #[test]
