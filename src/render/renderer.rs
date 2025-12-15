@@ -485,9 +485,8 @@ impl Renderer {
         // Fill status bar
         for x in 0..area.width { buf[(x, row)].set_style(style); buf[(x, row)].set_char(' '); }
 
-        let total_str = if let Some(disk) = view.disk_rows {
-            format!("{}/{}", Self::commify(view.rows()), Self::commify(disk))
-        } else { Self::commify(view.rows()) };
+        // Show total rows: just disk_rows if set, else dataframe height
+        let total_str = Self::commify(view.rows());
 
         let left = if !message.is_empty() { message.to_string() }
         else if view.name.starts_with("Freq:") || view.name == "metadata" {

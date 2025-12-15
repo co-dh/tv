@@ -49,14 +49,20 @@ impl Backend for Polars {
             .map_err(|e| anyhow!("Fetch: {}", e))
     }
 
-    /// Fetch rows with WHERE clause (for filtered parquet views)
+    /// Fetch rows with WHERE clause (for filtered parquet views, streaming)
     fn fetch_where(&self, path: &str, w: &str, offset: usize, limit: usize) -> Result<DataFrame> {
-        super::sql(self.lf(path)?, &format!("SELECT * FROM df WHERE {} LIMIT {} OFFSET {}", w, limit, offset))
+        let mut ctx = ::polars::sql::SQLContext::new();
+        ctx.register("df", self.lf(path)?);
+        let lf = ctx.execute(&format!("SELECT * FROM df WHERE {} LIMIT {} OFFSET {}", w, limit, offset))?;
+        lf.collect_with_engine(Engine::Streaming).map_err(|e| anyhow!("{}", e))
     }
 
-    /// Count rows matching WHERE clause
+    /// Count rows matching WHERE clause (streaming to avoid OOM)
     fn count_where(&self, path: &str, w: &str) -> Result<usize> {
-        let r = super::sql(self.lf(path)?, &format!("SELECT COUNT(*) as cnt FROM df WHERE {}", w))?;
+        let mut ctx = ::polars::sql::SQLContext::new();
+        ctx.register("df", self.lf(path)?);
+        let lf = ctx.execute(&format!("SELECT COUNT(*) as cnt FROM df WHERE {}", w))?;
+        let r = lf.collect_with_engine(Engine::Streaming)?;
         Ok(r.column("cnt")?.get(0)?.try_extract::<u32>().unwrap_or(0) as usize)
     }
 
@@ -85,9 +91,12 @@ impl Backend for Polars {
             .map_err(|e| anyhow!("{}", e))
     }
 
-    /// Frequency count with WHERE clause
+    /// Frequency count with WHERE clause (streaming)
     fn freq_where(&self, path: &str, col: &str, w: &str) -> Result<DataFrame> {
-        super::sql(self.lf(path)?, &format!("SELECT \"{}\", COUNT(*) as Cnt FROM df WHERE {} GROUP BY \"{}\" ORDER BY Cnt DESC", col, w, col))
+        let mut ctx = ::polars::sql::SQLContext::new();
+        ctx.register("df", self.lf(path)?);
+        let lf = ctx.execute(&format!("SELECT \"{}\", COUNT(*) as Cnt FROM df WHERE {} GROUP BY \"{}\" ORDER BY Cnt DESC", col, w, col))?;
+        lf.collect_with_engine(Engine::Streaming).map_err(|e| anyhow!("{}", e))
     }
 
     /// Filter via SQL WHERE on LazyFrame with LIMIT (streaming to avoid OOM)

@@ -152,7 +152,7 @@ fn run_batch<I: Iterator<Item = String>>(lines: I) -> Result<()> {
     }
     wait_bg_save(&mut app);
     wait_bg_meta(&mut app);
-    print(&app);
+    print(&mut app);
     Ok(())
 }
 
@@ -247,7 +247,7 @@ fn run_keys(keys: &str, file: Option<&str>) -> Result<()> {
     }
     wait_bg_save(&mut app);
     wait_bg_meta(&mut app);
-    print(&app);
+    print(&mut app);
     Ok(())
 }
 
@@ -311,29 +311,46 @@ fn wait_bg_meta(app: &mut AppContext) {
     }
 }
 
-/// Print current view to stdout (batch mode)
-fn print(app: &AppContext) {
-    if let Some(view) = app.view() {
-        println!("=== {} ({} rows) ===", view.name, view.rows());
-        // For lazy parquet, fetch first 50 rows to print
-        if let Some(ref path) = view.parquet_path {
-            if let Ok(df) = backend::Polars.fetch_rows(path, 0, 50) {
-                println!("{}", df);
-            }
+/// Fetch visible rows for lazy parquet view (simulates render)
+fn fetch_lazy(view: &mut state::ViewState) {
+    if let Some(ref path) = view.parquet_path {
+        let df = if let Some(ref w) = view.filter_clause {
+            backend::Polars.fetch_where(path, w, 0, 50)
         } else {
-            println!("{}", view.dataframe);
-        }
+            backend::Polars.fetch_rows(path, 0, 50)
+        };
+        if let Ok(df) = df { view.dataframe = df; }
+    }
+}
+
+/// Print current view to stdout (batch mode)
+fn print(app: &mut AppContext) {
+    if let Some(view) = app.view_mut() {
+        println!("=== {} ({} rows) ===", view.name, view.rows());
+        fetch_lazy(view);
+        println!("{}", view.dataframe);
     } else {
         println!("No table loaded");
     }
 }
 
-/// Print status line info (for key testing)
-fn print_status(app: &AppContext) {
-    if let Some(view) = app.view() {
+/// Get process memory usage in MB from /proc/self/status
+fn mem_mb() -> usize {
+    fs::read_to_string("/proc/self/status").ok()
+        .and_then(|s| s.lines().find(|l| l.starts_with("VmRSS:"))
+            .and_then(|l| l.split_whitespace().nth(1)?.parse::<usize>().ok()))
+        .map(|kb| kb / 1024).unwrap_or(0)
+}
+
+/// Print status line info (for key testing) - fetches lazy data first
+fn print_status(app: &mut AppContext) {
+    if let Some(view) = app.view_mut() {
+        fetch_lazy(view);  // simulate render fetch
         let col_name = view.col_name(view.state.cc).unwrap_or_default();
-        println!("STATUS: view={} rows={} col={} col_name={}",
-            view.name, view.rows(), view.state.cc, col_name);
+        let disk = view.disk_rows.map(|n| n.to_string()).unwrap_or("-".into());
+        let df = view.dataframe.height();
+        println!("STATUS: view={} rows={} disk={} df={} col={} col_name={} mem={}MB",
+            view.name, view.rows(), disk, df, view.state.cc, col_name, mem_mb());
     }
 }
 
