@@ -119,3 +119,40 @@
 - Refactor main.rs to use KeyMap instead of hardcoded key bindings
 - Read key bindings from cfg/key.csv
 
+## Kakoune-style Key Design
+- Function names are primary identifiers, keys are remappable
+- Default bindings moved from cfg/key.csv to KeyMap::defaults() in code
+- User overrides from ~/.config/tv/keys.csv
+- --keys mode for interactive testing
+
+## Folder View Sort/Freq
+- Added [ ] keys for sort in folder view
+- Added F key for freq in folder view
+- test_keys_folder_sort_by_size, test_keys_folder_freq tests
+
+## Folder Multi-Select Delete
+- Space to select multiple files
+- D deletes all selected (or current row if none)
+- Delete confirmation defaults to Yes
+- Clears selection after delete
+
+## Parquet Sort OOM Fix
+- sort_head uses Engine::Streaming to avoid OOM on large files
+
+## Filter Limit
+- Filter results limited to 10k rows (FILTER_LIMIT)
+- Backend::filter() takes limit parameter
+- Polars uses SQL LIMIT + streaming engine
+- Prevents OOM on large filter results
+
+## Integration Test Split
+- Split tests/integration.rs into focused test modules:
+  - test_filter.rs (24 tests)
+  - test_command.rs (19 tests)
+  - test_folder.rs (9 tests)
+  - test_meta.rs (6 tests)
+  - test_parquet.rs (6 tests)
+  - test_keys.rs (10 tests)
+  - test_system.rs (9 tests)
+  - common/mod.rs (shared utilities)
+

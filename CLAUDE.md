@@ -15,15 +15,8 @@
 ## Do not repeat yourself. Not just on the syntax level, but also conceptually. Do not hold a in memory copy of parquet, but use a lazy frame.
 
 # Todo
-all the operation on lazy parquet need to against disk, not memory df. in fact, the stack top should be the lazyframe.
-- add comments to each functions, to newbie rust programmer but know c++.
+- in filtered view of lazy polars, display the total row count of the filtered view, with something like select count(*) from t where filter. use the backend's sql interface.
+- same in filtered view, when you run frequence on another column, it should just run against the disk version, not the memory. use sql interface.
+- since the in memory dataframe also support sql interface, you should do the same to it. so one code path for both.
+- add key play test for each of these. you can set the limit to small to test it.
 
-- Fix Frequency Enter for Polars backend
-- make interactive test.
-- Add backend × operation interactive test matrix (exclude gz)
-- Add comments to all functions for newbie Rust programmers
-- Fix sort on Folder view, add test
-- Fix Frequency on Folder view, add test
-- Sort on parquet should use sort_head to avoid OOM
-- you don't want override keymap, as that will break macro your recorded with keys. it's just a mapping from user's key to our key.
-- when filter, do not load filtered result into memory. you should limit to 10k rows. this is actually like a database view.
