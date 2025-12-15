@@ -285,6 +285,8 @@ Key names follow [Kakoune](https://kakoune.org) style (no commas between keys):
 | Page Up/Down | `<pageup>` `<pagedown>` |
 | Delete | `<del>` |
 | Backslash | `<backslash>` |
+| `<` | `<lt>` |
+| `>` | `<gt>` |
 | Ctrl+x | `<c-x>` |
 | Shift+Tab | `<s-tab>` |
 

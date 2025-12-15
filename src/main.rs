@@ -166,18 +166,37 @@ fn run_script(script_path: &str) -> Result<()> {
     run_batch(fs::read_to_string(script_path)?.lines().map(String::from))
 }
 
+/// Known special key names (Kakoune-style)
+const SPECIAL_KEYS: &[&str] = &[
+    "ret", "esc", "space", "backspace", "tab", "s-tab",
+    "up", "down", "left", "right", "home", "end", "pageup", "pagedown", "del",
+    "backslash", "lt", "gt", "percent", "plus", "minus", "semicolon",
+    "c-c", "c-d", "c-u", "c-g", "c-l", "c-r", "c-w",
+];
+
 /// Parse Kakoune-style key sequence: "F<ret><down>" → ["F", "<ret>", "<down>"]
+/// Only parses <xxx> as special key if xxx is in SPECIAL_KEYS
 fn parse_keys(s: &str) -> Vec<String> {
     let mut keys = Vec::new();
     let mut chars = s.chars().peekable();
     while let Some(c) = chars.next() {
-        if c == '<' {  // Special key: <ret>, <down>, etc.
+        if c == '<' {
+            // Try to parse special key (max 12 chars like <backspace>)
             let mut key = String::from("<");
+            let mut found_close = false;
             while let Some(&ch) = chars.peek() {
+                if ch == '>' { key.push(chars.next().unwrap()); found_close = true; break; }
+                if ch == '<' || key.len() > 12 { break; }  // Stop if another < or too long
                 key.push(chars.next().unwrap());
-                if ch == '>' { break; }
             }
-            keys.push(key);
+            // Check if it's a valid special key
+            let inner = key.trim_start_matches('<').trim_end_matches('>');
+            if found_close && SPECIAL_KEYS.contains(&inner) {
+                keys.push(key);
+            } else {
+                // Not a special key, push each char separately
+                for ch in key.chars() { keys.push(ch.to_string()); }
+            }
         } else {
             keys.push(c.to_string());
         }
@@ -203,7 +222,7 @@ fn run_keys(keys: &str, file: Option<&str>) -> Result<()> {
 
     for key in parse_keys(keys) {
         if mode != InputMode::None {
-            // Text input mode
+            // Text input mode - <lt> → <, <gt> → >, <space> → space
             if key == "<ret>" {
                 exec_input(&mut app, &mode, &buf);
                 mode = InputMode::None;
@@ -213,6 +232,12 @@ fn run_keys(keys: &str, file: Option<&str>) -> Result<()> {
                 buf.clear();
             } else if key == "<backspace>" {
                 buf.pop();
+            } else if key == "<lt>" {
+                buf.push('<');
+            } else if key == "<gt>" {
+                buf.push('>');
+            } else if key == "<space>" {
+                buf.push(' ');
             } else if !key.starts_with('<') {
                 buf.push_str(&key);
             }
