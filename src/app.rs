@@ -41,7 +41,7 @@ pub struct AppContext {
 
 impl AppContext {
     pub fn new() -> Self {
-        let keymap = KeyMap::load(std::path::Path::new("cfg/key.csv")).unwrap_or_default();
+        let keymap = KeyMap::new();
         let theme = Theme::load_active();
         let funcs = Funcs::load(std::path::Path::new("cfg/funcs.4th"));
         let plugins = Registry::new(std::path::Path::new("cfg/plugins.csv"));

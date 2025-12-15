@@ -7,7 +7,6 @@ use std::path::Path;
 pub struct KeyBinding {
     pub key: String,
     pub command: String,
-    pub description: String,
 }
 
 #[derive(Debug)]
@@ -19,34 +18,128 @@ pub struct KeyMap {
 }
 
 impl KeyMap {
+    /// Default key bindings (tab, key, command)
+    fn defaults() -> Vec<(&'static str, &'static str, &'static str)> {
+        vec![
+            // Common (all views)
+            ("common", "q", "quit"),
+            ("common", "^C", "force_quit"),
+            ("common", "Up", "up"),
+            ("common", "Down", "down"),
+            ("common", "Left", "left"),
+            ("common", "Right", "right"),
+            ("common", "^D", "page_down"),
+            ("common", "^U", "page_up"),
+            ("common", "g", "top"),
+            ("common", "G", "bottom"),
+            ("common", "Home", "top"),
+            ("common", "End", "bottom"),
+            ("common", "I", "toggle_info"),
+            ("common", ".", "decimals_inc"),
+            ("common", ",", "decimals_dec"),
+            ("common", "Space", "toggle_sel"),
+            ("common", "Esc", "clear_sel"),
+            // Table view
+            ("table", "L", "from"),
+            ("table", "S", "save"),
+            ("table", "/", "search"),
+            ("table", "\\", "filter"),
+            ("table", "n", "next_match"),
+            ("table", "N", "prev_match"),
+            ("table", "*", "search_cell"),
+            ("table", "s", "select_cols"),
+            ("table", "F", "freq"),
+            ("table", "M", "meta"),
+            ("table", "C", "corr"),
+            ("table", "[", "sort"),
+            ("table", "]", "sort-"),
+            ("table", "^", "rename"),
+            ("table", "c", "derive"),
+            ("table", "$", "convert"),
+            ("table", "b", "aggregate"),
+            ("table", "T", "dup"),
+            ("table", "W", "swap"),
+            ("table", "l", "ls"),
+            ("table", "r", "lr"),
+            ("table", ":", "command"),
+            ("table", "@", "goto_col"),
+            ("table", "m", "bookmark"),
+            ("table", "'", "next_bookmark"),
+            ("table", "D", "delete"),
+            ("table", "!", "xkey"),
+            ("table", "Enter", "enter"),
+            // Folder view
+            ("folder", "Enter", "enter"),
+            ("folder", "/", "search"),
+            ("folder", "D", "delete"),
+            // Freq view
+            ("freq", "Enter", "filter_parent"),
+            ("freq", "D", "delete"),
+            // Meta view
+            ("meta", "Enter", "goto_col"),
+            ("meta", "D", "delete_sel"),
+            ("meta", "0", "sel_null"),
+            ("meta", "1", "sel_single"),
+            // Corr view
+            ("corr", "Enter", "goto_col"),
+        ]
+    }
+
+    /// Create keymap from defaults, then load user overrides if present
+    pub fn new() -> Self {
+        let mut km = Self::from_defaults();
+        // Try user override: ~/.config/tv/keys.csv
+        if let Some(home) = std::env::var_os("HOME") {
+            let path = Path::new(&home).join(".config/tv/keys.csv");
+            if path.exists() { let _ = km.load_overrides(&path); }
+        }
+        km
+    }
+
+    /// Build keymap from default bindings
+    fn from_defaults() -> Self {
+        let mut bindings: HashMap<String, HashMap<String, KeyBinding>> = HashMap::new();
+        let mut key_to_cmd: HashMap<String, HashMap<String, String>> = HashMap::new();
+        for (tab, key, cmd) in Self::defaults() {
+            let binding = KeyBinding { key: key.to_string(), command: cmd.to_string() };
+            bindings.entry(tab.to_string()).or_default().insert(cmd.to_string(), binding);
+            key_to_cmd.entry(tab.to_string()).or_default().insert(key.to_string(), cmd.to_string());
+        }
+        Self { bindings, key_to_cmd }
+    }
+
+    /// Load overrides from CSV file (tab,key,command)
+    fn load_overrides(&mut self, path: &Path) -> anyhow::Result<()> {
+        let content = fs::read_to_string(path)?;
+        for line in content.lines().skip(1) {
+            let parts: Vec<&str> = line.splitn(3, ',').collect();
+            if parts.len() >= 3 {
+                let (tab, key, cmd) = (parts[0], parts[1], parts[2]);
+                let binding = KeyBinding { key: key.to_string(), command: cmd.to_string() };
+                self.bindings.entry(tab.to_string()).or_default().insert(cmd.to_string(), binding);
+                self.key_to_cmd.entry(tab.to_string()).or_default().insert(key.to_string(), cmd.to_string());
+            }
+        }
+        Ok(())
+    }
+
+    /// Load keymap from CSV file (for backwards compat)
     pub fn load(path: &Path) -> anyhow::Result<Self> {
         let content = fs::read_to_string(path)?;
         let mut bindings: HashMap<String, HashMap<String, KeyBinding>> = HashMap::new();
         let mut key_to_cmd: HashMap<String, HashMap<String, String>> = HashMap::new();
-
         for line in content.lines().skip(1) {
             let parts: Vec<&str> = line.splitn(4, ',').collect();
             if parts.len() >= 3 {
-                let tab = parts[0].to_string();
-                let key = parts[1].to_string();
-                let command = parts[2].to_string();
-                let description = parts.get(3).unwrap_or(&"").to_string();
-
-                // Check for key conflict: same tab+key mapped to different command
+                let (tab, key, cmd) = (parts[0].to_string(), parts[1].to_string(), parts[2].to_string());
                 if let Some(existing) = key_to_cmd.get(&tab).and_then(|m| m.get(&key)) {
-                    return Err(anyhow::anyhow!(
-                        "Key conflict in {}: '{}' mapped to both '{}' and '{}'",
-                        path.display(), key, existing, command
-                    ));
+                    return Err(anyhow::anyhow!("Key conflict: '{}' mapped to both '{}' and '{}'", key, existing, cmd));
                 }
-
-                let binding = KeyBinding { key: key.clone(), command: command.clone(), description };
-
-                bindings.entry(tab.clone()).or_default().insert(command.clone(), binding);
-                key_to_cmd.entry(tab).or_default().insert(key, command);
+                let binding = KeyBinding { key: key.clone(), command: cmd.clone() };
+                bindings.entry(tab.clone()).or_default().insert(cmd.clone(), binding);
+                key_to_cmd.entry(tab).or_default().insert(key, cmd);
             }
         }
-
         Ok(Self { bindings, key_to_cmd })
     }
 
@@ -170,61 +263,32 @@ impl Default for KeyMap {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
 
     #[test]
-    fn test_key_conflict_detection() {
-        let tmp = std::env::temp_dir().join("tv_test_keymap_conflict.csv");
-        let mut f = std::fs::File::create(&tmp).unwrap();
-        writeln!(f, "tab,key,command,description").unwrap();
-        writeln!(f, "table,F,freq,Frequency").unwrap();
-        writeln!(f, "table,F,from,Load file").unwrap();  // conflict!
-
-        let result = KeyMap::load(&tmp);
-        assert!(result.is_err(), "Should detect key conflict");
-        assert!(result.unwrap_err().to_string().contains("Key conflict"));
-
-        let _ = std::fs::remove_file(tmp);
-    }
-
-    #[test]
-    fn test_no_conflict_different_tabs() {
-        let tmp = std::env::temp_dir().join("tv_test_keymap_ok.csv");
-        let mut f = std::fs::File::create(&tmp).unwrap();
-        writeln!(f, "tab,key,command,description").unwrap();
-        writeln!(f, "table,F,freq,Frequency").unwrap();
-        writeln!(f, "meta,F,filter,Filter").unwrap();  // same key, different tab = ok
-
-        let result = KeyMap::load(&tmp);
-        assert!(result.is_ok(), "Same key in different tabs should be ok");
-
-        let _ = std::fs::remove_file(tmp);
-    }
-
-    #[test]
-    fn test_freq_inherits_table_keys() {
-        let tmp = std::env::temp_dir().join("tv_test_keymap_fallback.csv");
-        let mut f = std::fs::File::create(&tmp).unwrap();
-        writeln!(f, "tab,key,command,description").unwrap();
-        writeln!(f, "table,[,sort,Sort ascending").unwrap();
-        writeln!(f, "table,],sort-,Sort descending").unwrap();
-        writeln!(f, "freq,Enter,enter,Filter parent").unwrap();
-        writeln!(f, "common,q,quit,Quit").unwrap();
-
-        let km = KeyMap::load(&tmp).unwrap();
-
-        // freq tab should fall back to table keys
-        assert_eq!(km.get_command("freq", "["), Some("sort"), "freq should inherit [ from table");
-        assert_eq!(km.get_command("freq", "]"), Some("sort-"), "freq should inherit ] from table");
-        assert_eq!(km.get_command("freq", "Enter"), Some("enter"), "freq's own binding should take priority");
-        assert_eq!(km.get_command("freq", "q"), Some("quit"), "freq should inherit from common");
-
-        // table tab should work normally
+    fn test_defaults() {
+        let km = KeyMap::from_defaults();
+        // Common keys
+        assert_eq!(km.get_command("table", "q"), Some("quit"));
+        assert_eq!(km.get_command("table", "Up"), Some("up"));
+        // Table keys
+        assert_eq!(km.get_command("table", "F"), Some("freq"));
         assert_eq!(km.get_command("table", "["), Some("sort"));
+        assert_eq!(km.get_command("table", "Enter"), Some("enter"));
+        // Freq view
+        assert_eq!(km.get_command("freq", "Enter"), Some("filter_parent"));
+        // Freq inherits table keys
+        assert_eq!(km.get_command("freq", "["), Some("sort"));
+        assert_eq!(km.get_command("freq", "q"), Some("quit"));
+        // Folder does not inherit table
+        assert_eq!(km.get_command("folder", "["), None);
+        assert_eq!(km.get_command("folder", "Enter"), Some("enter"));
+    }
 
-        // folder should not fall back to table
-        assert_eq!(km.get_command("folder", "["), None, "folder should not inherit from table");
-
-        let _ = std::fs::remove_file(tmp);
+    #[test]
+    fn test_get_key() {
+        let km = KeyMap::from_defaults();
+        assert_eq!(km.get_key("table", "freq"), Some("F"));
+        assert_eq!(km.get_key("freq", "filter_parent"), Some("Enter"));
+        assert_eq!(km.get_key("common", "quit"), Some("q"));
     }
 }

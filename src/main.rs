@@ -167,11 +167,9 @@ fn run_script(script_path: &str) -> Result<()> {
     run_batch(fs::read_to_string(script_path)?.lines().map(String::from))
 }
 
-/// Run key replay mode (--keys "F,Enter" file) - uses immutable test keymap
+/// Run key replay mode (--keys "F,Enter" file) - uses default keymap from code
 fn run_keys(keys: &str, file: Option<&str>) -> Result<()> {
     let mut app = AppContext::new();
-    // Use immutable test keymap
-    app.keymap = keymap::KeyMap::load(std::path::Path::new("cfg/test_key.csv"))?;
     app.viewport(50, 120);
     // Load file if provided
     if let Some(path) = file {
