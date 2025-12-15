@@ -72,6 +72,9 @@ impl KeyMap {
             ("folder", "Enter", "enter"),
             ("folder", "/", "search"),
             ("folder", "D", "delete"),
+            ("folder", "[", "sort"),
+            ("folder", "]", "sort-"),
+            ("folder", "F", "freq"),
             // Freq view
             ("freq", "Enter", "filter_parent"),
             ("freq", "D", "delete"),
@@ -279,8 +282,9 @@ mod tests {
         // Freq inherits table keys
         assert_eq!(km.get_command("freq", "["), Some("sort"));
         assert_eq!(km.get_command("freq", "q"), Some("quit"));
-        // Folder does not inherit table
-        assert_eq!(km.get_command("folder", "["), None);
+        // Folder has its own sort/freq bindings
+        assert_eq!(km.get_command("folder", "["), Some("sort"));
+        assert_eq!(km.get_command("folder", "F"), Some("freq"));
         assert_eq!(km.get_command("folder", "Enter"), Some("enter"));
     }
 

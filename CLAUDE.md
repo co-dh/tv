@@ -25,3 +25,5 @@ all the operation on lazy parquet need to against disk, not memory df. in fact, 
 - Fix sort on Folder view, add test
 - Fix Frequency on Folder view, add test
 - Sort on parquet should use sort_head to avoid OOM
+- you don't want override keymap, as that will break macro your recorded with keys. it's just a mapping from user's key to our key.
+- when filter, do not load filtered result into memory. you should limit to 10k rows. this is actually like a database view.

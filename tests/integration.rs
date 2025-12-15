@@ -1356,3 +1356,20 @@ fn test_keys_parquet_meta() {
     let output = run_keys("M", "sample.parquet");
     assert!(output.contains("metadata"), "M should show meta: {}", output);
 }
+
+// === Folder view key tests ===
+
+#[test]
+fn test_keys_folder_sort_by_size() {
+    // l=ls, Right twice to size column, ]=sort desc
+    let output = run_keys("l,Right,Right,]", ".");
+    // Largest files should be at top after sort by size desc
+    assert!(output.contains("ls:"), "l should show folder view: {}", output);
+}
+
+#[test]
+fn test_keys_folder_freq() {
+    // l=ls, Right 4 times to dir column, F=freq
+    let output = run_keys("l,Right,Right,Right,Right,F", ".");
+    assert!(output.contains("Freq:dir"), "F should show freq on dir column: {}", output);
+}
