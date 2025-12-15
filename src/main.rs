@@ -172,43 +172,118 @@ fn parse_keys(s: &str) -> Vec<String> {
     let mut keys = Vec::new();
     let mut chars = s.chars().peekable();
     while let Some(c) = chars.next() {
-        if c == '<' {
+        if c == '<' {  // Special key: <ret>, <down>, etc.
             let mut key = String::from("<");
             while let Some(&ch) = chars.peek() {
                 key.push(chars.next().unwrap());
                 if ch == '>' { break; }
             }
             keys.push(key);
-        } else if !c.is_whitespace() {
+        } else {
             keys.push(c.to_string());
         }
     }
     keys
 }
 
-/// Run key replay mode (--keys "F<ret>" file) - uses default keymap from code
+/// Input mode for key player state machine
+#[derive(Clone, PartialEq)]
+enum InputMode { None, Search, Filter, Load, Save, Command, Goto, GotoCol, Select, Rename }
+
+/// Run key replay mode (--keys "F<ret>" file) - state machine with text input
 fn run_keys(keys: &str, file: Option<&str>) -> Result<()> {
     let mut app = AppContext::new();
     app.viewport(50, 120);
-    // Load file if provided
     if let Some(path) = file {
         if let Err(e) = CommandExecutor::exec(&mut app, Box::new(From { file_path: path.to_string() })) {
             eprintln!("Error loading {}: {}", path, e);
         }
     }
-    // Replay keys (Kakoune-style: F<ret><down>)
+    let mut mode = InputMode::None;
+    let mut buf = String::new();
+
     for key in parse_keys(keys) {
-        let tab = cur_tab(&app);
-        if let Some(cmd) = app.keymap.get_command(tab, &key).map(|s| s.to_string()) {
-            let _ = handle_cmd(&mut app, &cmd);
+        if mode != InputMode::None {
+            // Text input mode
+            if key == "<ret>" {
+                exec_input(&mut app, &mode, &buf);
+                mode = InputMode::None;
+                buf.clear();
+            } else if key == "<esc>" {
+                mode = InputMode::None;
+                buf.clear();
+            } else if key == "<backspace>" {
+                buf.pop();
+            } else if !key.starts_with('<') {
+                buf.push_str(&key);
+            }
         } else {
-            eprintln!("No binding for key '{}' in tab '{}'", key, tab);
+            // Normal mode - check for input-triggering keys
+            let tab = cur_tab(&app);
+            let cmd = app.keymap.get_command(tab, &key).map(|s| s.to_string());
+            if let Some(cmd) = cmd {
+                mode = match cmd.as_str() {
+                    "search" => InputMode::Search,
+                    "filter" => InputMode::Filter,
+                    "from" => InputMode::Load,
+                    "save" => InputMode::Save,
+                    "command" => InputMode::Command,
+                    "goto_row" => InputMode::Goto,
+                    "goto_col" => InputMode::GotoCol,
+                    "select_cols" => InputMode::Select,
+                    "rename" => InputMode::Rename,
+                    _ => { let _ = handle_cmd(&mut app, &cmd); InputMode::None }
+                };
+            } else {
+                eprintln!("No binding for key '{}' in tab '{}'", key, tab);
+            }
         }
     }
     wait_bg_save(&mut app);
     wait_bg_meta(&mut app);
     print(&app);
     Ok(())
+}
+
+/// Execute input mode command with accumulated text
+fn exec_input(app: &mut AppContext, mode: &InputMode, text: &str) {
+    match mode {
+        InputMode::Search => {
+            app.search.col_name = None;
+            app.search.value = Some(text.to_string());
+            find_match(app, true);
+        }
+        InputMode::Filter => {
+            run(app, Box::new(Filter { expr: text.to_string() }));
+        }
+        InputMode::Load => {
+            run(app, Box::new(From { file_path: text.to_string() }));
+        }
+        InputMode::Save => {
+            run(app, Box::new(Save { file_path: text.to_string() }));
+        }
+        InputMode::Command => {
+            if let Some(cmd) = parse(text, app) {
+                let _ = CommandExecutor::exec(app, cmd);
+            }
+        }
+        InputMode::Goto => {
+            run(app, Box::new(Goto { arg: text.to_string() }));
+        }
+        InputMode::GotoCol => {
+            run(app, Box::new(GotoCol { arg: text.to_string() }));
+        }
+        InputMode::Select => {
+            run(app, Box::new(Select { col_names: text.split(',').map(|s| s.trim().to_string()).collect() }));
+        }
+        InputMode::Rename => {
+            let old = app.view().and_then(|v| v.col_name(v.state.cc));
+            if let Some(old_name) = old {
+                run(app, Box::new(RenameCol { old_name, new_name: text.to_string() }));
+            }
+        }
+        InputMode::None => {}
+    }
 }
 
 

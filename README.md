@@ -264,9 +264,11 @@ default,header_fg,#ffffff
 Test keyboard interactions without TUI using `--keys`:
 
 ```bash
-tv --keys 'F<ret>' data.csv        # Freq view, press Enter
-tv --keys 'l<right><right>]' .     # ls, move right 2x, sort desc
-tv --keys 'M<down><space>D' x.csv  # Meta, select row, delete col
+tv --keys 'F<ret>' data.csv              # Freq view, press Enter
+tv --keys 'l<right><right>]' .           # ls, move right 2x, sort desc
+tv --keys 'M<down><space>D' x.csv        # Meta, select row, delete col
+tv --keys '<backslash>age > 30<ret>' x   # Filter with expression
+tv --keys '/hello<ret>n' x.csv           # Search "hello", next match
 ```
 
 Key names follow [Kakoune](https://kakoune.org) style (no commas between keys):
@@ -287,6 +289,9 @@ Key names follow [Kakoune](https://kakoune.org) style (no commas between keys):
 | Shift+Tab | `<s-tab>` |
 
 Regular keys are just the character: `F`, `M`, `[`, `]`, `/`, etc.
+
+**Text input mode**: Keys like `/`, `<backslash>`, `L`, `S`, `:` enter text mode.
+Type text normally, `<ret>` executes, `<esc>` cancels.
 
 ## Command History
 
