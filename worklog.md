@@ -1,5 +1,30 @@
 # Worklog
 
+## 2025-12-15: Split Integration Tests by View
+
+### Changes
+Split `tests/integration.rs` (1386 lines, 105 tests) into focused test modules:
+
+```
+tests/
+├── common/mod.rs     - Shared utilities (unique_id, run_script, run_keys, setup_test_csv)
+├── test_filter.rs    - Filter command tests (24 tests)
+├── test_command.rs   - Command tests (freq, sort, select, save, xkey - 19 tests)
+├── test_folder.rs    - Folder view tests (ls, delete - 9 tests)
+├── test_meta.rs      - Meta view tests (6 tests)
+├── test_parquet.rs   - Parquet backend tests (6 tests)
+├── test_keys.rs      - Key play tests (10 tests)
+└── test_system.rs    - System tests (ps, forth funcs, history - 9 tests)
+```
+
+### Benefits
+- Each test file is focused and easier to navigate
+- Can run tests by category: `cargo test test_filter`
+- Parallel test execution per file
+- Easier to maintain and extend
+
+---
+
 ## 2025-12-14: Consolidate I/O into Backend
 
 ### Analysis
