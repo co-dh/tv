@@ -5,7 +5,6 @@ mod keymap;
 mod os;
 mod picker;
 mod plugin;
-mod prql;
 mod render;
 mod state;
 mod theme;
@@ -371,8 +370,8 @@ fn parse(line: &str, app: &mut AppContext) -> Option<Box<dyn command::Command>> 
             col_names: arg.split(',').map(|s| s.trim().to_string()).collect()
         })),
         "sort" => {
-            let (col, desc) = prql::parse_sort(arg);
-            return Some(Box::new(Sort { col_name: col, descending: desc }));
+            let (col, desc) = if let Some(c) = arg.strip_prefix('-') { (c, true) } else { (arg, false) };
+            return Some(Box::new(Sort { col_name: col.to_string(), descending: desc }));
         }
         "sort_desc" | "sortdesc" => return Some(Box::new(Sort { col_name: arg.to_string(), descending: true })),
         "take" => return arg.parse().ok().map(|n| Box::new(Take { n }) as Box<dyn command::Command>),
@@ -870,18 +869,13 @@ fn is_plain_value(expr: &str) -> bool {
         && !e.contains(" OR ") && !e.contains(" LIKE ")
 }
 
-/// Find rows matching PRQL filter expression, returns row indices
+/// Find rows matching SQL WHERE expression, returns row indices
 fn find(df: &polars::prelude::DataFrame, expr: &str) -> Vec<usize> {
     use polars::prelude::*;
-    // Compile PRQL filter to SQL WHERE clause
-    let where_clause = match prql::filter_to_sql(expr) {
-        Ok(w) => w,
-        Err(_) => return vec![],
-    };
     let mut ctx = polars::sql::SQLContext::new();
     let with_idx = df.clone().lazy().with_row_index("__idx__", None);
     ctx.register("df", with_idx);
-    ctx.execute(&format!("SELECT __idx__ FROM df WHERE {}", where_clause))
+    ctx.execute(&format!("SELECT __idx__ FROM df WHERE {}", expr))
         .and_then(|lf| lf.collect())
         .map(|result| {
             result.column("__idx__").ok()
@@ -967,15 +961,6 @@ mod tests {
         assert_eq!(find(&df, "name LIKE 'b%'"), vec![1, 5]);  // banana, blueberry
         assert_eq!(find(&df, "name LIKE '%rry'"), vec![2, 5]);  // cherry, blueberry
         assert_eq!(find(&df, "name LIKE '%apple%'"), vec![0, 3]);  // apple, pineapple
-    }
-
-    #[test]
-    fn test_find_prql_text() {
-        let df = make_test_df();
-        // PRQL text functions compiled to SQL LIKE
-        assert_eq!(find(&df, "(name | text.starts_with 'b')"), vec![1, 5]);  // banana, blueberry
-        assert_eq!(find(&df, "(name | text.ends_with 'rry')"), vec![2, 5]);  // cherry, blueberry
-        assert_eq!(find(&df, "(name | text.contains 'apple')"), vec![0, 3]);  // apple, pineapple
     }
 
     #[test]

@@ -116,22 +116,18 @@ impl Command for SelAll {
     fn record(&self) -> bool { false }
 }
 
-/// Select rows matching filter expression (like filter but selects instead)
+/// Select rows matching SQL WHERE expression
 pub struct SelRows { pub expr: String }
 impl Command for SelRows {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         use polars::prelude::*;
         let view = app.req()?;
         let df = &view.dataframe;
-
-        // Compile PRQL filter to SQL WHERE clause
-        let where_clause = crate::prql::filter_to_sql(&self.expr)?;
-
         // Find matching row indices
         let mut ctx = polars::sql::SQLContext::new();
         let with_idx = df.clone().lazy().with_row_index("__idx__", None);
         ctx.register("df", with_idx);
-        let matches: Vec<usize> = ctx.execute(&format!("SELECT __idx__ FROM df WHERE {}", where_clause))
+        let matches: Vec<usize> = ctx.execute(&format!("SELECT __idx__ FROM df WHERE {}", self.expr))
             .and_then(|lf| lf.collect())
             .map(|result| {
                 result.column("__idx__").ok()

@@ -26,30 +26,28 @@ impl Command for DelCol {
     fn to_str(&self) -> String { format!("del_col {}", self.col_names.join(",")) }
 }
 
-/// Filter rows using PRQL filter syntax
+/// Filter rows using SQL WHERE syntax
 pub struct Filter { pub expr: String }
 
 impl Command for Filter {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
-        // Block filter while gz is still loading
         if app.is_loading() { return Err(anyhow!("Wait for loading to complete")); }
         let id = app.next_id();
         let v = app.req()?;
-        let new_clause = crate::prql::filter_to_sql(&self.expr)?;
         let path = v.path().to_string();
         // Lazy filtered view for parquet: keep parquet_path + filter_clause
         if v.parquet_path.is_some() {
-            // Chain filters: combine existing filter_clause with new one using AND
+            // Chain filters with AND
             let combined = match &v.filter_clause {
-                Some(prev) => format!("({}) AND ({})", prev, new_clause),
-                None => new_clause,
+                Some(prev) => format!("({}) AND ({})", prev, self.expr),
+                None => self.expr.clone(),
             };
             let count = v.backend().count_where(&path, &combined)?;
             let cols = v.col_names.clone();
             let name = format!("{} & {}", v.name, self.expr);
             app.stack.push(crate::state::ViewState::new_filtered(id, name, path, cols, combined, count));
         } else {
-            let filtered = v.backend().filter(&path, &new_clause, FILTER_LIMIT)?;
+            let filtered = v.backend().filter(&path, &self.expr, FILTER_LIMIT)?;
             let filename = v.filename.clone();
             app.stack.push(crate::state::ViewState::new(id, self.expr.clone(), filtered, filename));
         }
