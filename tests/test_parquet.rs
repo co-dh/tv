@@ -153,3 +153,28 @@ fn test_parquet_freq_enter_then_freq() {
     assert!(out.contains("15000") || out.contains("15,000"),
         "Each cat should have ~15k count (25% of 60k): {}", out);
 }
+
+// === Large parquet workflow tests (1.parquet ~300M rows) ===
+
+#[test]
+fn test_large_parquet_freq_enter_single() {
+    // Freq Exchange (18 vals), Enter filters by P, freq Exchange shows 1 row
+    let out = run_keys("<right>F<ret><right>F<a-p>", "tests/data/nyse/1.parquet");
+    assert!(out.contains("rows=1"), "Filtered freq should show 1 row: {}", out);
+}
+
+#[test]
+fn test_large_parquet_filter_not_10k() {
+    // Filter by Exchange=P should show 94M rows, not 10k
+    let out = run_keys("<right>F<ret><ret><a-p>", "tests/data/nyse/1.parquet");
+    assert!(!out.contains("rows=10000"), "Should NOT be limited to 10k: {}", out);
+    assert!(out.contains("94874100"), "Should show 94M rows: {}", out);
+}
+
+#[test]
+fn test_large_parquet_filtered_freq_symbol() {
+    // Filter Exchange=P, then freq Symbol should have >1000 unique values
+    let out = run_keys("<right>F<ret><ret><right><right>F<a-p>", "tests/data/nyse/1.parquet");
+    assert!(out.contains("rows=11342") || out.contains("(11342 rows)") || out.contains("11,342"),
+        "Symbol freq should have 11342 rows (way more than 4): {}", out);
+}

@@ -25,6 +25,7 @@ impl KeyMap {
             // Common (all views)
             ("common", "q", "quit"),
             ("common", "<c-c>", "force_quit"),
+            ("common", "<a-p>", "print_status"),
             ("common", "<up>", "up"),
             ("common", "<down>", "down"),
             ("common", "<left>", "left"),

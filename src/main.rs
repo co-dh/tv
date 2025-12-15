@@ -166,37 +166,19 @@ fn run_script(script_path: &str) -> Result<()> {
     run_batch(fs::read_to_string(script_path)?.lines().map(String::from))
 }
 
-/// Known special key names (Kakoune-style)
-const SPECIAL_KEYS: &[&str] = &[
-    "ret", "esc", "space", "backspace", "tab", "s-tab",
-    "up", "down", "left", "right", "home", "end", "pageup", "pagedown", "del",
-    "backslash", "lt", "gt", "percent", "plus", "minus", "semicolon",
-    "c-c", "c-d", "c-u", "c-g", "c-l", "c-r", "c-w",
-];
-
 /// Parse Kakoune-style key sequence: "F<ret><down>" → ["F", "<ret>", "<down>"]
-/// Only parses <xxx> as special key if xxx is in SPECIAL_KEYS
+/// Any <...> is a special key. Use <lt>/<gt> for literal angle brackets.
 fn parse_keys(s: &str) -> Vec<String> {
     let mut keys = Vec::new();
     let mut chars = s.chars().peekable();
     while let Some(c) = chars.next() {
         if c == '<' {
-            // Try to parse special key (max 12 chars like <backspace>)
             let mut key = String::from("<");
-            let mut found_close = false;
             while let Some(&ch) = chars.peek() {
-                if ch == '>' { key.push(chars.next().unwrap()); found_close = true; break; }
-                if ch == '<' || key.len() > 12 { break; }  // Stop if another < or too long
                 key.push(chars.next().unwrap());
+                if ch == '>' { break; }
             }
-            // Check if it's a valid special key
-            let inner = key.trim_start_matches('<').trim_end_matches('>');
-            if found_close && SPECIAL_KEYS.contains(&inner) {
-                keys.push(key);
-            } else {
-                // Not a special key, push each char separately
-                for ch in key.chars() { keys.push(ch.to_string()); }
-            }
+            keys.push(key);
         } else {
             keys.push(c.to_string());
         }
@@ -343,6 +325,15 @@ fn print(app: &AppContext) {
         }
     } else {
         println!("No table loaded");
+    }
+}
+
+/// Print status line info (for key testing)
+fn print_status(app: &AppContext) {
+    if let Some(view) = app.view() {
+        let col_name = view.col_name(view.state.cc).unwrap_or_default();
+        println!("STATUS: view={} rows={} col={} col_name={}",
+            view.name, view.rows(), view.state.cc, col_name);
     }
 }
 
@@ -496,6 +487,7 @@ fn handle_cmd(app: &mut AppContext, cmd: &str) -> Result<bool> {
             run(app, Box::new(Pop));
         }
         "force_quit" => return Ok(false),
+        "print_status" => { print_status(app); return Ok(false); }
         // Navigation
         "up" => run(app, Box::new(Goto { arg: "-1".into() })),
         "down" => run(app, Box::new(Goto { arg: "+1".into() })),
