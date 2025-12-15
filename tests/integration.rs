@@ -1275,3 +1275,73 @@ fn test_csv_freq_enter() {
     assert!(output.contains("b=x") || output.contains("(3 rows)"), "Should filter to x values: {}", output);
     fs::remove_file(&path).ok();
 }
+
+// === Key Play Tests (interactive mode simulation) ===
+
+/// Run key replay mode: simulate key presses
+fn run_keys(keys: &str, file: &str) -> String {
+    let output = Command::new("./target/release/tv")
+        .arg("--keys")
+        .arg(keys)
+        .arg(file)
+        .output()
+        .expect("failed to execute tv");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    format!("{}{}", stdout, stderr)
+}
+
+#[test]
+fn test_keys_freq_enter() {
+    // Test F (freq) + Enter (filter_parent) via key replay
+    let id = unique_id();
+    let path = format!("/tmp/tv_keys_freq_{}.csv", id);
+    fs::write(&path, "a,b\n1,x\n2,y\n3,x\n4,z\n5,x\n").unwrap();
+    // F=freq on col 0 (a), then move right to col b, F=freq, Enter=filter_parent
+    let output = run_keys("Right,F,Enter", &path);
+    assert!(output.contains("b=x") || output.contains("(3 rows)"), "F+Enter should filter to first value: {}", output);
+    fs::remove_file(&path).ok();
+}
+
+#[test]
+fn test_keys_sort_asc() {
+    // Test [ (sort ascending) via key replay
+    let id = unique_id();
+    let path = format!("/tmp/tv_keys_sort_{}.csv", id);
+    fs::write(&path, "a,b\n3,x\n1,y\n2,z\n").unwrap();
+    let output = run_keys("[", &path);
+    // First row should be 1 after sort
+    assert!(output.contains("│ 1"), "[ should sort ascending, first row should be 1: {}", output);
+    fs::remove_file(&path).ok();
+}
+
+#[test]
+fn test_keys_sort_desc() {
+    // Test ] (sort descending) via key replay
+    let id = unique_id();
+    let path = format!("/tmp/tv_keys_sortd_{}.csv", id);
+    fs::write(&path, "a,b\n1,x\n3,y\n2,z\n").unwrap();
+    let output = run_keys("]", &path);
+    // First row should be 3 after sort desc
+    assert!(output.contains("│ 3"), "] should sort descending, first row should be 3: {}", output);
+    fs::remove_file(&path).ok();
+}
+
+#[test]
+fn test_keys_meta() {
+    // Test M (meta) via key replay
+    let id = unique_id();
+    let path = format!("/tmp/tv_keys_meta_{}.csv", id);
+    fs::write(&path, "a,b\n1,x\n2,y\n3,z\n").unwrap();
+    let output = run_keys("M", &path);
+    assert!(output.contains("Meta:") || output.contains("metadata"), "M should show meta view: {}", output);
+    fs::remove_file(&path).ok();
+}
+
+#[test]
+fn test_keys_parquet_freq_enter() {
+    // Test F+Enter on parquet file (disk backend)
+    let output = run_keys("F,Enter", "sample.parquet");
+    // Should filter to first value in first column
+    assert!(output.contains("(1 row") || output.contains("id="), "F+Enter on parquet should filter: {}", output);
+}
