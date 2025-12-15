@@ -76,12 +76,12 @@ impl Backend for Polars {
             .map_err(|e| anyhow!("{}", e))
     }
 
-    /// Sort and limit via LazyFrame (efficient for TUI viewport)
+    /// Sort and limit via LazyFrame (streaming to avoid OOM on large files)
     fn sort_head(&self, path: &str, col: &str, desc: bool, limit: usize) -> Result<DataFrame> {
         LazyFrame::scan_parquet(PlPath::new(path), ScanArgsParquet::default())?
             .sort([col], SortMultipleOptions::default().with_order_descending(desc))
             .limit(limit as u32)
-            .collect()
+            .collect_with_engine(Engine::Streaming)
             .map_err(|e| anyhow!("{}", e))
     }
 
