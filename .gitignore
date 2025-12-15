@@ -6,4 +6,5 @@ commands.txt
 !cfg/plugins.csv
 !tests/data/*.csv
 *.parquet
+*.gz
 tmp/
