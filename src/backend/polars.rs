@@ -10,6 +10,13 @@ use std::path::Path;
 /// Polars streaming backend. Zero-copy parquet access via LazyFrame.
 pub struct Polars;
 
+impl Polars {
+    /// Create LazyFrame from parquet path
+    fn lf(&self, path: &str) -> Result<LazyFrame> {
+        LazyFrame::scan_parquet(PlPath::new(path), ScanArgsParquet::default()).map_err(|e| anyhow!("Scan: {}", e))
+    }
+}
+
 impl Backend for Polars {
     /// Column names from parquet schema
     fn cols(&self, path: &str) -> Result<Vec<String>> {
@@ -42,6 +49,17 @@ impl Backend for Polars {
             .map_err(|e| anyhow!("Fetch: {}", e))
     }
 
+    /// Fetch rows with WHERE clause (for filtered parquet views)
+    fn fetch_where(&self, path: &str, w: &str, offset: usize, limit: usize) -> Result<DataFrame> {
+        super::sql(self.lf(path)?, &format!("SELECT * FROM df WHERE {} LIMIT {} OFFSET {}", w, limit, offset))
+    }
+
+    /// Count rows matching WHERE clause
+    fn count_where(&self, path: &str, w: &str) -> Result<usize> {
+        let r = super::sql(self.lf(path)?, &format!("SELECT COUNT(*) as cnt FROM df WHERE {}", w))?;
+        Ok(r.column("cnt")?.get(0)?.try_extract::<u32>().unwrap_or(0) as usize)
+    }
+
     /// Distinct values via LazyFrame unique (streaming)
     fn distinct(&self, path: &str, name: &str) -> Result<Vec<String>> {
         let df = LazyFrame::scan_parquet(PlPath::new(path), ScanArgsParquet::default())
@@ -65,6 +83,11 @@ impl Backend for Polars {
             .sort(["Cnt"], SortMultipleOptions::default().with_order_descending(true))
             .collect_with_engine(Engine::Streaming)
             .map_err(|e| anyhow!("{}", e))
+    }
+
+    /// Frequency count with WHERE clause
+    fn freq_where(&self, path: &str, col: &str, w: &str) -> Result<DataFrame> {
+        super::sql(self.lf(path)?, &format!("SELECT \"{}\", COUNT(*) as Cnt FROM df WHERE {} GROUP BY \"{}\" ORDER BY Cnt DESC", col, w, col))
     }
 
     /// Filter via SQL WHERE on LazyFrame with LIMIT (streaming to avoid OOM)

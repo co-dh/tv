@@ -49,9 +49,12 @@ impl Renderer {
         // For lazy parquet views, fetch visible rows from disk
         let lazy_offset = if let Some(ref path) = view.parquet_path {
             let rows_needed = area.height as usize + 10; // buffer
-            if let Ok(df) = Polars.fetch_rows(path, view.state.r0, rows_needed) {
-                view.dataframe = df;
-            }
+            let df = if let Some(ref w) = view.filter_clause {
+                Polars.fetch_where(path, w, view.state.r0, rows_needed)
+            } else {
+                Polars.fetch_rows(path, view.state.r0, rows_needed)
+            };
+            if let Ok(df) = df { view.dataframe = df; }
             view.state.r0  // df rows start at this offset
         } else { 0 };
         let df = &view.dataframe;

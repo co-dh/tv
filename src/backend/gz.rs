@@ -68,6 +68,25 @@ impl Backend for Gz<'_> {
 
     /// Sort and limit via common helper (always allowed)
     fn sort_head(&self, _: &str, col: &str, desc: bool, limit: usize) -> Result<DataFrame> { df_sort_head(self.df, col, desc, limit) }
+
+    /// Fetch rows with WHERE clause - blocked if partial
+    fn fetch_where(&self, _: &str, w: &str, offset: usize, limit: usize) -> Result<DataFrame> {
+        if self.partial { return Err(anyhow!("File not fully loaded (memory limit)")); }
+        super::sql(self.df.clone().lazy(), &format!("SELECT * FROM df WHERE {} LIMIT {} OFFSET {}", w, limit, offset))
+    }
+
+    /// Count rows matching WHERE clause - blocked if partial
+    fn count_where(&self, _: &str, w: &str) -> Result<usize> {
+        if self.partial { return Err(anyhow!("File not fully loaded (memory limit)")); }
+        let r = super::sql(self.df.clone().lazy(), &format!("SELECT COUNT(*) as cnt FROM df WHERE {}", w))?;
+        Ok(r.column("cnt")?.get(0)?.try_extract::<u32>().unwrap_or(0) as usize)
+    }
+
+    /// Frequency count with WHERE clause - blocked if partial
+    fn freq_where(&self, _: &str, col: &str, w: &str) -> Result<DataFrame> {
+        if self.partial { return Err(anyhow!("File not fully loaded (memory limit)")); }
+        super::sql(self.df.clone().lazy(), &format!("SELECT \"{}\", COUNT(*) as Cnt FROM df WHERE {} GROUP BY \"{}\" ORDER BY Cnt DESC", col, w, col))
+    }
 }
 
 // ── Streaming load ──────────────────────────────────────────────────────────

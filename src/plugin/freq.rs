@@ -66,13 +66,20 @@ impl Command for Frequency {
         let parent_name = view.name.clone();
         let path = view.path().to_string();
         let key_cols = view.key_cols();
+        let filter = view.filter_clause.clone();
 
         // Use view's backend (file or memory)
         let col_names = view.backend().cols(&path)?;
         if !col_names.contains(&self.col_name) {
             return Err(anyhow!("Column '{}' not found", self.col_name));
         }
-        let result = add_freq_cols(view.backend().freq(&path, &self.col_name)?)?;
+        // Use freq_where for filtered views, freq for unfiltered
+        let freq_df = if let Some(ref w) = filter {
+            view.backend().freq_where(&path, &self.col_name, w)?
+        } else {
+            view.backend().freq(&path, &self.col_name)?
+        };
+        let result = add_freq_cols(freq_df)?;
 
         let id = app.next_id();
         let mut new_view = ViewState::new_freq(

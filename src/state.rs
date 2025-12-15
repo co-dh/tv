@@ -92,6 +92,7 @@ pub struct ViewState {
     pub col_names: Vec<String>,  // cached column names (for parquet views)
     pub sort_col: Option<String>,  // sort column for lazy parquet
     pub sort_desc: bool,  // sort descending
+    pub filter_clause: Option<String>,  // SQL WHERE clause for filtered parquet views
 }
 
 impl ViewState {
@@ -128,7 +129,7 @@ impl ViewState {
             filename, show_row_numbers: false, parent_id: None, parent_rows: None, parent_name: None, freq_col: None,
             selected_cols: HashSet::new(), selected_rows: HashSet::new(), gz_source: None,
             stats_cache: None, col_separator: None, meta_cache: None, partial: false, disk_rows: None, parquet_path: None, col_names: Vec::new(),
-            sort_col: None, sort_desc: false,
+            sort_col: None, sort_desc: false, filter_clause: None,
         }
     }
 
@@ -139,7 +140,7 @@ impl ViewState {
             filename: Some(path.clone()), show_row_numbers: false, parent_id: None, parent_rows: None, parent_name: None, freq_col: None,
             selected_cols: HashSet::new(), selected_rows: HashSet::new(), gz_source: None,
             stats_cache: None, col_separator: None, meta_cache: None, partial: false, disk_rows: Some(total_rows), parquet_path: Some(path), col_names: cols,
-            sort_col: None, sort_desc: false,
+            sort_col: None, sort_desc: false, filter_clause: None,
         }
     }
 
@@ -150,7 +151,7 @@ impl ViewState {
             filename, show_row_numbers: false, parent_id: None, parent_rows: None, parent_name: None, freq_col: None,
             selected_cols: HashSet::new(), selected_rows: HashSet::new(), gz_source: Some(gz),
             stats_cache: None, col_separator: None, meta_cache: None, partial, disk_rows: None, parquet_path: None, col_names: Vec::new(),
-            sort_col: None, sort_desc: false,
+            sort_col: None, sort_desc: false, filter_clause: None,
         }
     }
 
@@ -161,7 +162,7 @@ impl ViewState {
             filename: None, show_row_numbers: false, parent_id: Some(pid), parent_rows: Some(prows), parent_name: Some(pname), freq_col: None,
             selected_cols: HashSet::new(), selected_rows: HashSet::new(), gz_source: None,
             stats_cache: None, col_separator: None, meta_cache: None, partial: false, disk_rows: None, parquet_path: None, col_names: Vec::new(),
-            sort_col: None, sort_desc: false,
+            sort_col: None, sort_desc: false, filter_clause: None,
         }
     }
 
@@ -172,7 +173,18 @@ impl ViewState {
             filename: None, show_row_numbers: false, parent_id: Some(pid), parent_rows: Some(prows), parent_name: Some(pname), freq_col: Some(col),
             selected_cols: HashSet::new(), selected_rows: HashSet::new(), gz_source: None,
             stats_cache: None, col_separator: None, meta_cache: None, partial: false, disk_rows: None, parquet_path: None, col_names: Vec::new(),
-            sort_col: None, sort_desc: false,
+            sort_col: None, sort_desc: false, filter_clause: None,
+        }
+    }
+
+    /// Create filtered parquet view (lazy - all ops go to disk with WHERE)
+    pub fn new_filtered(id: usize, name: String, path: String, cols: Vec<String>, filter: String, count: usize) -> Self {
+        Self {
+            id, name, dataframe: DataFrame::empty(), state: TableState::new(), history: Vec::new(),
+            filename: Some(path.clone()), show_row_numbers: false, parent_id: None, parent_rows: None, parent_name: None, freq_col: None,
+            selected_cols: HashSet::new(), selected_rows: HashSet::new(), gz_source: None,
+            stats_cache: None, col_separator: None, meta_cache: None, partial: false, disk_rows: Some(count), parquet_path: Some(path), col_names: cols,
+            sort_col: None, sort_desc: false, filter_clause: Some(filter),
         }
     }
 

@@ -33,14 +33,20 @@ impl Command for Filter {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         // Block filter while gz is still loading
         if app.is_loading() { return Err(anyhow!("Wait for loading to complete")); }
-        let (filtered, filename) = {
-            let v = app.req()?;
-            let where_clause = crate::prql::filter_to_sql(&self.expr)?;
-            let path = v.path().to_string();
-            (v.backend().filter(&path, &where_clause, FILTER_LIMIT)?, v.filename.clone())
-        };
         let id = app.next_id();
-        app.stack.push(crate::state::ViewState::new(id, self.expr.clone(), filtered, filename));
+        let v = app.req()?;
+        let where_clause = crate::prql::filter_to_sql(&self.expr)?;
+        let path = v.path().to_string();
+        // Lazy filtered view for parquet: keep parquet_path + filter_clause
+        if v.parquet_path.is_some() {
+            let count = v.backend().count_where(&path, &where_clause)?;
+            let cols = v.col_names.clone();
+            app.stack.push(crate::state::ViewState::new_filtered(id, self.expr.clone(), path, cols, where_clause, count));
+        } else {
+            let filtered = v.backend().filter(&path, &where_clause, FILTER_LIMIT)?;
+            let filename = v.filename.clone();
+            app.stack.push(crate::state::ViewState::new(id, self.expr.clone(), filtered, filename));
+        }
         Ok(())
     }
     fn to_str(&self) -> String { format!("filter {}", self.expr) }

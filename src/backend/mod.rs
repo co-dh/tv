@@ -35,6 +35,13 @@ pub fn df_filter(df: &DataFrame, w: &str, limit: usize) -> Result<DataFrame> {
         .collect().map_err(|e| anyhow!("{}", e))
 }
 
+/// Execute SQL on LazyFrame (common helper for all SQL ops)
+pub fn sql(lf: LazyFrame, query: &str) -> Result<DataFrame> {
+    let mut ctx = ::polars::sql::SQLContext::new();
+    ctx.register("df", lf);
+    ctx.execute(query)?.collect().map_err(|e| anyhow!("{}", e))
+}
+
 /// Sort DataFrame and take top N rows
 pub fn df_sort_head(df: &DataFrame, col: &str, desc: bool, limit: usize) -> Result<DataFrame> {
     df.clone().lazy()
@@ -69,8 +76,14 @@ pub trait Backend: Send + Sync {
     /// Get metadata: (row_count, column_names)
     fn metadata(&self, path: &str) -> Result<(usize, Vec<String>)>;
 
-    /// Fetch rows for viewport (offset, limit)
+    /// Fetch rows for viewport (offset, limit), with optional WHERE clause
     fn fetch_rows(&self, path: &str, offset: usize, limit: usize) -> Result<DataFrame>;
+
+    /// Fetch rows with WHERE clause for filtered views
+    fn fetch_where(&self, path: &str, where_clause: &str, offset: usize, limit: usize) -> Result<DataFrame>;
+
+    /// Count rows matching WHERE clause (for filtered view total count)
+    fn count_where(&self, path: &str, where_clause: &str) -> Result<usize>;
 
     /// Get distinct values for a column
     fn distinct(&self, path: &str, col: &str) -> Result<Vec<String>>;
@@ -88,6 +101,9 @@ pub trait Backend: Send + Sync {
     /// Compute frequency counts for a column, sorted descending.
     /// Returns DataFrame with [col, Cnt] columns.
     fn freq(&self, path: &str, col: &str) -> Result<DataFrame>;
+
+    /// Compute frequency with WHERE clause for filtered views
+    fn freq_where(&self, path: &str, col: &str, where_clause: &str) -> Result<DataFrame>;
 
     /// Filter rows using SQL WHERE clause syntax, limit results.
     /// Returns DataFrame with up to `limit` matching rows.

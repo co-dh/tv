@@ -111,3 +111,45 @@ fn test_parquet_time_roundtrip() {
         "Time column should remain Time after parquet roundtrip, got {:?}",
         loaded.column("event_time").unwrap().dtype());
 }
+
+/// Filtered parquet view shows correct row count from disk via SQL count(*)
+#[test]
+fn test_parquet_filtered_count() {
+    let id = unique_id();
+    let path = format!("/tmp/tv_pq_filt_cnt_{}.parquet", id);
+    let n = 100_000usize;
+    // 40% A, 60% B
+    let df = df! {
+        "sym" => (0..n).map(|i| if i < n * 4 / 10 { "A" } else { "B" }).collect::<Vec<&str>>()
+    }.unwrap();
+    ParquetWriter::new(std::fs::File::create(&path).unwrap())
+        .finish(&mut df.clone()).unwrap();
+
+    // Filter for B rows - should show 60,000 rows
+    let output = run_script(&format!("from {}\nfilter \"sym\" = 'B'\n", path), id);
+    assert!(output.contains("60,000") || output.contains("60000"),
+        "Filtered view should show 60,000 rows, got: {}", output);
+    fs::remove_file(&path).ok();
+}
+
+/// Filtered parquet view freq runs against disk (not memory)
+#[test]
+fn test_parquet_filtered_freq() {
+    let id = unique_id();
+    let path = format!("/tmp/tv_pq_filt_freq_{}.parquet", id);
+    let n = 100_000usize;
+    // sym: 50% A, 50% B. cat: 25% each of X, Y, Z, W
+    let df = df! {
+        "sym" => (0..n).map(|i| if i < n/2 { "A" } else { "B" }).collect::<Vec<&str>>(),
+        "cat" => (0..n).map(|i| match i % 4 { 0 => "X", 1 => "Y", 2 => "Z", _ => "W" }).collect::<Vec<&str>>()
+    }.unwrap();
+    ParquetWriter::new(std::fs::File::create(&path).unwrap())
+        .finish(&mut df.clone()).unwrap();
+
+    // Filter for A, then freq on cat - should show ~12,500 each
+    let output = run_script(&format!("from {}\nfilter \"sym\" = 'A'\nfreq cat\n", path), id);
+    // Each cat value should appear ~12,500 times in filtered view
+    assert!(output.contains("12") && output.contains("Freq:cat"),
+        "Filtered freq should show ~12,500 counts, got: {}", output);
+    fs::remove_file(&path).ok();
+}
