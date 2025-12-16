@@ -120,73 +120,46 @@ impl ViewState {
                 .map(|s| s.to_string()).collect()
         }).unwrap_or_default()
     }
-}
 
-impl ViewState {
-    /// Create standard in-memory view (CSV, filtered results, etc.)
-    pub fn new(id: usize, name: String, df: DataFrame, filename: Option<String>) -> Self {
+    /// Base view with default values (all Options None, all flags false)
+    fn base(id: usize, name: String, df: DataFrame) -> Self {
         Self {
             id, name, dataframe: df, state: TableState::new(), history: Vec::new(),
-            filename, show_row_numbers: false, parent_id: None, parent_rows: None, parent_name: None, freq_col: None,
+            filename: None, show_row_numbers: false, parent_id: None, parent_rows: None, parent_name: None, freq_col: None,
             selected_cols: HashSet::new(), selected_rows: HashSet::new(), gz_source: None,
             stats_cache: None, col_separator: None, meta_cache: None, partial: false, disk_rows: None, parquet_path: None, col_names: Vec::new(),
             sort_col: None, sort_desc: false, filter_clause: None, fetch_cache: None,
         }
     }
 
+    /// Create standard in-memory view (CSV, filtered results, etc.)
+    pub fn new(id: usize, name: String, df: DataFrame, filename: Option<String>) -> Self {
+        Self { filename, ..Self::base(id, name, df) }
+    }
+
     /// Create lazy parquet view (no in-memory dataframe, all ops go to disk)
-    pub fn new_parquet(id: usize, name: String, path: String, total_rows: usize, cols: Vec<String>) -> Self {
-        Self {
-            id, name, dataframe: DataFrame::empty(), state: TableState::new(), history: Vec::new(),
-            filename: Some(path.clone()), show_row_numbers: false, parent_id: None, parent_rows: None, parent_name: None, freq_col: None,
-            selected_cols: HashSet::new(), selected_rows: HashSet::new(), gz_source: None,
-            stats_cache: None, col_separator: None, meta_cache: None, partial: false, disk_rows: Some(total_rows), parquet_path: Some(path), col_names: cols,
-            sort_col: None, sort_desc: false, filter_clause: None, fetch_cache: None,
-        }
+    pub fn new_parquet(id: usize, name: String, path: String, rows: usize, cols: Vec<String>) -> Self {
+        Self { filename: Some(path.clone()), disk_rows: Some(rows), parquet_path: Some(path), col_names: cols, ..Self::base(id, name, DataFrame::empty()) }
     }
 
     /// Create gzipped CSV view (may be partial if memory limit hit)
     pub fn new_gz(id: usize, name: String, df: DataFrame, filename: Option<String>, gz: String, partial: bool) -> Self {
-        Self {
-            id, name, dataframe: df, state: TableState::new(), history: Vec::new(),
-            filename, show_row_numbers: false, parent_id: None, parent_rows: None, parent_name: None, freq_col: None,
-            selected_cols: HashSet::new(), selected_rows: HashSet::new(), gz_source: Some(gz),
-            stats_cache: None, col_separator: None, meta_cache: None, partial, disk_rows: None, parquet_path: None, col_names: Vec::new(),
-            sort_col: None, sort_desc: false, filter_clause: None, fetch_cache: None,
-        }
+        Self { filename, gz_source: Some(gz), partial, ..Self::base(id, name, df) }
     }
 
     /// Create child view (freq/meta) with parent info
     pub fn new_child(id: usize, name: String, df: DataFrame, pid: usize, prows: usize, pname: String) -> Self {
-        Self {
-            id, name, dataframe: df, state: TableState::new(), history: Vec::new(),
-            filename: None, show_row_numbers: false, parent_id: Some(pid), parent_rows: Some(prows), parent_name: Some(pname), freq_col: None,
-            selected_cols: HashSet::new(), selected_rows: HashSet::new(), gz_source: None,
-            stats_cache: None, col_separator: None, meta_cache: None, partial: false, disk_rows: None, parquet_path: None, col_names: Vec::new(),
-            sort_col: None, sort_desc: false, filter_clause: None, fetch_cache: None,
-        }
+        Self { parent_id: Some(pid), parent_rows: Some(prows), parent_name: Some(pname), ..Self::base(id, name, df) }
     }
 
     /// Create freq view with parent info
     pub fn new_freq(id: usize, name: String, df: DataFrame, pid: usize, prows: usize, pname: String, col: String) -> Self {
-        Self {
-            id, name, dataframe: df, state: TableState::new(), history: Vec::new(),
-            filename: None, show_row_numbers: false, parent_id: Some(pid), parent_rows: Some(prows), parent_name: Some(pname), freq_col: Some(col),
-            selected_cols: HashSet::new(), selected_rows: HashSet::new(), gz_source: None,
-            stats_cache: None, col_separator: None, meta_cache: None, partial: false, disk_rows: None, parquet_path: None, col_names: Vec::new(),
-            sort_col: None, sort_desc: false, filter_clause: None, fetch_cache: None,
-        }
+        Self { parent_id: Some(pid), parent_rows: Some(prows), parent_name: Some(pname), freq_col: Some(col), ..Self::base(id, name, df) }
     }
 
     /// Create filtered parquet view (lazy - all ops go to disk with WHERE)
     pub fn new_filtered(id: usize, name: String, path: String, cols: Vec<String>, filter: String, count: usize) -> Self {
-        Self {
-            id, name, dataframe: DataFrame::empty(), state: TableState::new(), history: Vec::new(),
-            filename: Some(path.clone()), show_row_numbers: false, parent_id: None, parent_rows: None, parent_name: None, freq_col: None,
-            selected_cols: HashSet::new(), selected_rows: HashSet::new(), gz_source: None,
-            stats_cache: None, col_separator: None, meta_cache: None, partial: false, disk_rows: Some(count), parquet_path: Some(path), col_names: cols,
-            sort_col: None, sort_desc: false, filter_clause: Some(filter), fetch_cache: None,
-        }
+        Self { filename: Some(path.clone()), disk_rows: Some(count), parquet_path: Some(path), col_names: cols, filter_clause: Some(filter), ..Self::base(id, name, DataFrame::empty()) }
     }
 
     /// Add command to history
