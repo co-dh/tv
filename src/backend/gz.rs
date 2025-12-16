@@ -32,8 +32,6 @@ const PARTIAL_ERR: &str = "File not fully loaded (memory limit)";
 impl Backend for Gz<'_> {
     /// LazyFrame from in-memory DataFrame
     fn lf(&self, _: &str) -> Result<LazyFrame> { Ok(self.df.clone().lazy()) }
-    /// Row count and column names
-    fn metadata(&self, _: &str) -> Result<(usize, Vec<String>)> { Ok((self.df.height(), self.cols("")?)) }
 
     /// Sort and take top N - allowed on partial data
     fn sort_head(&self, _: &str, col: &str, desc: bool, limit: usize) -> Result<DataFrame> {

@@ -13,12 +13,10 @@ pub struct Memory<'a>(pub &'a DataFrame, pub Vec<String>);
 
 /// `impl Backend for Memory<'_>` - implement trait for Memory with any lifetime
 /// `'_` = elided lifetime, compiler infers it
-/// Most methods use trait defaults via lf() - only metadata and keyed freq need custom impl.
+/// Only lf() and keyed freq need custom impl - all else uses trait defaults.
 impl Backend for Memory<'_> {
     /// LazyFrame from in-memory DataFrame (SQL operations use this)
     fn lf(&self, _: &str) -> Result<LazyFrame> { Ok(self.0.clone().lazy()) }
-    /// Row count and column names
-    fn metadata(&self, _: &str) -> Result<(usize, Vec<String>)> { Ok((self.0.height(), self.cols("")?)) }
 
     /// Frequency count - keyed group_by (simple case uses trait default via SQL)
     fn freq(&self, p: &str, c: &str) -> Result<DataFrame> {

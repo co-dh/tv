@@ -44,13 +44,17 @@ pub fn df_save(df: &DataFrame, path: &Path) -> Result<()> {
 
 /// Backend interface for data operations.
 /// All methods take a path (ignored by Memory/Gz backends).
-/// SQL operations have default implementations using lf().
+/// Only lf() is required - all other ops use SQL defaults.
 pub trait Backend: Send + Sync {
     /// Get LazyFrame for SQL operations (path ignored by Memory/Gz)
     fn lf(&self, path: &str) -> Result<LazyFrame>;
 
-    /// Get metadata: (row_count, column_names) - required, row count varies by backend
-    fn metadata(&self, path: &str) -> Result<(usize, Vec<String>)>;
+    /// Get metadata: (row_count, column_names) - default via SQL COUNT(*)
+    fn metadata(&self, path: &str) -> Result<(usize, Vec<String>)> {
+        let r = sql(self.lf(path)?, "SELECT COUNT(*) as cnt FROM df")?;
+        let cnt = r.column("cnt")?.get(0)?.try_extract::<u64>().unwrap_or(0) as usize;
+        Ok((cnt, self.cols(path)?))
+    }
 
     /// Get column names - default via lf().collect_schema()
     fn cols(&self, path: &str) -> Result<Vec<String>> {

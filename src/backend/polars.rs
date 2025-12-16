@@ -1,7 +1,6 @@
 //! Polars backend - native streaming engine for parquet files.
 //! All parquet operations (load, save, fetch, freq, filter, distinct, etc.)
 use super::{Backend, LoadResult};
-use crate::command::io::convert::convert_epoch_cols;
 use crate::state::ViewState;
 use anyhow::{anyhow, Result};
 use polars::prelude::*;
@@ -16,12 +15,6 @@ impl Backend for Polars {
         LazyFrame::scan_parquet(PlPath::new(path), ScanArgsParquet::default()).map_err(|e| anyhow!("Scan: {}", e))
     }
 
-    /// Row count and columns from parquet metadata (efficient - no scan needed)
-    fn metadata(&self, path: &str) -> Result<(usize, Vec<String>)> {
-        let mut r = ParquetReader::new(std::fs::File::open(path)?);
-        Ok((r.get_metadata()?.num_rows, r.schema()?.iter_names().map(|s| s.to_string()).collect()))
-    }
-
     /// Load CSV, parquet, or glob pattern into ViewState
     fn load(&self, path: &str, id: usize) -> Result<LoadResult> {
         const MAX_PREVIEW: u32 = 100_000;
@@ -29,14 +22,13 @@ impl Backend for Polars {
         if path.contains('*') || path.contains('?') {
             let df = load_glob(path, MAX_PREVIEW)?;
             if df.height() == 0 { return Err(anyhow!("No data found")); }
-            let df = convert_epoch_cols(df);
             return Ok(LoadResult { view: ViewState::new(id, path.into(), df, None), bg_loader: None });
         }
         let p = Path::new(path);
         if !p.exists() { return Err(anyhow!("File not found: {}", path)); }
         match p.extension().and_then(|s| s.to_str()) {
             Some("csv") => {
-                let df = convert_epoch_cols(load_csv(p)?);
+                let df = load_csv(p)?;
                 if df.height() == 0 { return Err(anyhow!("File is empty")); }
                 Ok(LoadResult { view: ViewState::new(id, path.into(), df, Some(path.into())), bg_loader: None })
             }
