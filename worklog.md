@@ -1,5 +1,48 @@
 # Worklog
 
+## 2025-12-15: OS Commands & Rendering Fixes
+
+### New Commands
+Added systemctl, journalctl, pacman to `:` command picker.
+
+| Command | Columns |
+|---------|---------|
+| `systemctl` | unit, load, active, sub, description |
+| `journalctl [n]` | time, host, unit, message |
+| `pacman` | name, version, size, deps, req_by, orphan, reason, installed, description |
+
+### Pacman Enhancements
+- `deps` - number of dependencies
+- `req_by` - number of packages requiring this
+- `orphan` - "x" if orphaned (dep no longer needed, from `pacman -Qdt`)
+- `reason` - "dep" or "explicit"
+
+### Rendering Fixes
+- **Last column fills screen**: Expands to remaining width (cap 200 chars)
+- **Unicode crash fix**: Use `.chars().take(n)` instead of byte-slicing `&s[..n]`
+  - Crashed on pacman descriptions with fancy quotes like `"`
+
+### Removed
+- `-c` command mode (unused, only `--keys` test mode remains)
+
+### Tests Added
+- `test_pacman_command` - basic pacman view
+- `test_pacman_sort_deps` - sort ascending on deps
+- `test_pacman_sort_deps_desc` - sort descending
+- `test_pacman_sort_unicode_description` - unicode in description
+- `test_systemctl_command` - systemctl view
+- `test_journalctl_command` - journalctl view
+
+### Files
+- `src/os.rs` - systemctl(), journalctl(), pacman()
+- `src/plugin/system.rs` - register commands
+- `src/main.rs` - add to `:` picker, remove `-c`
+- `src/render/renderer.rs` - last col fills screen, unicode fix
+- `tests/test_system.rs` - 6 new tests
+- `unix.md` - command list (50 unix commands with table output)
+
+---
+
 ## 2025-12-15: Backend Unification & Dependency Analysis
 
 ### Backend Refactoring
