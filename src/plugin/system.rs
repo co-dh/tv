@@ -98,6 +98,12 @@ impl Command for Journalctl {
 // OS Data Functions
 // ============================================================================
 
+/// Run command and return stdout as String
+fn run_cmd(cmd: &str, args: &[&str]) -> Result<String> {
+    let out = std::process::Command::new(cmd).args(args).output()?;
+    Ok(String::from_utf8_lossy(&out.stdout).into())
+}
+
 /// List directory contents as DataFrame
 pub fn ls(dir: &Path) -> Result<DataFrame> {
     let mut names: Vec<String> = Vec::new();
@@ -175,9 +181,7 @@ pub fn lr(dir: &Path) -> Result<DataFrame> {
 
 /// Process list from ps aux
 fn ps() -> Result<DataFrame> {
-    use std::process::Command;
-    let out = Command::new("ps").args(["aux"]).output()?;
-    let text = String::from_utf8_lossy(&out.stdout);
+    let text = run_cmd("ps", &["aux"])?;
 
     let (mut users, mut pids, mut cpus, mut mems) = (vec![], vec![], vec![], vec![]);
     let (mut vszs, mut rsss, mut ttys, mut stats) = (vec![], vec![], vec![], vec![]);
@@ -306,11 +310,9 @@ pub fn mem_total() -> u64 {
 
 /// Systemd services from systemctl
 fn systemctl() -> Result<DataFrame> {
-    use std::process::Command;
-    let out = Command::new("systemctl")
-        .args(["list-units", "--type=service", "--all", "--no-pager", "--no-legend"]).output()?;
+    let text = run_cmd("systemctl", &["list-units", "--type=service", "--all", "--no-pager", "--no-legend"])?;
     let (mut units, mut loads, mut actives, mut subs, mut descs) = (vec![], vec![], vec![], vec![], vec![]);
-    for line in String::from_utf8_lossy(&out.stdout).lines() {
+    for line in text.lines() {
         let p: Vec<&str> = line.split_whitespace().collect();
         if p.len() >= 5 {
             units.push(p[0].to_string()); loads.push(p[1].to_string());
@@ -327,11 +329,10 @@ fn systemctl() -> Result<DataFrame> {
 
 /// Journal logs from journalctl
 fn journalctl(n: usize) -> Result<DataFrame> {
-    use std::process::Command;
-    let out = Command::new("journalctl")
-        .args(["--no-pager", "-o", "short-iso", "-n", &n.to_string()]).output()?;
+    let ns = n.to_string();
+    let text = run_cmd("journalctl", &["--no-pager", "-o", "short-iso", "-n", &ns])?;
     let (mut times, mut hosts, mut units, mut msgs) = (vec![], vec![], vec![], vec![]);
-    for line in String::from_utf8_lossy(&out.stdout).lines() {
+    for line in text.lines() {
         let p: Vec<&str> = line.splitn(4, ' ').collect();
         if p.len() >= 4 {
             times.push(p[0].to_string()); hosts.push(p[1].to_string());
@@ -367,40 +368,41 @@ fn parse_date(s: &str) -> String {
     format!("{}-{}-{:02}", p[4], mon, p[2].parse::<u32>().unwrap_or(0))
 }
 
+/// Parse dependency list from pacman field value
+fn parse_deps(v: &str) -> Vec<String> {
+    if v == "None" { vec![] } else { v.split_whitespace().map(|s| s.split(&['<','>','='][..]).next().unwrap_or(s).to_string()).collect() }
+}
+
+/// Calculate rsize: package size + exclusive deps (deps only required by this package)
+fn calc_rsize(name: &str, size: u64, deps: &[String], pkg_size: &std::collections::HashMap<String, u64>, pkg_req_by: &std::collections::HashMap<String, Vec<String>>) -> u64 {
+    deps.iter().fold(size, |acc, dep| {
+        acc + pkg_req_by.get(dep).filter(|r| r.len() == 1 && r[0] == name).map(|_| pkg_size.get(dep).copied().unwrap_or(0)).unwrap_or(0)
+    })
+}
+
 /// Installed packages from pacman (Arch Linux)
 fn pacman() -> Result<DataFrame> {
-    use std::process::Command;
     use std::collections::{HashSet, HashMap};
 
-    let orphan_out = Command::new("pacman").args(["-Qdt"]).output()?;
-    let orphan_text = String::from_utf8_lossy(&orphan_out.stdout).to_string();
-    let orphans: HashSet<&str> = orphan_text.lines().filter_map(|l| l.split_whitespace().next()).collect();
+    let orphan_text = run_cmd("pacman", &["-Qdt"])?;
+    let orphans: HashSet<String> = orphan_text.lines().filter_map(|l| l.split_whitespace().next()).map(String::from).collect();
 
-    let out = Command::new("pacman").args(["-Qi"]).output()?;
-    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    let text = run_cmd("pacman", &["-Qi"])?;
 
-    // First pass: collect sizes and deps
+    // First pass: collect sizes and who requires each package
     let (mut pkg_size, mut pkg_req_by): (HashMap<String, u64>, HashMap<String, Vec<String>>) = (HashMap::new(), HashMap::new());
-    let (mut name, mut size, mut deps_list, mut req_list) = (String::new(), 0u64, vec![], vec![]);
+    let (mut name, mut size, mut req_list) = (String::new(), 0u64, vec![]);
 
     for line in text.lines() {
         if line.is_empty() {
-            if !name.is_empty() {
-                pkg_size.insert(name.clone(), size);
-                pkg_req_by.insert(std::mem::take(&mut name), std::mem::take(&mut req_list));
-                deps_list.clear(); size = 0;
-            }
+            if !name.is_empty() { pkg_size.insert(name.clone(), size); pkg_req_by.insert(std::mem::take(&mut name), std::mem::take(&mut req_list)); size = 0; }
             continue;
         }
         if let Some((k, v)) = line.split_once(':') {
-            let v = v.trim();
             match k.trim() {
-                "Name" => name = v.into(),
-                "Installed Size" => size = parse_size(v),
-                "Depends On" => deps_list = if v == "None" { vec![] } else {
-                    v.split_whitespace().map(|s| s.split(&['<','>','='][..]).next().unwrap_or(s).to_string()).collect()
-                },
-                "Required By" => req_list = if v == "None" { vec![] } else { v.split_whitespace().map(String::from).collect() },
+                "Name" => name = v.trim().into(),
+                "Installed Size" => size = parse_size(v.trim()),
+                "Required By" => req_list = parse_deps(v.trim()),
                 _ => {}
             }
         }
@@ -413,58 +415,36 @@ fn pacman() -> Result<DataFrame> {
     let (mut name, mut ver, mut desc, mut inst, mut reason) = (String::new(), String::new(), String::new(), String::new(), String::new());
     let (mut size, mut deps, mut reqs, mut deps_list) = (0u64, 0u32, 0u32, vec![]);
 
+    // Helper to push current package to output vectors
+    let mut push_pkg = |n: &mut String, v: &mut String, d: &mut String, i: &mut String, r: &mut String, sz: &mut u64, dc: &mut u32, rc: &mut u32, dl: &mut Vec<String>| {
+        if n.is_empty() { return; }
+        rsizes.push(calc_rsize(n, *sz, dl, &pkg_size, &pkg_req_by));
+        orphan_flags.push(if orphans.contains(n.as_str()) { "x".into() } else { "".into() });
+        names.push(std::mem::take(n)); vers.push(std::mem::take(v)); descs.push(std::mem::take(d));
+        sizes.push(*sz); installed.push(std::mem::take(i)); reasons.push(std::mem::take(r));
+        deps_cnt.push(*dc); req_cnt.push(*rc); dl.clear(); *sz = 0; *dc = 0; *rc = 0;
+    };
+
     for line in text.lines() {
-        if line.is_empty() {
-            if !name.is_empty() {
-                let mut rsize = size;
-                for dep in &deps_list {
-                    if let Some(req) = pkg_req_by.get(dep) {
-                        if req.len() == 1 && req[0] == name { rsize += pkg_size.get(dep).copied().unwrap_or(0); }
-                    }
-                }
-                orphan_flags.push(if orphans.contains(name.as_str()) { "x".into() } else { "".into() });
-                names.push(std::mem::take(&mut name)); vers.push(std::mem::take(&mut ver));
-                descs.push(std::mem::take(&mut desc)); sizes.push(size); rsizes.push(rsize);
-                installed.push(std::mem::take(&mut inst)); reasons.push(std::mem::take(&mut reason));
-                deps_cnt.push(deps); req_cnt.push(reqs); deps_list.clear(); size = 0; deps = 0; reqs = 0;
-            }
-            continue;
-        }
+        if line.is_empty() { push_pkg(&mut name, &mut ver, &mut desc, &mut inst, &mut reason, &mut size, &mut deps, &mut reqs, &mut deps_list); continue; }
         if let Some((k, v)) = line.split_once(':') {
             let v = v.trim();
             match k.trim() {
                 "Name" => name = v.into(), "Version" => ver = v.into(), "Description" => desc = v.into(),
                 "Installed Size" => size = parse_size(v), "Install Date" => inst = parse_date(v),
                 "Install Reason" => reason = if v.contains("dependency") { "dep".into() } else { "explicit".into() },
-                "Depends On" => {
-                    deps_list = if v == "None" { vec![] } else {
-                        v.split_whitespace().map(|s| s.split(&['<','>','='][..]).next().unwrap_or(s).to_string()).collect()
-                    };
-                    deps = deps_list.len() as u32;
-                },
+                "Depends On" => { deps_list = parse_deps(v); deps = deps_list.len() as u32; },
                 "Required By" => reqs = if v == "None" { 0 } else { v.split_whitespace().count() as u32 },
                 _ => {}
             }
         }
     }
-    if !name.is_empty() {
-        let mut rsize = size;
-        for dep in &deps_list {
-            if let Some(req) = pkg_req_by.get(dep) {
-                if req.len() == 1 && req[0] == name { rsize += pkg_size.get(dep).copied().unwrap_or(0); }
-            }
-        }
-        orphan_flags.push(if orphans.contains(name.as_str()) { "x".into() } else { "".into() });
-        names.push(name); vers.push(ver); descs.push(desc); sizes.push(size); rsizes.push(rsize);
-        installed.push(inst); reasons.push(reason); deps_cnt.push(deps); req_cnt.push(reqs);
-    }
-
-    let sizes_k: Vec<u64> = sizes.iter().map(|b| b / 1024).collect();
-    let rsizes_k: Vec<u64> = rsizes.iter().map(|b| b / 1024).collect();
+    push_pkg(&mut name, &mut ver, &mut desc, &mut inst, &mut reason, &mut size, &mut deps, &mut reqs, &mut deps_list);
 
     Ok(DataFrame::new(vec![
         Series::new("name".into(), names).into(), Series::new("version".into(), vers).into(),
-        Series::new("size(k)".into(), sizes_k).into(), Series::new("rsize(k)".into(), rsizes_k).into(),
+        Series::new("size(k)".into(), sizes.iter().map(|b| b / 1024).collect::<Vec<u64>>()).into(),
+        Series::new("rsize(k)".into(), rsizes.iter().map(|b| b / 1024).collect::<Vec<u64>>()).into(),
         Series::new("deps".into(), deps_cnt).into(), Series::new("req_by".into(), req_cnt).into(),
         Series::new("orphan".into(), orphan_flags).into(), Series::new("reason".into(), reasons).into(),
         Series::new("installed".into(), installed).into(), Series::new("description".into(), descs).into(),
