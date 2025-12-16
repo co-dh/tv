@@ -1,5 +1,27 @@
 # Worklog
 
+## 2025-12-15: DRY Refactoring & Feature Comparison
+
+### Halstead Metrics
+| Metric | Before | After | Change |
+|--------|--------|-------|--------|
+| Length | 37046 | 36929 | -117 |
+| Bugs | 57.073 | 56.547 | -0.526 |
+
+### DRY Changes
+- **gz.rs**: Extracted `require_complete()` helper for 6 partial-data checks
+- **meta.rs**: Extracted `stats_df()` and `placeholder_df()` for DataFrame construction (used 5 times)
+
+### Code Consolidation
+- Merged `os.rs` into `plugin/system.rs` (deleted 562 lines, all OS functions now in one place)
+- Removed low-output OS commands: df, lsblk, who
+
+### Feature Comparison Docs
+- `visidata.md` - VisiData vs tv comparison, nested JSON handling
+- `nushell.md` - Nushell vs tv comparison
+
+---
+
 ## 2025-12-15: OS Commands & Rendering Fixes
 
 ### New Commands
