@@ -50,9 +50,6 @@ fn sel_cols(app: &AppContext, reverse: bool) -> Option<Vec<String>> {
 
 // === Commands ===
 
-/// Row count threshold for background computation (>10k runs in background thread)
-const BG_THRESHOLD: usize = 10_000;
-
 /// Metadata command - shows column statistics (null%, distinct, min, max, median, sigma)
 pub struct Metadata;
 
@@ -81,42 +78,37 @@ impl Command for Metadata {
             }
         }
 
-        // Lazy parquet: always background compute from disk
-        if let Some(path) = pq_path {
-            let types: Vec<String> = schema.iter().map(|(_, dt)| dt.clone()).collect();
-            let placeholder = placeholder_df(col_names, types)?;
-            let id = app.next_id();
-            let mut v = ViewState::new_child(id, "metadata".into(), placeholder, parent_id, parent_rows, parent_name);
-            v.state.cr = parent_col;
-            app.stack.push(v);
-
-            let (tx, rx) = std::sync::mpsc::channel();
-            std::thread::spawn(move || { if let Ok(r) = pq_stats(&path) { let _ = tx.send(r); } });
-            app.bg_meta = Some((parent_id, rx));
-        } else if parent_rows <= BG_THRESHOLD {
-            let meta_df = if key_cols.is_empty() { compute_stats(&df)? } else { grp_stats(&df, &key_cols)? };
-            if key_cols.is_empty() {
-                if let Some(parent) = app.stack.find_mut(parent_id) { parent.meta_cache = Some(meta_df.clone()); }
-            }
-            let id = app.next_id();
-            let mut v = ViewState::new_child(id, "metadata".into(), meta_df, parent_id, parent_rows, parent_name);
-            v.state.cr = parent_col;
-            if !key_cols.is_empty() { v.col_separator = Some(key_cols.len()); }
-            app.stack.push(v);
-        } else {
-            // Large dataset: placeholder + background compute
+        // Grouped stats need in-memory df
+        if !key_cols.is_empty() {
             let types: Vec<String> = df.dtypes().iter().map(|dt| format!("{:?}", dt)).collect();
             let placeholder = placeholder_df(col_names, types)?;
-
             let id = app.next_id();
             let mut v = ViewState::new_child(id, "metadata".into(), placeholder, parent_id, parent_rows, parent_name);
             v.state.cr = parent_col;
+            v.col_separator = Some(key_cols.len());
             app.stack.push(v);
 
             let (tx, rx) = std::sync::mpsc::channel();
-            std::thread::spawn(move || { if let Ok(r) = compute_stats(&df) { let _ = tx.send(r); } });
+            std::thread::spawn(move || { if let Ok(r) = grp_stats(&df, &key_cols) { let _ = tx.send(r); } });
             app.bg_meta = Some((parent_id, rx));
+            return Ok(());
         }
+
+        // Non-grouped: unified LazyFrame path (parquet or in-memory)
+        let types: Vec<String> = schema.iter().map(|(_, dt)| dt.clone()).collect();
+        let placeholder = placeholder_df(col_names, types)?;
+        let id = app.next_id();
+        let mut v = ViewState::new_child(id, "metadata".into(), placeholder, parent_id, parent_rows, parent_name);
+        v.state.cr = parent_col;
+        app.stack.push(v);
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        if let Some(path) = pq_path {
+            std::thread::spawn(move || { if let Ok(r) = lf_stats_path(&path) { let _ = tx.send(r); } });
+        } else {
+            std::thread::spawn(move || { if let Ok(r) = lf_stats(&df) { let _ = tx.send(r); } });
+        }
+        app.bg_meta = Some((parent_id, rx));
         Ok(())
     }
     fn to_str(&self) -> String { "meta".into() }
@@ -228,19 +220,18 @@ fn is_numeric_str(s: &str) -> bool {
     matches!(s, "Int8"|"Int16"|"Int32"|"Int64"|"UInt8"|"UInt16"|"UInt32"|"UInt64"|"Float32"|"Float64")
 }
 
-/// Compute column statistics for in-memory DataFrame using SQL
-fn compute_stats(df: &DataFrame) -> Result<DataFrame> {
+/// Compute stats from in-memory DataFrame via LazyFrame + SQL
+fn lf_stats(df: &DataFrame) -> Result<DataFrame> {
     let cols: Vec<String> = df.get_column_names().iter().map(|s| s.to_string()).collect();
     let dtypes = df.dtypes();
+    let types: Vec<String> = dtypes.iter().map(|dt| format!("{:?}", dt)).collect();
     let n = df.height() as f64;
-
     let (mut nulls, mut mins, mut maxs, mut dists, mut meds, mut sigs) = (vec![], vec![], vec![], vec![], vec![], vec![]);
     for (i, c) in cols.iter().enumerate() {
         let s = col_stats(df.clone().lazy(), c, n, is_numeric(&dtypes[i]));
         nulls.push(format!("{:.1}", s.nulls)); dists.push(format!("{}", s.distinct));
         mins.push(s.min); maxs.push(s.max); meds.push(s.mean); sigs.push(s.std);
     }
-    let types: Vec<String> = dtypes.iter().map(|dt| format!("{:?}", dt)).collect();
     stats_df(cols, types, nulls, dists, mins, maxs, meds, sigs)
 }
 
@@ -298,32 +289,30 @@ fn grp_stats(df: &DataFrame, keys: &[String]) -> Result<DataFrame> {
     Ok(DataFrame::new(result)?)
 }
 
-/// Compute stats from parquet using SQL (streaming, column-by-column to avoid OOM)
-fn pq_stats(path: &str) -> Result<DataFrame> {
+/// Compute stats from parquet path via LazyFrame + SQL (column-by-column to avoid OOM)
+fn lf_stats_path(path: &str) -> Result<DataFrame> {
     use crate::backend::{Backend, Polars};
     use polars::prelude::{ScanArgsParquet, PlPath};
     use std::io::Write;
     let t0 = std::time::Instant::now();
     let _ = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/tv.debug.log")
-        .and_then(|mut f| writeln!(f, "[pq_stats] START {}", path));
+        .and_then(|mut f| writeln!(f, "[lf_stats_path] START {}", path));
 
     let schema = Polars.schema(path)?;
     let (rows, _) = Polars.metadata(path)?;
-    let n = rows as f64;
-
     let cols: Vec<String> = schema.iter().map(|(name, _)| name.clone()).collect();
-    let dtypes: Vec<String> = schema.iter().map(|(_, dt)| dt.clone()).collect();
+    let types: Vec<String> = schema.iter().map(|(_, dt)| dt.clone()).collect();
+    let n = rows as f64;
     let (mut nulls, mut mins, mut maxs, mut dists, mut meds, mut sigs) = (vec![], vec![], vec![], vec![], vec![], vec![]);
-
     for (i, c) in cols.iter().enumerate() {
         let lf = LazyFrame::scan_parquet(PlPath::new(path), ScanArgsParquet::default())?;
-        let s = col_stats(lf, c, n, is_numeric_str(&dtypes[i]));
+        let s = col_stats(lf, c, n, is_numeric_str(&types[i]));
         nulls.push(format!("{:.1}", s.nulls)); dists.push(format!("{}", s.distinct));
         mins.push(s.min); maxs.push(s.max); meds.push(s.mean); sigs.push(s.std);
     }
     let _ = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/tv.debug.log")
-        .and_then(|mut f| writeln!(f, "[pq_stats] DONE {:.2}s {} cols", t0.elapsed().as_secs_f64(), cols.len()));
-    stats_df(cols, dtypes, nulls, dists, mins, maxs, meds, sigs)
+        .and_then(|mut f| writeln!(f, "[lf_stats_path] DONE {:.2}s {} cols", t0.elapsed().as_secs_f64(), cols.len()));
+    stats_df(cols, types, nulls, dists, mins, maxs, meds, sigs)
 }
 
 /// Format AnyValue to string, trimming quotes

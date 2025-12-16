@@ -31,8 +31,15 @@ fn col_stats(lf: LazyFrame, col: &str, n: f64, is_num: bool) -> ColStats
 ### Halstead Metrics
 | File | Before | After | Δ len | Δ bugs |
 |------|--------|-------|-------|--------|
-| meta.rs | 3361 | 2828 | -533 | -0.93 |
-| **Total** | 36885 | 36352 | **-533** | **-0.93** |
+| meta.rs | 3361 | 2765 | -596 | -1.13 |
+| **Total** | 36885 | 36289 | **-596** | **-1.13** |
+
+### Refactoring
+- Removed BG_THRESHOLD - always use background compute
+- Unified 3-way branch → 2 branches (grouped vs non-grouped)
+- `lf_stats()` - in-memory df via LazyFrame + SQL
+- `lf_stats_path()` - parquet via LazyFrame + SQL
+- `grp_stats()` - grouped stats (needs in-memory df)
 
 ### Files
 - `src/plugin/meta.rs` - unified stats via col_stats()
