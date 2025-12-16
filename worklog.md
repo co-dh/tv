@@ -1,5 +1,38 @@
 # Worklog
 
+## 2025-12-15: SQL-based Stats Unification
+
+### Problem
+- `compute_stats()`, `pq_stats()`, `grp_stats()` had separate implementations
+- Polars API streaming was slow for large parquet (42.74s for 304M rows)
+- Code duplication across 3 stats functions
+
+### Solution
+Unified all stats computation via single `col_stats()` function using SQL:
+```rust
+fn col_stats(lf: LazyFrame, col: &str, n: f64, is_num: bool) -> ColStats
+```
+
+### Performance (304M rows, 30 cols)
+| Version | Time |
+|---------|------|
+| SQL-based | **23.35s** |
+| Polars API | 42.74s |
+
+**1.8x faster** with SQL approach.
+
+### Changes
+- `col_stats()` - SQL query for nulls, distinct, min, max, mean, std
+- Separate queries for numeric vs string columns (AVG/STDDEV fail on strings)
+- `is_numeric()`, `is_numeric_str()` - type checking helpers
+- Removed unused `get_f64()`, `get_u32()`, `get_str()` helpers
+- All 3 stats functions now use same code path
+
+### Files
+- `src/plugin/meta.rs` - unified stats via col_stats()
+
+---
+
 ## 2025-12-15: DRY Refactoring & Feature Comparison
 
 ### Halstead Metrics

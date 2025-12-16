@@ -169,6 +169,8 @@ impl Command for MetaDelete {
 
 // === Stats computation ===
 
+use crate::backend::sql;
+
 /// Build stats DataFrame from column vectors
 fn stats_df(cols: Vec<String>, types: Vec<String>, nulls: Vec<String>, dists: Vec<String>,
             mins: Vec<String>, maxs: Vec<String>, meds: Vec<String>, sigs: Vec<String>) -> Result<DataFrame> {
@@ -187,40 +189,57 @@ fn placeholder_df(cols: Vec<String>, types: Vec<String>) -> Result<DataFrame> {
              vec!["...".into(); n], vec!["...".into(); n], vec!["...".into(); n], vec!["...".into(); n])
 }
 
-/// Compute column statistics for in-memory DataFrame
-/// Returns: column, type, null%, distinct, min, max, median (mean for numeric), sigma (std dev)
+/// Column stats result from SQL query
+struct ColStats { nulls: f64, distinct: u32, min: String, max: String, mean: String, std: String }
+
+/// Compute stats for one column using SQL (works for both in-memory and lazy parquet)
+fn col_stats(lf: LazyFrame, col: &str, n: f64, is_num: bool) -> ColStats {
+    // SQL query - skip AVG/STDDEV for non-numeric columns (causes SQL error)
+    let q = if is_num {
+        format!(r#"SELECT COUNT(*) - COUNT("{}") as nulls, COUNT(DISTINCT "{}") as dist,
+            MIN("{}") as min, MAX("{}") as max, AVG("{}") as mean, STDDEV("{}") as std FROM df"#,
+            col, col, col, col, col, col)
+    } else {
+        format!(r#"SELECT COUNT(*) - COUNT("{}") as nulls, COUNT(DISTINCT "{}") as dist,
+            MIN("{}") as min, MAX("{}") as max FROM df"#, col, col, col, col)
+    };
+    let df = sql(lf, &q).ok();
+    // Debug: print SQL result
+    if let Some(ref d) = df { eprintln!("[col_stats] col={} df={:?}", col, d); }
+    let get = |c: &str| df.as_ref().and_then(|d| d.column(c).ok()?.get(0).ok()).map(|v| fmt(&v)).unwrap_or_default();
+    let nulls = df.as_ref().and_then(|d| d.column("nulls").ok()?.get(0).ok()?.try_extract::<u32>().ok()).unwrap_or(0) as f64;
+    let distinct = df.as_ref().and_then(|d| d.column("dist").ok()?.get(0).ok()?.try_extract::<u32>().ok()).unwrap_or(0);
+    ColStats {
+        nulls: 100.0 * nulls / n, distinct,
+        min: get("min"), max: get("max"),
+        mean: if is_num { get("mean") } else { String::new() },
+        std: if is_num { get("std") } else { String::new() },
+    }
+}
+
+/// Check if datatype is numeric (for mean/std computation)
+fn is_numeric(dt: &DataType) -> bool {
+    matches!(dt, DataType::Int8|DataType::Int16|DataType::Int32|DataType::Int64|
+        DataType::UInt8|DataType::UInt16|DataType::UInt32|DataType::UInt64|DataType::Float32|DataType::Float64)
+}
+
+/// Check if type string is numeric (for parquet schema)
+fn is_numeric_str(s: &str) -> bool {
+    matches!(s, "Int8"|"Int16"|"Int32"|"Int64"|"UInt8"|"UInt16"|"UInt32"|"UInt64"|"Float32"|"Float64")
+}
+
+/// Compute column statistics for in-memory DataFrame using SQL
 fn compute_stats(df: &DataFrame) -> Result<DataFrame> {
     let cols: Vec<String> = df.get_column_names().iter().map(|s| s.to_string()).collect();
     let dtypes = df.dtypes();
-    let n = df.height() as f64;  // row count for null% calculation
-    let lazy = df.clone().lazy();  // lazy for efficient batch aggregations
-
-    let is_num: Vec<bool> = dtypes.iter().map(|dt| matches!(dt,
-        DataType::Int8|DataType::Int16|DataType::Int32|DataType::Int64|
-        DataType::UInt8|DataType::UInt16|DataType::UInt32|DataType::UInt64|
-        DataType::Float32|DataType::Float64)).collect();
-
-    let null_df = lazy.clone().select(cols.iter().map(|c| col(c).null_count().alias(c)).collect::<Vec<_>>()).collect()?;
-    let min_df = lazy.clone().select(cols.iter().map(|c| col(c).min().alias(c)).collect::<Vec<_>>()).collect()?;
-    let max_df = lazy.clone().select(cols.iter().map(|c| col(c).max().alias(c)).collect::<Vec<_>>()).collect()?;
-    let dist_df = lazy.clone().select(cols.iter().map(|c| col(c).n_unique().alias(c)).collect::<Vec<_>>()).collect()?;
-
-    let num_cols: Vec<&String> = cols.iter().zip(&is_num).filter(|(_, &b)| b).map(|(c, _)| c).collect();
-    let mean_df = if !num_cols.is_empty() { Some(lazy.clone().select(num_cols.iter().map(|c| col(*c).mean().alias(*c)).collect::<Vec<_>>()).collect()?) } else { None };
-    let std_df = if !num_cols.is_empty() { Some(lazy.select(num_cols.iter().map(|c| col(*c).std(1).alias(*c)).collect::<Vec<_>>()).collect()?) } else { None };
+    let n = df.height() as f64;
 
     let (mut nulls, mut mins, mut maxs, mut dists, mut meds, mut sigs) = (vec![], vec![], vec![], vec![], vec![], vec![]);
     for (i, c) in cols.iter().enumerate() {
-        nulls.push(format!("{:.1}", 100.0 * get_f64(&null_df, c) / n));
-        mins.push(get_str(&min_df, c));
-        maxs.push(get_str(&max_df, c));
-        dists.push(format!("{}", get_u32(&dist_df, c)));
-        if is_num[i] {
-            meds.push(mean_df.as_ref().map(|df| get_str(df, c)).unwrap_or_default());
-            sigs.push(std_df.as_ref().map(|df| get_str(df, c)).unwrap_or_default());
-        } else { meds.push(String::new()); sigs.push(String::new()); }
+        let s = col_stats(df.clone().lazy(), c, n, is_numeric(&dtypes[i]));
+        nulls.push(format!("{:.1}", s.nulls)); dists.push(format!("{}", s.distinct));
+        mins.push(s.min); maxs.push(s.max); meds.push(s.mean); sigs.push(s.std);
     }
-
     let types: Vec<String> = dtypes.iter().map(|dt| format!("{:?}", dt)).collect();
     stats_df(cols, types, nulls, dists, mins, maxs, meds, sigs)
 }
@@ -229,29 +248,31 @@ fn compute_stats(df: &DataFrame) -> Result<DataFrame> {
 /// Used when xkey columns are set; shows stats for each group separately
 fn grp_stats(df: &DataFrame, keys: &[String]) -> Result<DataFrame> {
     let all: Vec<String> = df.get_column_names().iter().map(|s| s.to_string()).collect();
-    let non_keys: Vec<&String> = all.iter().filter(|c| !keys.contains(c)).collect();  // columns to analyze
+    let non_keys: Vec<&String> = all.iter().filter(|c| !keys.contains(c)).collect();
 
+    // Get unique key combinations
     let unique = df.clone().lazy()
         .select(keys.iter().map(|c| col(c)).collect::<Vec<_>>())
         .unique(None, UniqueKeepStrategy::First)
         .sort(keys.iter().map(|s| s.as_str()).collect::<Vec<_>>(), SortMultipleOptions::default())
         .collect()?;
 
+    // Build key columns (repeated for each non-key column)
     let mut result: Vec<Column> = Vec::new();
     for k in keys {
         let mut vals = Vec::new();
         for r in 0..unique.height() {
-            for _ in &non_keys {
-                vals.push(unique.column(k).ok().and_then(|c| c.get(r).ok()).map(|v| fmt(&v)).unwrap_or_default());
-            }
+            for _ in &non_keys { vals.push(unique.column(k).ok().and_then(|c| c.get(r).ok()).map(|v| fmt(&v)).unwrap_or_default()); }
         }
         result.push(Series::new(k.as_str().into(), vals).into());
     }
 
+    // Compute stats per group per column using SQL
     let (mut names, mut types, mut nulls, mut dists, mut mins, mut maxs, mut meds, mut sigs) =
         (vec![], vec![], vec![], vec![], vec![], vec![], vec![], vec![]);
 
     for r in 0..unique.height() {
+        // Build filter for this key combo
         let filter = keys.iter().fold(lit(true), |acc, k| {
             let v = unique.column(k).unwrap().get(r).unwrap();
             acc.and(col(k).eq(lit(Scalar::new(unique.column(k).unwrap().dtype().clone(), v.into_static()))))
@@ -260,22 +281,11 @@ fn grp_stats(df: &DataFrame, keys: &[String]) -> Result<DataFrame> {
         let n = grp.height() as f64;
 
         for &c in &non_keys {
-            names.push(c.clone());
             let dt = grp.column(c)?.dtype().clone();
-            types.push(format!("{:?}", dt));
-            nulls.push(format!("{:.1}", 100.0 * grp.column(c)?.null_count() as f64 / n));
-            dists.push(format!("{}", grp.column(c)?.n_unique()?));
-
-            let lz = grp.clone().lazy();
-            mins.push(lz.clone().select([col(c).min()]).collect().ok().map(|df| get_str(&df, c)).unwrap_or_default());
-            maxs.push(lz.clone().select([col(c).max()]).collect().ok().map(|df| get_str(&df, c)).unwrap_or_default());
-
-            let is_num = matches!(dt, DataType::Int8|DataType::Int16|DataType::Int32|DataType::Int64|
-                DataType::UInt8|DataType::UInt16|DataType::UInt32|DataType::UInt64|DataType::Float32|DataType::Float64);
-            if is_num {
-                meds.push(lz.clone().select([col(c).mean()]).collect().ok().map(|df| get_str(&df, c)).unwrap_or_default());
-                sigs.push(lz.select([col(c).std(1)]).collect().ok().map(|df| get_str(&df, c)).unwrap_or_default());
-            } else { meds.push(String::new()); sigs.push(String::new()); }
+            let s = col_stats(grp.clone().lazy(), c, n, is_numeric(&dt));
+            names.push(c.clone()); types.push(format!("{:?}", dt));
+            nulls.push(format!("{:.1}", s.nulls)); dists.push(format!("{}", s.distinct));
+            mins.push(s.min); maxs.push(s.max); meds.push(s.mean); sigs.push(s.std);
         }
     }
 
@@ -288,10 +298,15 @@ fn grp_stats(df: &DataFrame, keys: &[String]) -> Result<DataFrame> {
     Ok(DataFrame::new(result)?)
 }
 
-/// Compute stats from parquet (streaming, column-by-column to avoid OOM)
+/// Compute stats from parquet using SQL (streaming, column-by-column to avoid OOM)
 fn pq_stats(path: &str) -> Result<DataFrame> {
     use crate::backend::{Backend, Polars};
-    use polars::prelude::{ScanArgsParquet, PlPath, Engine};
+    use polars::prelude::{ScanArgsParquet, PlPath};
+    use std::io::Write;
+    let t0 = std::time::Instant::now();
+    let _ = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/tv.debug.log")
+        .and_then(|mut f| writeln!(f, "[pq_stats] START {}", path));
+
     let schema = Polars.schema(path)?;
     let (rows, _) = Polars.metadata(path)?;
     let n = rows as f64;
@@ -300,41 +315,17 @@ fn pq_stats(path: &str) -> Result<DataFrame> {
     let dtypes: Vec<String> = schema.iter().map(|(_, dt)| dt.clone()).collect();
     let (mut nulls, mut mins, mut maxs, mut dists, mut meds, mut sigs) = (vec![], vec![], vec![], vec![], vec![], vec![]);
 
-    // Process each column separately (streaming) to avoid OOM
     for (i, c) in cols.iter().enumerate() {
-        let lf = || LazyFrame::scan_parquet(PlPath::new(path), ScanArgsParquet::default()).ok();
-        let is_num = matches!(dtypes[i].as_str(), "Int8"|"Int16"|"Int32"|"Int64"|"UInt8"|"UInt16"|"UInt32"|"UInt64"|"Float32"|"Float64");
-
-        // null count (streaming)
-        let nc = lf().and_then(|l| l.select([col(c).null_count()]).collect_with_engine(Engine::Streaming).ok())
-            .and_then(|df| df.column(c).ok()?.get(0).ok()?.try_extract::<u32>().ok()).unwrap_or(0);
-        nulls.push(format!("{:.1}", 100.0 * nc as f64 / n));
-
-        // min/max (streaming)
-        mins.push(lf().and_then(|l| l.select([col(c).min()]).collect_with_engine(Engine::Streaming).ok()).map(|df| get_str(&df, c)).unwrap_or_default());
-        maxs.push(lf().and_then(|l| l.select([col(c).max()]).collect_with_engine(Engine::Streaming).ok()).map(|df| get_str(&df, c)).unwrap_or_default());
-
-        // distinct (streaming)
-        let dc = lf().and_then(|l| l.select([col(c).n_unique()]).collect_with_engine(Engine::Streaming).ok())
-            .and_then(|df| df.column(c).ok()?.get(0).ok()?.try_extract::<u32>().ok()).unwrap_or(0);
-        dists.push(format!("{}", dc));
-
-        // mean/std for numeric (streaming)
-        if is_num {
-            meds.push(lf().and_then(|l| l.select([col(c).mean()]).collect_with_engine(Engine::Streaming).ok()).map(|df| get_str(&df, c)).unwrap_or_default());
-            sigs.push(lf().and_then(|l| l.select([col(c).std(1)]).collect_with_engine(Engine::Streaming).ok()).map(|df| get_str(&df, c)).unwrap_or_default());
-        } else { meds.push(String::new()); sigs.push(String::new()); }
+        let lf = LazyFrame::scan_parquet(PlPath::new(path), ScanArgsParquet::default())?;
+        let s = col_stats(lf, c, n, is_numeric_str(&dtypes[i]));
+        nulls.push(format!("{:.1}", s.nulls)); dists.push(format!("{}", s.distinct));
+        mins.push(s.min); maxs.push(s.max); meds.push(s.mean); sigs.push(s.std);
     }
-
+    let _ = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/tv.debug.log")
+        .and_then(|mut f| writeln!(f, "[pq_stats] DONE {:.2}s {} cols", t0.elapsed().as_secs_f64(), cols.len()));
     stats_df(cols, dtypes, nulls, dists, mins, maxs, meds, sigs)
 }
 
-/// Extract f64 from first row of column (for single-row stats DF)
-fn get_f64(df: &DataFrame, c: &str) -> f64 { df.column(c).ok().and_then(|c| c.get(0).ok()).and_then(|v| v.try_extract::<u32>().ok()).unwrap_or(0) as f64 }
-/// Extract u32 from first row of column
-fn get_u32(df: &DataFrame, c: &str) -> u32 { df.column(c).ok().and_then(|c| c.get(0).ok()).and_then(|v| v.try_extract::<u32>().ok()).unwrap_or(0) }
-/// Extract string from first row of column
-fn get_str(df: &DataFrame, c: &str) -> String { df.column(c).ok().and_then(|c| c.get(0).ok()).map(|v| fmt(&v)).unwrap_or_default() }
 /// Format AnyValue to string, trimming quotes
 fn fmt(v: &AnyValue) -> String {
     match v {
