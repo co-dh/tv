@@ -28,6 +28,12 @@ fn col_stats(lf: LazyFrame, col: &str, n: f64, is_num: bool) -> ColStats
 - Removed unused `get_f64()`, `get_u32()`, `get_str()` helpers
 - All 3 stats functions now use same code path
 
+### Halstead Metrics
+| File | Before | After | Δ len | Δ bugs |
+|------|--------|-------|-------|--------|
+| meta.rs | 3361 | 2828 | -533 | -0.93 |
+| **Total** | 36885 | 36352 | **-533** | **-0.93** |
+
 ### Files
 - `src/plugin/meta.rs` - unified stats via col_stats()
 
