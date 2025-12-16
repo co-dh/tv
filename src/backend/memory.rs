@@ -1,7 +1,7 @@
 //! Memory backend - in-memory DataFrame operations.
 //! Used for OS commands (ls, ps, tcp), CSV files, and filtered results.
 //! Path parameter is ignored - data comes from stored DataFrame reference.
-use super::{Backend, df_filter, df_sort_head, df_distinct, df_cols, df_schema, df_metadata, df_fetch, df_freq, df_count_where, df_fetch_where, df_freq_where};
+use super::Backend;
 use anyhow::{anyhow, Result};
 use polars::prelude::*;
 
@@ -13,26 +13,20 @@ pub struct Memory<'a>(pub &'a DataFrame, pub Vec<String>);
 
 /// `impl Backend for Memory<'_>` - implement trait for Memory with any lifetime
 /// `'_` = elided lifetime, compiler infers it
+/// Most methods use trait defaults via lf() - only metadata and keyed freq need custom impl.
 impl Backend for Memory<'_> {
-    fn cols(&self, _: &str) -> Result<Vec<String>> { Ok(df_cols(self.0)) }
-    fn schema(&self, _: &str) -> Result<Vec<(String, String)>> { Ok(df_schema(self.0)) }
-    fn metadata(&self, _: &str) -> Result<(usize, Vec<String>)> { Ok(df_metadata(self.0)) }
-    fn fetch_rows(&self, _: &str, offset: usize, limit: usize) -> Result<DataFrame> { Ok(df_fetch(self.0, offset, limit)) }
-    fn distinct(&self, _: &str, col: &str) -> Result<Vec<String>> { df_distinct(self.0, col) }
-    fn filter(&self, _: &str, w: &str, limit: usize) -> Result<DataFrame> { df_filter(self.0, w, limit) }
-    fn sort_head(&self, _: &str, col: &str, desc: bool, limit: usize) -> Result<DataFrame> { df_sort_head(self.0, col, desc, limit) }
-    fn fetch_where(&self, _: &str, w: &str, offset: usize, limit: usize) -> Result<DataFrame> { df_fetch_where(self.0, w, offset, limit) }
-    fn count_where(&self, _: &str, w: &str) -> Result<usize> { df_count_where(self.0, w) }
-    fn freq_where(&self, _: &str, col: &str, w: &str) -> Result<DataFrame> { df_freq_where(self.0, col, w) }
+    /// LazyFrame from in-memory DataFrame (SQL operations use this)
+    fn lf(&self, _: &str) -> Result<LazyFrame> { Ok(self.0.clone().lazy()) }
+    /// Row count and column names
+    fn metadata(&self, _: &str) -> Result<(usize, Vec<String>)> { Ok((self.0.height(), self.cols("")?)) }
 
-    /// Frequency count - simple value_counts or keyed group_by
-    fn freq(&self, _: &str, c: &str) -> Result<DataFrame> {
-        let (df, keys) = (self.0, &self.1);
-        if keys.is_empty() { return df_freq(df, c); }
+    /// Frequency count - keyed group_by (simple case uses trait default via SQL)
+    fn freq(&self, p: &str, c: &str) -> Result<DataFrame> {
+        if self.1.is_empty() { return self.freq_where(p, c, "TRUE"); }
         // keyed: group_by [keys..., col] then count
-        let mut g: Vec<Expr> = keys.iter().map(|k| col(k)).collect();
+        let mut g: Vec<Expr> = self.1.iter().map(|k| col(k)).collect();
         g.push(col(c));
-        df.clone().lazy()
+        self.0.clone().lazy()
             .group_by(g).agg([len().alias("Cnt")])
             .sort(["Cnt"], SortMultipleOptions::default().with_order_descending(true))
             .collect()

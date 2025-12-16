@@ -10,98 +10,16 @@ use std::path::Path;
 /// Polars streaming backend. Zero-copy parquet access via LazyFrame.
 pub struct Polars;
 
-impl Polars {
-    /// Create LazyFrame from parquet path
+impl Backend for Polars {
+    /// LazyFrame from parquet scan
     fn lf(&self, path: &str) -> Result<LazyFrame> {
         LazyFrame::scan_parquet(PlPath::new(path), ScanArgsParquet::default()).map_err(|e| anyhow!("Scan: {}", e))
     }
-}
 
-impl Backend for Polars {
-    /// Column names from parquet schema
-    fn cols(&self, path: &str) -> Result<Vec<String>> {
-        Ok(self.schema(path)?.into_iter().map(|(n, _)| n).collect())
-    }
-
-    /// Schema as (name, type) pairs from parquet metadata
-    fn schema(&self, path: &str) -> Result<Vec<(String, String)>> {
-        let file = std::fs::File::open(path)?;
-        let schema = ParquetReader::new(file).schema()?;
-        Ok(schema.iter().map(|(n, f)| (n.to_string(), format!("{:?}", f.dtype()))).collect())
-    }
-
-    /// Row count and column names from parquet metadata (no data scan)
+    /// Row count and columns from parquet metadata (efficient - no scan needed)
     fn metadata(&self, path: &str) -> Result<(usize, Vec<String>)> {
-        let file = std::fs::File::open(path).map_err(|e| anyhow!("Open: {}", e))?;
-        let mut reader = ParquetReader::new(file);
-        let rows = reader.get_metadata().map_err(|e| anyhow!("Metadata: {}", e))?.num_rows;
-        let cols = reader.schema().map_err(|e| anyhow!("Schema: {}", e))?
-            .iter_names().map(|s| s.to_string()).collect();
-        Ok((rows, cols))
-    }
-
-    /// Fetch row window via LazyFrame slice (streaming, no full scan)
-    fn fetch_rows(&self, path: &str, offset: usize, limit: usize) -> Result<DataFrame> {
-        LazyFrame::scan_parquet(PlPath::new(path), ScanArgsParquet::default())
-            .map_err(|e| anyhow!("Scan: {}", e))?
-            .slice(offset as i64, limit as u32)
-            .collect()
-            .map_err(|e| anyhow!("Fetch: {}", e))
-    }
-
-    /// Fetch rows with WHERE clause (streaming)
-    fn fetch_where(&self, path: &str, w: &str, offset: usize, limit: usize) -> Result<DataFrame> {
-        super::sql(self.lf(path)?, &format!("SELECT * FROM df WHERE {} LIMIT {} OFFSET {}", w, limit, offset))
-    }
-
-    /// Count rows matching WHERE clause (streaming)
-    fn count_where(&self, path: &str, w: &str) -> Result<usize> {
-        let r = super::sql(self.lf(path)?, &format!("SELECT COUNT(*) as cnt FROM df WHERE {}", w))?;
-        Ok(r.column("cnt")?.get(0)?.try_extract::<u32>().unwrap_or(0) as usize)
-    }
-
-    /// Distinct values via LazyFrame unique (streaming)
-    fn distinct(&self, path: &str, name: &str) -> Result<Vec<String>> {
-        let df = LazyFrame::scan_parquet(PlPath::new(path), ScanArgsParquet::default())
-            .map_err(|e| anyhow!("Scan: {}", e))?
-            .select([col(name)])
-            .unique(None, UniqueKeepStrategy::First)
-            .sort([name], SortMultipleOptions::default())
-            .collect()
-            .map_err(|e| anyhow!("Distinct: {}", e))?;
-        let vals: Vec<String> = df.column(name)
-            .map(|c| (0..c.len()).filter_map(|i| c.get(i).ok().map(|v| v.to_string())).collect())
-            .unwrap_or_default();
-        Ok(vals)
-    }
-
-    /// Frequency count via streaming group_by (handles large files)
-    fn freq(&self, path: &str, name: &str) -> Result<DataFrame> {
-        LazyFrame::scan_parquet(PlPath::new(path), ScanArgsParquet::default())?
-            .group_by([col(name)])
-            .agg([len().alias("Cnt")])
-            .sort(["Cnt"], SortMultipleOptions::default().with_order_descending(true))
-            .collect_with_engine(Engine::Streaming)
-            .map_err(|e| anyhow!("{}", e))
-    }
-
-    /// Frequency count with WHERE clause (streaming)
-    fn freq_where(&self, path: &str, col: &str, w: &str) -> Result<DataFrame> {
-        super::sql(self.lf(path)?, &format!("SELECT \"{}\", COUNT(*) as Cnt FROM df WHERE {} GROUP BY \"{}\" ORDER BY Cnt DESC", col, w, col))
-    }
-
-    /// Filter via SQL WHERE with LIMIT (streaming)
-    fn filter(&self, path: &str, w: &str, limit: usize) -> Result<DataFrame> {
-        super::sql(self.lf(path)?, &format!("SELECT * FROM df WHERE {} LIMIT {}", w, limit))
-    }
-
-    /// Sort and limit via LazyFrame (streaming to avoid OOM on large files)
-    fn sort_head(&self, path: &str, col: &str, desc: bool, limit: usize) -> Result<DataFrame> {
-        LazyFrame::scan_parquet(PlPath::new(path), ScanArgsParquet::default())?
-            .sort([col], SortMultipleOptions::default().with_order_descending(desc))
-            .limit(limit as u32)
-            .collect_with_engine(Engine::Streaming)
-            .map_err(|e| anyhow!("{}", e))
+        let mut r = ParquetReader::new(std::fs::File::open(path)?);
+        Ok((r.get_metadata()?.num_rows, r.schema()?.iter_names().map(|s| s.to_string()).collect()))
     }
 
     /// Load CSV, parquet, or glob pattern into ViewState

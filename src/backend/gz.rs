@@ -1,6 +1,6 @@
 //! Gz backend - streaming gzipped CSV with memory limits.
 //! Refuses expensive operations on partial (memory-limited) data.
-use super::{Backend, LoadResult, df_filter, df_sort_head, df_distinct, df_cols, df_schema, df_metadata, df_fetch, df_freq, df_count_where, df_fetch_where, df_freq_where};
+use super::{Backend, LoadResult, sql};
 use crate::command::io::convert::{convert_epoch_cols, apply_schema, convert_types};
 use crate::state::ViewState;
 use super::polars::{detect_sep, parse_csv_buf};
@@ -28,42 +28,50 @@ pub struct Gz<'a> {
 /// Error message for partial load operations
 const PARTIAL_ERR: &str = "File not fully loaded (memory limit)";
 
+/// Gz backend impl - uses SQL via lf() but blocks expensive ops when partial
 impl Backend for Gz<'_> {
-    fn cols(&self, _: &str) -> Result<Vec<String>> { Ok(df_cols(self.df)) }
-    fn schema(&self, _: &str) -> Result<Vec<(String, String)>> { Ok(df_schema(self.df)) }
-    fn metadata(&self, _: &str) -> Result<(usize, Vec<String>)> { Ok(df_metadata(self.df)) }
-    fn fetch_rows(&self, _: &str, offset: usize, limit: usize) -> Result<DataFrame> { Ok(df_fetch(self.df, offset, limit)) }
-    fn sort_head(&self, _: &str, col: &str, desc: bool, limit: usize) -> Result<DataFrame> { df_sort_head(self.df, col, desc, limit) }
+    /// LazyFrame from in-memory DataFrame
+    fn lf(&self, _: &str) -> Result<LazyFrame> { Ok(self.df.clone().lazy()) }
+    /// Row count and column names
+    fn metadata(&self, _: &str) -> Result<(usize, Vec<String>)> { Ok((self.df.height(), self.cols("")?)) }
+
+    /// Sort and take top N - allowed on partial data
+    fn sort_head(&self, _: &str, col: &str, desc: bool, limit: usize) -> Result<DataFrame> {
+        let ord = if desc { "DESC" } else { "ASC" };
+        sql(self.lf("")?, &format!("SELECT * FROM df ORDER BY \"{}\" {} LIMIT {}", col, ord, limit))
+    }
 
     /// Distinct - blocked if partial
-    fn distinct(&self, _: &str, col: &str) -> Result<Vec<String>> {
+    fn distinct(&self, p: &str, col: &str) -> Result<Vec<String>> {
         if self.partial { return Err(anyhow!(PARTIAL_ERR)); }
-        df_distinct(self.df, col)
+        let df = sql(self.lf(p)?, &format!("SELECT DISTINCT \"{}\" FROM df ORDER BY \"{}\"", col, col))?;
+        Ok(df.column(col).map(|c| (0..c.len()).filter_map(|i| c.get(i).ok().map(|v| v.to_string())).collect()).unwrap_or_default())
     }
     /// Frequency count - blocked if partial
-    fn freq(&self, _: &str, col: &str) -> Result<DataFrame> {
+    fn freq(&self, p: &str, col: &str) -> Result<DataFrame> {
         if self.partial { return Err(anyhow!(PARTIAL_ERR)); }
-        df_freq(self.df, col)
+        self.freq_where(p, col, "TRUE")
     }
     /// Filter - blocked if partial
-    fn filter(&self, _: &str, w: &str, limit: usize) -> Result<DataFrame> {
+    fn filter(&self, p: &str, w: &str, limit: usize) -> Result<DataFrame> {
         if self.partial { return Err(anyhow!(PARTIAL_ERR)); }
-        df_filter(self.df, w, limit)
+        self.fetch_where(p, w, 0, limit)
     }
     /// Fetch where - blocked if partial
     fn fetch_where(&self, _: &str, w: &str, offset: usize, limit: usize) -> Result<DataFrame> {
         if self.partial { return Err(anyhow!(PARTIAL_ERR)); }
-        df_fetch_where(self.df, w, offset, limit)
+        sql(self.lf("")?, &format!("SELECT * FROM df WHERE {} LIMIT {} OFFSET {}", w, limit, offset))
     }
     /// Count where - blocked if partial
     fn count_where(&self, _: &str, w: &str) -> Result<usize> {
         if self.partial { return Err(anyhow!(PARTIAL_ERR)); }
-        df_count_where(self.df, w)
+        let r = sql(self.lf("")?, &format!("SELECT COUNT(*) as cnt FROM df WHERE {}", w))?;
+        Ok(r.column("cnt")?.get(0)?.try_extract::<u32>().unwrap_or(0) as usize)
     }
     /// Freq where - blocked if partial
     fn freq_where(&self, _: &str, col: &str, w: &str) -> Result<DataFrame> {
         if self.partial { return Err(anyhow!(PARTIAL_ERR)); }
-        df_freq_where(self.df, col, w)
+        sql(self.lf("")?, &format!("SELECT \"{}\", COUNT(*) as Cnt FROM df WHERE {} GROUP BY \"{}\" ORDER BY Cnt DESC", col, w, col))
     }
 }
 
