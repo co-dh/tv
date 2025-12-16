@@ -28,6 +28,13 @@ pub struct Gz<'a> {
 /// Error message for partial load operations
 const PARTIAL_ERR: &str = "File not fully loaded (memory limit)";
 
+impl Gz<'_> {
+    /// Check that file is fully loaded, error if partial
+    fn require_complete(&self) -> Result<()> {
+        if self.partial { Err(anyhow!(PARTIAL_ERR)) } else { Ok(()) }
+    }
+}
+
 /// Gz backend impl - uses SQL via lf() but blocks expensive ops when partial
 impl Backend for Gz<'_> {
     /// LazyFrame from in-memory DataFrame
@@ -41,34 +48,28 @@ impl Backend for Gz<'_> {
 
     /// Distinct - blocked if partial
     fn distinct(&self, p: &str, col: &str) -> Result<Vec<String>> {
-        if self.partial { return Err(anyhow!(PARTIAL_ERR)); }
+        self.require_complete()?;
         let df = sql(self.lf(p)?, &format!("SELECT DISTINCT \"{}\" FROM df ORDER BY \"{}\"", col, col))?;
         Ok(df.column(col).map(|c| (0..c.len()).filter_map(|i| c.get(i).ok().map(|v| v.to_string())).collect()).unwrap_or_default())
     }
     /// Frequency count - blocked if partial
-    fn freq(&self, p: &str, col: &str) -> Result<DataFrame> {
-        if self.partial { return Err(anyhow!(PARTIAL_ERR)); }
-        self.freq_where(p, col, "TRUE")
-    }
+    fn freq(&self, p: &str, col: &str) -> Result<DataFrame> { self.require_complete()?; self.freq_where(p, col, "TRUE") }
     /// Filter - blocked if partial
-    fn filter(&self, p: &str, w: &str, limit: usize) -> Result<DataFrame> {
-        if self.partial { return Err(anyhow!(PARTIAL_ERR)); }
-        self.fetch_where(p, w, 0, limit)
-    }
+    fn filter(&self, p: &str, w: &str, limit: usize) -> Result<DataFrame> { self.require_complete()?; self.fetch_where(p, w, 0, limit) }
     /// Fetch where - blocked if partial
     fn fetch_where(&self, _: &str, w: &str, offset: usize, limit: usize) -> Result<DataFrame> {
-        if self.partial { return Err(anyhow!(PARTIAL_ERR)); }
+        self.require_complete()?;
         sql(self.lf("")?, &format!("SELECT * FROM df WHERE {} LIMIT {} OFFSET {}", w, limit, offset))
     }
     /// Count where - blocked if partial
     fn count_where(&self, _: &str, w: &str) -> Result<usize> {
-        if self.partial { return Err(anyhow!(PARTIAL_ERR)); }
+        self.require_complete()?;
         let r = sql(self.lf("")?, &format!("SELECT COUNT(*) as cnt FROM df WHERE {}", w))?;
         Ok(r.column("cnt")?.get(0)?.try_extract::<u32>().unwrap_or(0) as usize)
     }
     /// Freq where - blocked if partial
     fn freq_where(&self, _: &str, col: &str, w: &str) -> Result<DataFrame> {
-        if self.partial { return Err(anyhow!(PARTIAL_ERR)); }
+        self.require_complete()?;
         sql(self.lf("")?, &format!("SELECT \"{}\", COUNT(*) as Cnt FROM df WHERE {} GROUP BY \"{}\" ORDER BY Cnt DESC", col, w, col))
     }
 }

@@ -81,17 +81,8 @@ impl Command for Metadata {
 
         // Lazy parquet: always background compute from disk
         if let Some(path) = pq_path {
-            let n = col_names.len();
-            let placeholder = DataFrame::new(vec![
-                Series::new("column".into(), col_names).into(),
-                Series::new("type".into(), schema.iter().map(|(_, dt)| dt.clone()).collect::<Vec<_>>()).into(),
-                Series::new("null%".into(), vec!["..."; n]).into(),
-                Series::new("distinct".into(), vec!["..."; n]).into(),
-                Series::new("min".into(), vec!["..."; n]).into(),
-                Series::new("max".into(), vec!["..."; n]).into(),
-                Series::new("median".into(), vec!["..."; n]).into(),
-                Series::new("sigma".into(), vec!["..."; n]).into(),
-            ])?;
+            let types: Vec<String> = schema.iter().map(|(_, dt)| dt.clone()).collect();
+            let placeholder = placeholder_df(col_names, types)?;
             let id = app.next_id();
             let mut v = ViewState::new_child(id, "metadata".into(), placeholder, parent_id, parent_rows, parent_name);
             v.state.cr = parent_col;
@@ -112,17 +103,8 @@ impl Command for Metadata {
             app.stack.push(v);
         } else {
             // Large dataset: placeholder + background compute
-            let n = col_names.len();
-            let placeholder = DataFrame::new(vec![
-                Series::new("column".into(), col_names).into(),
-                Series::new("type".into(), df.dtypes().iter().map(|dt| format!("{:?}", dt)).collect::<Vec<_>>()).into(),
-                Series::new("null%".into(), vec!["..."; n]).into(),
-                Series::new("distinct".into(), vec!["..."; n]).into(),
-                Series::new("min".into(), vec!["..."; n]).into(),
-                Series::new("max".into(), vec!["..."; n]).into(),
-                Series::new("median".into(), vec!["..."; n]).into(),
-                Series::new("sigma".into(), vec!["..."; n]).into(),
-            ])?;
+            let types: Vec<String> = df.dtypes().iter().map(|dt| format!("{:?}", dt)).collect();
+            let placeholder = placeholder_df(col_names, types)?;
 
             let id = app.next_id();
             let mut v = ViewState::new_child(id, "metadata".into(), placeholder, parent_id, parent_rows, parent_name);
@@ -183,6 +165,24 @@ impl Command for MetaDelete {
 
 // === Stats computation ===
 
+/// Build stats DataFrame from column vectors
+fn stats_df(cols: Vec<String>, types: Vec<String>, nulls: Vec<String>, dists: Vec<String>,
+            mins: Vec<String>, maxs: Vec<String>, meds: Vec<String>, sigs: Vec<String>) -> Result<DataFrame> {
+    Ok(DataFrame::new(vec![
+        Series::new("column".into(), cols).into(), Series::new("type".into(), types).into(),
+        Series::new("null%".into(), nulls).into(), Series::new("distinct".into(), dists).into(),
+        Series::new("min".into(), mins).into(), Series::new("max".into(), maxs).into(),
+        Series::new("median".into(), meds).into(), Series::new("sigma".into(), sigs).into(),
+    ])?)
+}
+
+/// Build placeholder stats DataFrame (with "..." for pending values)
+fn placeholder_df(cols: Vec<String>, types: Vec<String>) -> Result<DataFrame> {
+    let n = cols.len();
+    stats_df(cols, types, vec!["...".into(); n], vec!["...".into(); n],
+             vec!["...".into(); n], vec!["...".into(); n], vec!["...".into(); n], vec!["...".into(); n])
+}
+
 fn compute_stats(df: &DataFrame) -> Result<DataFrame> {
     let cols: Vec<String> = df.get_column_names().iter().map(|s| s.to_string()).collect();
     let dtypes = df.dtypes();
@@ -215,13 +215,8 @@ fn compute_stats(df: &DataFrame) -> Result<DataFrame> {
         } else { meds.push(String::new()); sigs.push(String::new()); }
     }
 
-    Ok(DataFrame::new(vec![
-        Series::new("column".into(), cols).into(),
-        Series::new("type".into(), dtypes.iter().map(|dt| format!("{:?}", dt)).collect::<Vec<_>>()).into(),
-        Series::new("null%".into(), nulls).into(), Series::new("distinct".into(), dists).into(),
-        Series::new("min".into(), mins).into(), Series::new("max".into(), maxs).into(),
-        Series::new("median".into(), meds).into(), Series::new("sigma".into(), sigs).into(),
-    ])?)
+    let types: Vec<String> = dtypes.iter().map(|dt| format!("{:?}", dt)).collect();
+    stats_df(cols, types, nulls, dists, mins, maxs, meds, sigs)
 }
 
 fn grp_stats(df: &DataFrame, keys: &[String]) -> Result<DataFrame> {
@@ -323,13 +318,7 @@ fn pq_stats(path: &str) -> Result<DataFrame> {
         } else { meds.push(String::new()); sigs.push(String::new()); }
     }
 
-    Ok(DataFrame::new(vec![
-        Series::new("column".into(), cols).into(),
-        Series::new("type".into(), dtypes).into(),
-        Series::new("null%".into(), nulls).into(), Series::new("distinct".into(), dists).into(),
-        Series::new("min".into(), mins).into(), Series::new("max".into(), maxs).into(),
-        Series::new("median".into(), meds).into(), Series::new("sigma".into(), sigs).into(),
-    ])?)
+    stats_df(cols, dtypes, nulls, dists, mins, maxs, meds, sigs)
 }
 
 /// Extract f64 from first row of column (for single-row stats DF)

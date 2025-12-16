@@ -1,6 +1,6 @@
 {
-  "total_length": 36929.0,
-  "total_bugs": 56.54727044676025,
+  "total_length": 37046.0,
+  "total_bugs": 57.07301716398309,
   "files": [
     {
       "file": "./src/app.rs",
@@ -10,9 +10,9 @@
     },
     {
       "file": "./src/backend/gz.rs",
-      "length": 2092.0,
-      "bugs": 3.410606446932356,
-      "volume": 16578.707757543296
+      "length": 2106.0,
+      "bugs": 3.4659044108174752,
+      "volume": 16677.125977700296
     },
     {
       "file": "./src/backend/memory.rs",
@@ -112,9 +112,9 @@
     },
     {
       "file": "./src/plugin/meta.rs",
-      "length": 3361.0,
-      "bugs": 5.289704288301278,
-      "volume": 26452.295822519824
+      "length": 3464.0,
+      "bugs": 5.760153041638992,
+      "volume": 27305.475522989418
     },
     {
       "file": "./src/plugin/mod.rs",
