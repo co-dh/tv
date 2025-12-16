@@ -101,21 +101,21 @@ fn test_pacman_command() {
     let out = run_keys(":pacman<ret><a-p>", "tests/data/basic.csv");
     assert!(out.contains("pacman"), "Should show pacman view: {}", out);
     assert!(out.contains("name"), "Should have name column: {}", out);
-    assert!(out.contains("deps"), "Should have deps column: {}", out);
+    assert!(out.contains("size(k)"), "Should have size(k) column: {}", out);
 }
 
 #[test]
 fn test_pacman_sort_deps() {
-    // :pacman then navigate to deps column and sort ascending
-    let out = run_keys(":pacman<ret><right><right><right>[<a-p>", "tests/data/basic.csv");
+    // :pacman then navigate to deps column (col 4: name,ver,size,rsize,deps) and sort ascending
+    let out = run_keys(":pacman<ret><right><right><right><right>[<a-p>", "tests/data/basic.csv");
     assert!(out.contains("pacman"), "Should show sorted pacman: {}", out);
-    assert!(out.contains("deps"), "Should have deps column: {}", out);
+    assert!(out.contains("size(k)"), "Should have size(k) column: {}", out);
 }
 
 #[test]
 fn test_pacman_sort_deps_desc() {
-    // :pacman then navigate to deps column and sort descending
-    let out = run_keys(":pacman<ret><right><right><right>]<a-p>", "tests/data/basic.csv");
+    // :pacman then navigate to deps column (col 4) and sort descending
+    let out = run_keys(":pacman<ret><right><right><right><right>]<a-p>", "tests/data/basic.csv");
     assert!(out.contains("pacman"), "Should show sorted pacman: {}", out);
 }
 
@@ -138,24 +138,38 @@ fn test_journalctl_command() {
 
 #[test]
 fn test_pacman_sort_unicode_description() {
-    // Sort on description column which may contain unicode chars like fancy quotes
+    // Sort on description column (col 9) which may contain unicode chars like fancy quotes
     // This crashed due to byte-slicing non-ASCII strings
-    let out = run_keys(":pacman<ret><right><right><right><right><right><right><right><right>[<a-p>", "tests/data/basic.csv");
+    let out = run_keys(":pacman<ret><right><right><right><right><right><right><right><right><right>[<a-p>", "tests/data/basic.csv");
     assert!(out.contains("pacman"), "Should handle unicode in sort: {}", out);
 }
 
 #[test]
 fn test_pacman_sort_size_numeric() {
-    // Size column should sort numerically (bytes), not alphabetically
+    // Size column should sort numerically (KB), not alphabetically
     // Sort descending on size (col 2), largest packages first
     let out = run_keys(":pacman<ret><right><right>]<a-p>", "tests/data/basic.csv");
     assert!(out.contains("pacman"), "Should show pacman: {}", out);
-    // Size is now stored as u64 bytes. Largest packages (>100MB) should be first.
-    // Check for large numbers (8+ digits = >10MB) in the first data rows
+    // Size is now stored as u64 KB. Largest packages (>100MB = >100000KB) should be first.
     let has_large = out.lines().take(20).any(|l| {
-        l.split_whitespace().any(|w| w.parse::<u64>().map(|n| n > 100_000_000).unwrap_or(false))
+        l.split_whitespace().any(|w| w.parse::<u64>().map(|n| n > 100_000).unwrap_or(false))
     });
     assert!(has_large, "Largest packages (>100MB) should be first when sorting desc: {}", out);
+}
+
+#[test]
+fn test_pacman_rsize_column() {
+    // rsize(k) column shows removal size = pkg size + exclusive deps
+    // Sort descending on rsize (col 3), largest removals first
+    let out = run_keys(":pacman<ret><right><right><right>]<a-p>", "tests/data/basic.csv");
+    assert!(out.contains("pacman"), "Should show pacman: {}", out);
+    assert!(out.contains("rsize(k)"), "Should have rsize(k) column: {}", out);
+    // Some packages have rsize > size (due to exclusive deps)
+    // cuda is ~5GB removal size with deps
+    let has_large_rsize = out.lines().take(20).any(|l| {
+        l.split_whitespace().any(|w| w.parse::<u64>().map(|n| n > 1_000_000).unwrap_or(false))
+    });
+    assert!(has_large_rsize, "Should have large rsize packages when sorted desc: {}", out);
 }
 
 #[test]

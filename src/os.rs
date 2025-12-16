@@ -536,7 +536,7 @@ fn parse_date(s: &str) -> String {
 /// Installed packages from pacman (Arch Linux)
 pub fn pacman() -> anyhow::Result<DataFrame> {
     use std::process::Command;
-    use std::collections::HashSet;
+    use std::collections::{HashSet, HashMap};
 
     // Get orphaned packages
     let orphan_out = Command::new("pacman").args(["-Qdt"]).output()?;
@@ -545,34 +545,87 @@ pub fn pacman() -> anyhow::Result<DataFrame> {
         .filter_map(|l| l.split_whitespace().next()).collect();
 
     let out = Command::new("pacman").args(["-Qi"]).output()?;
-    let text = String::from_utf8_lossy(&out.stdout);
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
 
-    let mut names: Vec<String> = Vec::new();
-    let mut versions: Vec<String> = Vec::new();
-    let mut descs: Vec<String> = Vec::new();
-    let mut sizes: Vec<u64> = Vec::new();
-    let mut installed: Vec<String> = Vec::new();
-    let mut reasons: Vec<String> = Vec::new();
-    let mut deps_cnt: Vec<u32> = Vec::new();
-    let mut req_cnt: Vec<u32> = Vec::new();
-    let mut orphan_flags: Vec<&str> = Vec::new();
+    // First pass: collect sizes and dependency info
+    let mut pkg_size: HashMap<String, u64> = HashMap::new();
+    let mut pkg_deps: HashMap<String, Vec<String>> = HashMap::new();
+    let mut pkg_req_by: HashMap<String, Vec<String>> = HashMap::new();
 
-    // Parse each package block (separated by empty lines)
-    let (mut name, mut ver, mut desc, mut inst, mut reason) =
-        (String::new(), String::new(), String::new(), String::new(), String::new());
-    let (mut size, mut deps, mut reqs) = (0u64, 0u32, 0u32);
+    let (mut name, mut size) = (String::new(), 0u64);
+    let (mut deps_list, mut req_list) = (Vec::new(), Vec::new());
 
     for line in text.lines() {
         if line.is_empty() {
             if !name.is_empty() {
-                orphan_flags.push(if orphans.contains(name.as_str()) { "x" } else { "" });
+                pkg_size.insert(name.clone(), size);
+                pkg_deps.insert(name.clone(), std::mem::take(&mut deps_list));
+                pkg_req_by.insert(std::mem::take(&mut name), std::mem::take(&mut req_list));
+                size = 0;
+            }
+            continue;
+        }
+        if let Some((k, v)) = line.split_once(':') {
+            let v = v.trim();
+            match k.trim() {
+                "Name" => name = v.into(),
+                "Installed Size" => size = parse_size(v),
+                "Depends On" => deps_list = if v == "None" { vec![] } else {
+                    v.split_whitespace().map(|s| s.split(&['<','>','='][..]).next().unwrap_or(s).to_string()).collect()
+                },
+                "Required By" => req_list = if v == "None" { vec![] } else {
+                    v.split_whitespace().map(String::from).collect()
+                },
+                _ => {}
+            }
+        }
+    }
+    if !name.is_empty() {
+        pkg_size.insert(name.clone(), size);
+        pkg_deps.insert(name.clone(), deps_list);
+        pkg_req_by.insert(name, req_list);
+    }
+
+    // Second pass: build output with rsize (removal size = pkg + exclusive deps)
+    let mut names: Vec<String> = Vec::new();
+    let mut versions: Vec<String> = Vec::new();
+    let mut descs: Vec<String> = Vec::new();
+    let mut sizes: Vec<u64> = Vec::new();
+    let mut rsizes: Vec<u64> = Vec::new();
+    let mut installed: Vec<String> = Vec::new();
+    let mut reasons: Vec<String> = Vec::new();
+    let mut deps_cnt: Vec<u32> = Vec::new();
+    let mut req_cnt: Vec<u32> = Vec::new();
+    let mut orphan_flags: Vec<String> = Vec::new();
+
+    let (mut name, mut ver, mut desc, mut inst, mut reason) =
+        (String::new(), String::new(), String::new(), String::new(), String::new());
+    let (mut size, mut deps, mut reqs) = (0u64, 0u32, 0u32);
+    let mut deps_list: Vec<String> = Vec::new();
+
+    for line in text.lines() {
+        if line.is_empty() {
+            if !name.is_empty() {
+                // Calculate rsize: pkg size + sizes of deps that only this pkg requires
+                let mut rsize = size;
+                for dep in &deps_list {
+                    if let Some(req) = pkg_req_by.get(dep) {
+                        if req.len() == 1 && req[0] == name {
+                            rsize += pkg_size.get(dep).copied().unwrap_or(0);
+                        }
+                    }
+                }
+
+                orphan_flags.push(if orphans.contains(name.as_str()) { "x".into() } else { "".into() });
                 names.push(std::mem::take(&mut name));
                 versions.push(std::mem::take(&mut ver));
                 descs.push(std::mem::take(&mut desc));
                 sizes.push(size);
+                rsizes.push(rsize);
                 installed.push(std::mem::take(&mut inst));
                 reasons.push(std::mem::take(&mut reason));
                 deps_cnt.push(deps); req_cnt.push(reqs);
+                deps_list.clear();
                 size = 0; deps = 0; reqs = 0;
             }
             continue;
@@ -586,7 +639,12 @@ pub fn pacman() -> anyhow::Result<DataFrame> {
                 "Installed Size" => size = parse_size(v),
                 "Install Date" => inst = parse_date(v),
                 "Install Reason" => reason = if v.contains("dependency") { "dep".into() } else { "explicit".into() },
-                "Depends On" => deps = if v == "None" { 0 } else { v.split_whitespace().count() as u32 },
+                "Depends On" => {
+                    deps_list = if v == "None" { vec![] } else {
+                        v.split_whitespace().map(|s| s.split(&['<','>','='][..]).next().unwrap_or(s).to_string()).collect()
+                    };
+                    deps = deps_list.len() as u32;
+                },
                 "Required By" => reqs = if v == "None" { 0 } else { v.split_whitespace().count() as u32 },
                 _ => {}
             }
@@ -594,16 +652,30 @@ pub fn pacman() -> anyhow::Result<DataFrame> {
     }
     // Last package
     if !name.is_empty() {
-        orphan_flags.push(if orphans.contains(name.as_str()) { "x" } else { "" });
+        let mut rsize = size;
+        for dep in &deps_list {
+            if let Some(req) = pkg_req_by.get(dep) {
+                if req.len() == 1 && req[0] == name {
+                    rsize += pkg_size.get(dep).copied().unwrap_or(0);
+                }
+            }
+        }
+        orphan_flags.push(if orphans.contains(name.as_str()) { "x".into() } else { "".into() });
         names.push(name); versions.push(ver); descs.push(desc);
-        sizes.push(size); installed.push(inst); reasons.push(reason);
+        sizes.push(size); rsizes.push(rsize);
+        installed.push(inst); reasons.push(reason);
         deps_cnt.push(deps); req_cnt.push(reqs);
     }
+
+    // Convert bytes to KB
+    let sizes_k: Vec<u64> = sizes.iter().map(|b| b / 1024).collect();
+    let rsizes_k: Vec<u64> = rsizes.iter().map(|b| b / 1024).collect();
 
     Ok(DataFrame::new(vec![
         Series::new("name".into(), names).into(),
         Series::new("version".into(), versions).into(),
-        Series::new("size".into(), sizes).into(),
+        Series::new("size(k)".into(), sizes_k).into(),
+        Series::new("rsize(k)".into(), rsizes_k).into(),
         Series::new("deps".into(), deps_cnt).into(),
         Series::new("req_by".into(), req_cnt).into(),
         Series::new("orphan".into(), orphan_flags).into(),
