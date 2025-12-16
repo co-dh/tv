@@ -93,3 +93,53 @@ fn test_goto_row() {
     let out = run_keys(":3<ret>", "tests/data/basic.csv");
     assert!(out.contains("(5 rows)"), "Goto should work: {}", out);
 }
+
+// OS command tests
+#[test]
+fn test_pacman_command() {
+    // :pacman to list packages
+    let out = run_keys(":pacman<ret><a-p>", "tests/data/basic.csv");
+    assert!(out.contains("pacman"), "Should show pacman view: {}", out);
+    assert!(out.contains("name"), "Should have name column: {}", out);
+    assert!(out.contains("deps"), "Should have deps column: {}", out);
+}
+
+#[test]
+fn test_pacman_sort_deps() {
+    // :pacman then navigate to deps column and sort ascending
+    let out = run_keys(":pacman<ret><right><right><right>[<a-p>", "tests/data/basic.csv");
+    assert!(out.contains("pacman"), "Should show sorted pacman: {}", out);
+    assert!(out.contains("deps"), "Should have deps column: {}", out);
+}
+
+#[test]
+fn test_pacman_sort_deps_desc() {
+    // :pacman then navigate to deps column and sort descending
+    let out = run_keys(":pacman<ret><right><right><right>]<a-p>", "tests/data/basic.csv");
+    assert!(out.contains("pacman"), "Should show sorted pacman: {}", out);
+}
+
+#[test]
+fn test_systemctl_command() {
+    // :systemctl to list services
+    let out = run_keys(":systemctl<ret><a-p>", "tests/data/basic.csv");
+    assert!(out.contains("systemctl"), "Should show systemctl view: {}", out);
+    assert!(out.contains("unit"), "Should have unit column: {}", out);
+    assert!(out.contains("active"), "Should have active column: {}", out);
+}
+
+#[test]
+fn test_journalctl_command() {
+    // :journalctl 50 to get 50 log entries
+    let out = run_keys(":journalctl 50<ret><a-p>", "tests/data/basic.csv");
+    assert!(out.contains("journalctl"), "Should show journalctl view: {}", out);
+    assert!(out.contains("message"), "Should have message column: {}", out);
+}
+
+#[test]
+fn test_pacman_sort_unicode_description() {
+    // Sort on description column which may contain unicode chars like fancy quotes
+    // This crashed due to byte-slicing non-ASCII strings
+    let out = run_keys(":pacman<ret><right><right><right><right><right><right><right><right>[<a-p>", "tests/data/basic.csv");
+    assert!(out.contains("pacman"), "Should handle unicode in sort: {}", out);
+}

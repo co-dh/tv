@@ -505,22 +505,79 @@ pub fn journalctl(n: usize) -> anyhow::Result<DataFrame> {
 /// Installed packages from pacman (Arch Linux)
 pub fn pacman() -> anyhow::Result<DataFrame> {
     use std::process::Command;
-    let out = Command::new("pacman").args(["-Q"]).output()?;
+    use std::collections::HashSet;
+
+    // Get orphaned packages
+    let orphan_out = Command::new("pacman").args(["-Qdt"]).output()?;
+    let orphan_text = String::from_utf8_lossy(&orphan_out.stdout).to_string();
+    let orphans: HashSet<&str> = orphan_text.lines()
+        .filter_map(|l| l.split_whitespace().next()).collect();
+
+    let out = Command::new("pacman").args(["-Qi"]).output()?;
     let text = String::from_utf8_lossy(&out.stdout);
 
     let mut names: Vec<String> = Vec::new();
     let mut versions: Vec<String> = Vec::new();
+    let mut descs: Vec<String> = Vec::new();
+    let mut sizes: Vec<String> = Vec::new();
+    let mut installed: Vec<String> = Vec::new();
+    let mut reasons: Vec<String> = Vec::new();
+    let mut deps_cnt: Vec<u32> = Vec::new();
+    let mut req_cnt: Vec<u32> = Vec::new();
+    let mut orphan_flags: Vec<&str> = Vec::new();
+
+    // Parse each package block (separated by empty lines)
+    let (mut name, mut ver, mut desc, mut size, mut inst, mut reason) =
+        (String::new(), String::new(), String::new(), String::new(), String::new(), String::new());
+    let (mut deps, mut reqs) = (0u32, 0u32);
 
     for line in text.lines() {
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() >= 2 {
-            names.push(parts[0].into());
-            versions.push(parts[1].into());
+        if line.is_empty() {
+            if !name.is_empty() {
+                orphan_flags.push(if orphans.contains(name.as_str()) { "x" } else { "" });
+                names.push(std::mem::take(&mut name));
+                versions.push(std::mem::take(&mut ver));
+                descs.push(std::mem::take(&mut desc));
+                sizes.push(std::mem::take(&mut size));
+                installed.push(std::mem::take(&mut inst));
+                reasons.push(std::mem::take(&mut reason));
+                deps_cnt.push(deps); req_cnt.push(reqs);
+                deps = 0; reqs = 0;
+            }
+            continue;
         }
+        if let Some((k, v)) = line.split_once(':') {
+            let v = v.trim();
+            match k.trim() {
+                "Name" => name = v.into(),
+                "Version" => ver = v.into(),
+                "Description" => desc = v.into(),
+                "Installed Size" => size = v.into(),
+                "Install Date" => inst = v.into(),
+                "Install Reason" => reason = if v.contains("dependency") { "dep".into() } else { "explicit".into() },
+                "Depends On" => deps = if v == "None" { 0 } else { v.split_whitespace().count() as u32 },
+                "Required By" => reqs = if v == "None" { 0 } else { v.split_whitespace().count() as u32 },
+                _ => {}
+            }
+        }
+    }
+    // Last package
+    if !name.is_empty() {
+        orphan_flags.push(if orphans.contains(name.as_str()) { "x" } else { "" });
+        names.push(name); versions.push(ver); descs.push(desc);
+        sizes.push(size); installed.push(inst); reasons.push(reason);
+        deps_cnt.push(deps); req_cnt.push(reqs);
     }
 
     Ok(DataFrame::new(vec![
         Series::new("name".into(), names).into(),
         Series::new("version".into(), versions).into(),
+        Series::new("size".into(), sizes).into(),
+        Series::new("deps".into(), deps_cnt).into(),
+        Series::new("req_by".into(), req_cnt).into(),
+        Series::new("orphan".into(), orphan_flags).into(),
+        Series::new("reason".into(), reasons).into(),
+        Series::new("installed".into(), installed).into(),
+        Series::new("description".into(), descs).into(),
     ])?)
 }

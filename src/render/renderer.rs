@@ -210,9 +210,8 @@ impl Renderer {
 
             let start_x = x.max(0) as u16 + x_pos;
             let display = format!("{:width$}", col_name, width = col_width);
-            let display = &display[..display.len().min(col_width)];
 
-            for (i, ch) in display.chars().enumerate() {
+            for (i, ch) in display.chars().take(col_width).enumerate() {
                 let px = start_x + i as u16;
                 if px >= area.width { break; }
                 buf[(px, 0)].set_char(ch).set_style(style);
@@ -287,9 +286,8 @@ impl Renderer {
 
             let start_x = x.max(0) as u16 + x_pos;
             let display = format!("{:width$}", value, width = col_width);
-            let display = &display[..display.len().min(col_width)];
 
-            for (i, ch) in display.chars().enumerate() {
+            for (i, ch) in display.chars().take(col_width).enumerate() {
                 let px = start_x + i as u16;
                 if px >= area.width { break; }
                 buf[(px, screen_row)].set_char(ch).set_style(style);
