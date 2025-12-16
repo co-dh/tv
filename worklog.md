@@ -3,14 +3,17 @@
 ## 2025-12-15: DRY Refactoring & Feature Comparison
 
 ### Halstead Metrics
-| Metric | Before | After | Change |
-|--------|--------|-------|--------|
-| Length | 37046 | 36929 | -117 |
-| Bugs | 57.073 | 56.547 | -0.526 |
+| File | Before | After | Δ len | Δ bugs |
+|------|--------|-------|-------|--------|
+| gz.rs | 2106 | 2092 | -14 | -0.06 |
+| meta.rs | 3464 | 3361 | -103 | -0.47 |
+| system.rs | 4078 | 4034 | -44 | -0.34 |
+| **Total** | 37046 | 36885 | **-161** | **-0.87** |
 
-### DRY Changes
-- **gz.rs**: Extracted `require_complete()` helper for 6 partial-data checks
-- **meta.rs**: Extracted `stats_df()` and `placeholder_df()` for DataFrame construction (used 5 times)
+### DRY Helpers Extracted
+- **gz.rs**: `require_complete()` - partial-data check (6 uses)
+- **meta.rs**: `stats_df()`, `placeholder_df()` - DataFrame construction (5 uses)
+- **system.rs**: `run_cmd()` - command execution (5 uses), `parse_deps()`, `calc_rsize()`, `push_pkg` closure
 
 ### Code Consolidation
 - Merged `os.rs` into `plugin/system.rs` (deleted 562 lines, all OS functions now in one place)

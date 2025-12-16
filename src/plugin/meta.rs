@@ -50,8 +50,10 @@ fn sel_cols(app: &AppContext, reverse: bool) -> Option<Vec<String>> {
 
 // === Commands ===
 
+/// Row count threshold for background computation (>10k runs in background thread)
 const BG_THRESHOLD: usize = 10_000;
 
+/// Metadata command - shows column statistics (null%, distinct, min, max, median, sigma)
 pub struct Metadata;
 
 impl Command for Metadata {
@@ -120,12 +122,13 @@ impl Command for Metadata {
     fn to_str(&self) -> String { "meta".into() }
 }
 
+/// Enter from meta view - pops meta, moves cursor to selected column (or xkey if multi-select)
 pub struct MetaEnter { pub col_names: Vec<String> }
 
 impl Command for MetaEnter {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
-        let _ = CommandExecutor::exec(app, Box::new(Pop));
-        if self.col_names.len() == 1 {
+        let _ = CommandExecutor::exec(app, Box::new(Pop));  // pop meta view
+        if self.col_names.len() == 1 {  // single col: move cursor
             if let Some(v) = app.view_mut() {
                 if let Some(idx) = v.dataframe.get_column_names().iter().position(|c| c.as_str() == self.col_names[0]) {
                     v.state.cc = idx;
@@ -140,12 +143,13 @@ impl Command for MetaEnter {
     fn record(&self) -> bool { false }
 }
 
+/// Delete columns from parent table (selected rows in meta view = columns to delete)
 pub struct MetaDelete { pub col_names: Vec<String> }
 
 impl Command for MetaDelete {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         let n = self.col_names.len();
-        if let Some(pid) = app.view().and_then(|v| v.parent_id) {
+        if let Some(pid) = app.view().and_then(|v| v.parent_id) {  // find parent table
             if let Some(parent) = app.stack.find_mut(pid) {
                 if let Some(sep) = parent.col_separator {
                     let all: Vec<String> = parent.dataframe.get_column_names().iter().map(|s| s.to_string()).collect();
@@ -183,11 +187,13 @@ fn placeholder_df(cols: Vec<String>, types: Vec<String>) -> Result<DataFrame> {
              vec!["...".into(); n], vec!["...".into(); n], vec!["...".into(); n], vec!["...".into(); n])
 }
 
+/// Compute column statistics for in-memory DataFrame
+/// Returns: column, type, null%, distinct, min, max, median (mean for numeric), sigma (std dev)
 fn compute_stats(df: &DataFrame) -> Result<DataFrame> {
     let cols: Vec<String> = df.get_column_names().iter().map(|s| s.to_string()).collect();
     let dtypes = df.dtypes();
-    let n = df.height() as f64;
-    let lazy = df.clone().lazy();
+    let n = df.height() as f64;  // row count for null% calculation
+    let lazy = df.clone().lazy();  // lazy for efficient batch aggregations
 
     let is_num: Vec<bool> = dtypes.iter().map(|dt| matches!(dt,
         DataType::Int8|DataType::Int16|DataType::Int32|DataType::Int64|
@@ -219,9 +225,11 @@ fn compute_stats(df: &DataFrame) -> Result<DataFrame> {
     stats_df(cols, types, nulls, dists, mins, maxs, meds, sigs)
 }
 
+/// Compute grouped column statistics - stats per unique key combination
+/// Used when xkey columns are set; shows stats for each group separately
 fn grp_stats(df: &DataFrame, keys: &[String]) -> Result<DataFrame> {
     let all: Vec<String> = df.get_column_names().iter().map(|s| s.to_string()).collect();
-    let non_keys: Vec<&String> = all.iter().filter(|c| !keys.contains(c)).collect();
+    let non_keys: Vec<&String> = all.iter().filter(|c| !keys.contains(c)).collect();  // columns to analyze
 
     let unique = df.clone().lazy()
         .select(keys.iter().map(|c| col(c)).collect::<Vec<_>>())
