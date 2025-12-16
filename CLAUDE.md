@@ -71,4 +71,5 @@ src/
 - DRY: similar functions share code (e.g., freq is freq_where with empty condition)
 
 # Todo
-
+- load tests/data/nyse/1.parquet M0D is not working, M1<ret> neither.
+- :cargo background fetch still leaks package descriptions to terminal (setsid not enough)

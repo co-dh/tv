@@ -18,10 +18,6 @@ tv data.csv
 tv data.parquet
 tv large.csv.gz  # streams 1k rows instantly, continues loading in background
 
-# Run inline commands (PRQL/SQL syntax)
-tv -c "from data.csv | filter age > 30 | save filtered.parquet"
-tv -c "from data.csv | filter (name | text.starts_with 'A') | select name,age"
-
 # Run script file
 tv --script commands.txt
 ```
@@ -82,11 +78,12 @@ Filtering pushes a new view onto the stack. Press `q` to return.
 | `Esc` | Clear selection |
 | `0` | Select all-null columns (in Meta: select rows with 100% null) |
 | `1` | Select single-value columns (in Meta: select rows with 1 distinct) |
-| `c` | Copy current column |
+| `c` | Derive new column (computed expression) |
 | `D` | Delete selected columns (in Meta view: deletes from parent table) |
 | `^` | Rename current column |
 | `$` | Convert column type (String/Int64/Float64/Boolean) |
 | `s` | Select columns (comma-separated) |
+| `!` | Set xkey columns (move to front with separator, used for pivot) |
 | `[` | Sort ascending by current column |
 | `]` | Sort descending by current column |
 
@@ -94,13 +91,25 @@ Filtering pushes a new view onto the stack. Press `q` to return.
 
 | Key | Action |
 |-----|--------|
-| `F` | Frequency table for current column |
+| `F` | Frequency table for current column (count + min/max/sum for numeric columns) |
 | `M` | Metadata/data profile (column types, null%, distinct, min/max, median, sigma) |
 | `C` | Correlation matrix (selected columns if >=2, else all numeric) |
+| `P` | Pivot table (requires xkey columns set first) |
 | `b` | Aggregate by current column (count/sum/mean/min/max/std) |
 | `T` | Duplicate current view |
 | `W` | Swap top two views on stack |
 | `q` | Pop view from stack (quit if only one view) |
+
+### Pivot Tables
+
+To create a pivot table:
+
+1. Set key columns with `!` (xkey) - these become row index
+2. Press `P` to pivot
+3. Select pivot column (values become column headers)
+4. Select value column (to aggregate)
+
+The pivot runs in background for large datasets. Aggregation options: count (default), sum, mean, min, max, first, last.
 
 ### File Operations
 
@@ -109,7 +118,26 @@ Filtering pushes a new view onto the stack. Press `q` to return.
 | `L` | Load file |
 | `S` | Save to file |
 | `l` | List current directory (name, size, modified, dir) |
-| `r` | List directory recursively (path, size, modified, dir) |
+| `r` | List directory recursively (path, size, modified) |
+
+### System Commands
+
+Access system information via `:` command mode:
+
+| Command | Description |
+|---------|-------------|
+| `:ps` | Process list (user, pid, cpu%, mem%, command) |
+| `:tcp` | TCP connections (local/remote addr, port, state) |
+| `:udp` | UDP connections |
+| `:mounts` | Mount points (device, mount, type, options) |
+| `:env` | Environment variables |
+| `:systemctl` | Systemd services (unit, load, active, sub, desc) |
+| `:pacman` | Installed packages - Arch Linux (name, size, rsize, deps, orphan) |
+| `:cargo` | Project dependencies (name, version, latest, size, deps, req_by, platform) |
+| `:lsof` | Open file descriptors |
+| `:lsof <pid>` | Open files for specific process |
+| `:journalctl` | System journal (last 1000 lines) |
+| `:journalctl <n>` | System journal (last n lines) |
 
 ### Display
 
@@ -183,6 +211,7 @@ tv --script myscript.txt
 | `freq <col>` | Frequency table |
 | `meta` | Metadata view |
 | `corr` | Correlation matrix (all numeric columns) |
+| `pivot <pivot_col> <value_col> [agg]` | Pivot table (requires xkey set first) |
 | `delcol <col1,col2>` | Delete column(s) |
 | `select <col1,col2>` | Select columns |
 | `xkey <col1,col2>` | Move columns to front as key columns (with separator) |
@@ -216,6 +245,23 @@ tv --script myscript.txt
 4. Filter rows: `\` then type `status == 'active'`
 5. Save result: `S` then enter filename
 
+### Pivot Table
+
+1. `tv sales.csv` (columns: region, product, quarter, revenue)
+2. Navigate to `region`, press `!` to set as key column
+3. Press `P` for pivot
+4. Select `quarter` as pivot column (values become column headers)
+5. Select `revenue` as value column
+6. Result: rows by region, columns by quarter, cells show revenue count
+
+### System Exploration
+
+1. `tv` (no file) or press `:` then type `ps`
+2. View all processes with CPU/memory usage
+3. Filter with `\` to find specific processes: `command == 'firefox'`
+4. Navigate to `%cpu` column, press `]` to sort by CPU usage
+5. Use `F` on `user` column to see process count by user
+
 ## Large Gzipped CSV Files
 
 tv supports streaming large `.csv.gz` files:
@@ -223,21 +269,12 @@ tv supports streaming large `.csv.gz` files:
 ```bash
 # Load gzipped CSV (shows 1k rows instantly, streams more in background)
 tv large_data.csv.gz
-
-# Save to parquet (streams entire file, creates sequential chunks)
-# Creates: output_001.parquet, output_002.parquet, ...
-tv -c "from large.csv.gz | save output.parquet"
 ```
 
 Background streaming behavior:
 - Shows first 1,000 rows immediately for fast startup
 - Continues loading in background up to 10% of system memory (configurable via `gz_mem_pct` in `cfg/config.csv`)
 - Data automatically merges as it loads
-
-When saving a gzipped CSV to parquet:
-- Streams through the entire file using `zcat`
-- Writes ~1GB chunks as sequential parquet files
-- Schema is inferred from the preview data
 
 ## Themes
 
@@ -269,6 +306,7 @@ tv --keys 'l<right><right>]' .           # ls, move right 2x, sort desc
 tv --keys 'M<down><space>D' x.csv        # Meta, select row, delete col
 tv --keys '<backslash>age > 30<ret>' x   # Filter with expression
 tv --keys '/hello<ret>n' x.csv           # Search "hello", next match
+tv --keys '!P' sales.csv                 # Set xkey on col 0, open pivot picker
 ```
 
 Key names follow [Kakoune](https://kakoune.org) style (no commas between keys):
