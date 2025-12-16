@@ -28,6 +28,36 @@ polars → polars-io → fs4 → rustix 1.1 → linux-raw-sys 0.11
 ### Remaining Duplicates (polars internals)
 - foldhash, getrandom, hashbrown, itertools, libc, memchr
 
+### Why Binary Size Unchanged
+polars dominates everything:
+
+| Crate | rlib Size |
+|-------|-----------|
+| polars_core | 65MB |
+| sqlparser | 55MB |
+| polars_expr | 29MB |
+| polars_ops | 27MB |
+| **Total polars** | **~176MB** |
+
+vs removed duplicates:
+
+| Crate | rlib Size |
+|-------|-----------|
+| rustix (was 2 copies) | ~5MB each |
+| linux-raw-sys | <1MB |
+
+The ~5MB saved from removing rustix duplicate is <1% of the 97MB binary - lost in link-time optimization.
+
+### Perspective: kdb+/q
+
+| Engine | Binary Size | Ratio |
+|--------|-------------|-------|
+| kdb+/q | **870KB** | 1x |
+| polars | 97MB | 114x |
+| DuckDB | 152MB | 179x |
+
+870KB handles petabyte-scale time-series data, vector operations, SQL, IPC, persistence - everything. Written in K, which Arthur Whitney wrote in C. Every character earns its place.
+
 ### Files Changed
 - `Cargo.toml` - ratatui 0.30.0-beta.0, removed crossterm
 - `src/*.rs` - `use ratatui::crossterm::*` instead of `use crossterm::*`
