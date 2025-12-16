@@ -41,11 +41,11 @@ impl KeyMap {
             ("common", ",", "decimals_dec"),
             ("common", "<space>", "toggle_sel"),
             ("common", "<esc>", "clear_sel"),
+            ("common", "<backslash>", "filter"),
             // Table view
             ("table", "L", "from"),
             ("table", "S", "save"),
             ("table", "/", "search"),
-            ("table", "<backslash>", "filter"),
             ("table", "n", "next_match"),
             ("table", "N", "prev_match"),
             ("table", "*", "search_cell"),
@@ -74,7 +74,6 @@ impl KeyMap {
             // Folder view
             ("folder", "<ret>", "enter"),
             ("folder", "/", "search"),
-            ("folder", "<backslash>", "filter"),
             ("folder", "D", "delete"),
             ("folder", "[", "sort"),
             ("folder", "]", "sort-"),

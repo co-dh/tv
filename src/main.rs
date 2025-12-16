@@ -245,7 +245,16 @@ fn exec_input(app: &mut AppContext, mode: &InputMode, text: &str) {
             find_match(app, true);
         }
         InputMode::Filter => {
-            run(app, Box::new(Filter { expr: text.to_string() }));
+            // Convert plain value to SQL expression (same as do_filter)
+            let expr = if is_plain_value(text) {
+                if let Some(v) = app.view() {
+                    let col = v.col_name(v.state.cc).unwrap_or_default();
+                    let is_str = v.dataframe.column(&col).ok()
+                        .map(|c| matches!(c.dtype(), polars::prelude::DataType::String)).unwrap_or(true);
+                    if is_str { format!("\"{}\" = '{}'", col, text) } else { format!("\"{}\" = {}", col, text) }
+                } else { text.to_string() }
+            } else { text.to_string() };
+            run(app, Box::new(Filter { expr }));
         }
         InputMode::Load => {
             run(app, Box::new(From { file_path: text.to_string() }));
@@ -880,7 +889,7 @@ fn is_plain_value(expr: &str) -> bool {
     let e = expr.trim();
     !e.contains('=') && !e.contains('>') && !e.contains('<') && !e.contains('~')
         && !e.contains("&&") && !e.contains("||") && !e.contains(" AND ")
-        && !e.contains(" OR ") && !e.contains(" LIKE ")
+        && !e.contains(" OR ") && !e.contains(" LIKE ") && !e.contains(" IN ")
 }
 
 /// Find rows matching SQL WHERE expression, returns row indices

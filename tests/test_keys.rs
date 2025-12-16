@@ -39,6 +39,14 @@ fn test_keys_csv_meta() {
     assert!(output.contains("metadata"), "M should show meta: {}", output);
 }
 
+#[test]
+fn test_keys_freq_filter() {
+    // Freq on b, then filter with \ - should work in any view
+    let output = run_keys("<right>F<backslash>x<ret>", "tests/data/basic.csv");
+    assert!(output.contains("(1 row"), "\\ should filter freq to 1 row (x): {}", output);
+    assert!(output.contains("\"x\""), "Filtered result should contain x: {}", output);
+}
+
 // === Parquet (disk backend) key tests ===
 
 #[test]
