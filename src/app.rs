@@ -33,6 +33,7 @@ pub struct AppContext {
     pub bg_saver: Option<Receiver<String>>,      // background save status
     pub raw_save: bool,            // --raw: skip type detection on save
     pub bg_meta: Option<(usize, Receiver<DataFrame>)>,  // (parent_id, meta stats receiver)
+    pub bg_freq: Option<(usize, Receiver<DataFrame>)>,  // (freq_view_id, freq agg receiver)
     pub needs_redraw: bool,  // force full redraw (after leaving alternate screen)
     pub needs_center: bool,  // center cursor after viewport update (for search)
 }
@@ -64,6 +65,7 @@ impl AppContext {
             bg_saver: None,
             raw_save: false,
             bg_meta: None,
+            bg_freq: None,
             needs_redraw: false,
             needs_center: false,
         }
@@ -141,6 +143,26 @@ impl AppContext {
             }
             Err(TryRecvError::Empty) => {}
             Err(TryRecvError::Disconnected) => { self.bg_meta = None; }
+        }
+    }
+
+    /// Check for background freq aggregates and update view
+    pub fn check_bg_freq(&mut self) {
+        use std::sync::mpsc::TryRecvError;
+        let Some((freq_id, ref rx)) = self.bg_freq else { return };
+        match rx.try_recv() {
+            Ok(freq_df) => {
+                // Update freq view if it's the one we're computing for
+                if let Some(view) = self.stack.cur_mut() {
+                    if view.id == freq_id {
+                        view.dataframe = freq_df;
+                        view.state.col_widths.clear();
+                    }
+                }
+                self.bg_freq = None;
+            }
+            Err(TryRecvError::Empty) => {}
+            Err(TryRecvError::Disconnected) => { self.bg_freq = None; }
         }
     }
 

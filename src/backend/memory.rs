@@ -118,4 +118,43 @@ mod tests {
         assert_eq!(r.column("a").unwrap().get(0).unwrap().try_extract::<i32>().unwrap(), 9);
         assert_eq!(r.column("a").unwrap().get(1).unwrap().try_extract::<i32>().unwrap(), 6);
     }
+
+    #[test]
+    fn test_memory_freq_agg() {
+        let df = DataFrame::new(vec![
+            Column::new("cat".into(), vec!["A", "A", "B", "B", "B"]),
+            Column::new("x".into(), vec![1i64, 2, 3, 4, 5]),
+            Column::new("y".into(), vec![10i64, 20, 30, 40, 50]),
+        ]).unwrap();
+        let r = Memory(&df, vec![]).freq_agg("", "cat", "TRUE").unwrap();
+        // Should have: cat, Cnt, x_min, x_max, x_sum, y_min, y_max, y_sum
+        assert!(r.column("Cnt").is_ok());
+        assert!(r.column("x_min").is_ok());
+        assert!(r.column("x_max").is_ok());
+        assert!(r.column("x_sum").is_ok());
+        assert!(r.column("y_min").is_ok());
+        // Find B row (count=3): x_sum=12 (3+4+5)
+        let cat_col = r.column("cat").unwrap();
+        let b_row = (0..r.height()).find(|&i| cat_col.get(i).unwrap().to_string().trim_matches('"') == "B").unwrap();
+        let x_sum = r.column("x_sum").unwrap().get(b_row).unwrap();
+        assert_eq!(x_sum.try_extract::<i64>().unwrap(), 12);
+    }
+
+    #[test]
+    fn test_freq_agg_bg_thread() {
+        // Test SQL in background thread - reproduces the hang issue
+        let df = DataFrame::new(vec![
+            Column::new("cat".into(), vec!["A", "A", "B", "B", "B"]),
+            Column::new("x".into(), vec![1i64, 2, 3, 4, 5]),
+        ]).unwrap();
+        let df2 = df.clone();
+        let handle = std::thread::spawn(move || {
+            eprintln!("BG: starting freq_agg");
+            let r = Memory(&df2, vec![]).freq_agg("", "cat", "TRUE");
+            eprintln!("BG: freq_agg done");
+            r
+        });
+        let r = handle.join().unwrap().unwrap();
+        assert!(r.column("x_sum").is_ok());
+    }
 }

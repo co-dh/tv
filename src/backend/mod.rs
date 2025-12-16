@@ -114,6 +114,32 @@ pub trait Backend: Send + Sync {
         sql(self.lf(path)?, &format!("SELECT \"{}\", COUNT(*) as Cnt FROM df WHERE {} GROUP BY \"{}\" ORDER BY Cnt DESC", col, w, col))
     }
 
+    /// Frequency with aggregates (min/max/sum) for all numeric columns
+    fn freq_agg(&self, path: &str, grp: &str, w: &str) -> Result<DataFrame> {
+        // Materialize data first (avoid lazy in bg thread - polars threading issues)
+        let df = if w != "TRUE" { self.filter(path, w, usize::MAX)? } else { self.lf(path)?.collect()? };
+        let schema = df.schema();
+        // Build aggregate expressions: COUNT + MIN/MAX/SUM for numeric columns
+        let mut agg_exprs: Vec<Expr> = vec![len().alias("Cnt")];
+        for (name, dt) in schema.iter() {
+            let n = name.to_string();
+            if n == grp { continue; }
+            let numeric = matches!(dt, DataType::Int8 | DataType::Int16 | DataType::Int32 | DataType::Int64
+                | DataType::UInt8 | DataType::UInt16 | DataType::UInt32 | DataType::UInt64
+                | DataType::Float32 | DataType::Float64);
+            if numeric {
+                agg_exprs.push(col(&n).min().alias(&format!("{}_min", n)));
+                agg_exprs.push(col(&n).max().alias(&format!("{}_max", n)));
+                agg_exprs.push(col(&n).sum().alias(&format!("{}_sum", n)));
+            }
+        }
+        df.lazy().group_by([col(grp)])
+            .agg(agg_exprs)
+            .sort(["Cnt"], SortMultipleOptions::default().with_order_descending(true))
+            .collect()
+            .map_err(|e| anyhow!("{}", e))
+    }
+
     /// Filter rows
     fn filter(&self, path: &str, w: &str, limit: usize) -> Result<DataFrame> {
         self.fetch_where(path, w, 0, limit)

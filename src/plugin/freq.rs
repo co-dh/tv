@@ -67,18 +67,17 @@ impl Command for Frequency {
         let path = view.path().to_string();
         let key_cols = view.key_cols();
         let filter = view.filter_clause.clone();
+        let pq_path = view.parquet_path.clone();
+        let df = view.dataframe.clone();
 
         // Use view's backend (file or memory)
         let col_names = view.backend().cols(&path)?;
         if !col_names.contains(&self.col_name) {
             return Err(anyhow!("Column '{}' not found", self.col_name));
         }
-        // Use freq_where for filtered views, freq for unfiltered
-        let freq_df = if let Some(ref w) = filter {
-            view.backend().freq_where(&path, &self.col_name, w)?
-        } else {
-            view.backend().freq(&path, &self.col_name)?
-        };
+        // Fast initial freq (count only)
+        let w = filter.as_deref().unwrap_or("TRUE");
+        let freq_df = view.backend().freq_where(&path, &self.col_name, w)?;
         let result = add_freq_cols(freq_df)?;
 
         let id = app.next_id();
@@ -88,6 +87,24 @@ impl Command for Frequency {
         );
         if !key_cols.is_empty() { new_view.col_separator = Some(key_cols.len()); }
         app.stack.push(new_view);
+
+        // Compute aggregates synchronously for now (bg thread has rayon deadlock)
+        let col = self.col_name.clone();
+        let w = filter.unwrap_or_else(|| "TRUE".into());
+        if let Ok(agg_df) = if pq_path.is_some() {
+            freq_agg_path(pq_path.as_ref().unwrap(), &col, &w)
+        } else {
+            freq_agg_df(&df, &col, &w)
+        } {
+            if let Ok(full_df) = add_freq_cols(agg_df) {
+                if let Some(v) = app.stack.cur_mut() {
+                    if v.id == id {
+                        v.dataframe = full_df;
+                        v.state.col_widths.clear();
+                    }
+                }
+            }
+        }
         Ok(())
     }
 
@@ -154,4 +171,35 @@ fn add_freq_cols(mut df: DataFrame) -> Result<DataFrame> {
     df.with_column(Series::new("Pct".into(), pcts))?;
     df.with_column(Series::new("Bar".into(), bars))?;
     Ok(df)
+}
+
+/// Freq aggregates from parquet path
+fn freq_agg_path(path: &str, col: &str, w: &str) -> Result<DataFrame> {
+    use crate::backend::{Backend, Polars};
+    Polars.freq_agg(path, col, w)
+}
+
+/// Freq aggregates from in-memory DataFrame
+fn freq_agg_df(df: &DataFrame, grp: &str, _w: &str) -> Result<DataFrame> {
+    use polars::prelude::*;
+    // Build aggregate expressions: COUNT + MIN/MAX/SUM for numeric columns
+    let mut agg_exprs: Vec<Expr> = vec![len().alias("Cnt")];
+    for (name, dt) in df.schema().iter() {
+        let n = name.to_string();
+        if n == grp { continue; }
+        let numeric = matches!(dt, DataType::Int8 | DataType::Int16 | DataType::Int32 | DataType::Int64
+            | DataType::UInt8 | DataType::UInt16 | DataType::UInt32 | DataType::UInt64
+            | DataType::Float32 | DataType::Float64);
+        if numeric {
+            agg_exprs.push(col(&n).min().alias(&format!("{}_min", n)));
+            agg_exprs.push(col(&n).max().alias(&format!("{}_max", n)));
+            agg_exprs.push(col(&n).sum().alias(&format!("{}_sum", n)));
+        }
+    }
+    df.clone().lazy()
+        .group_by([col(grp)])
+        .agg(agg_exprs)
+        .sort(["Cnt"], SortMultipleOptions::default().with_order_descending(true))
+        .collect()
+        .map_err(|e| anyhow!("{}", e))
 }
