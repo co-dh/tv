@@ -20,13 +20,17 @@ fn test_keys_csv_freq_enter() {
 #[test]
 fn test_keys_csv_sort_asc() {
     let output = run_keys("[", "tests/data/unsorted.csv");
-    assert!(output.contains("│ 1"), "[ should sort asc, first=1: {}", output);
+    // First data row should start with 1 (sorted ascending)
+    assert!(output.lines().nth(2).map(|l| l.starts_with("1,")).unwrap_or(false),
+        "[ should sort asc, first=1: {}", output);
 }
 
 #[test]
 fn test_keys_csv_sort_desc() {
     let output = run_keys("]", "tests/data/unsorted.csv");
-    assert!(output.contains("│ 3"), "] should sort desc, first=3: {}", output);
+    // First data row should start with 3 (sorted descending)
+    assert!(output.lines().nth(2).map(|l| l.starts_with("3,")).unwrap_or(false),
+        "] should sort desc, first=3: {}", output);
 }
 
 #[test]
@@ -52,13 +56,15 @@ fn test_keys_parquet_freq_enter() {
 #[test]
 fn test_keys_parquet_sort_asc() {
     let output = run_keys("<right>[", "sample.parquet");
-    assert!(output.contains("┆ 18  ┆"), "[ on age should sort asc: {}", output);
+    // First data row should have age=18 (sorted ascending)
+    assert!(output.contains(",18,"), "[ on age should sort asc: {}", output);
 }
 
 #[test]
 fn test_keys_parquet_sort_desc() {
     let output = run_keys("<right>]", "sample.parquet");
-    assert!(output.contains("┆ 73  ┆"), "] on age should sort desc: {}", output);
+    // First data row should have age=73 (sorted descending)
+    assert!(output.contains(",73,"), "] on age should sort desc: {}", output);
 }
 
 #[test]

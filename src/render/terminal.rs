@@ -1,5 +1,5 @@
 use anyhow::Result;
-use crossterm::{
+use ratatui::crossterm::{
     cursor,
     execute,
     terminal::{self, EnterAlternateScreen, LeaveAlternateScreen},

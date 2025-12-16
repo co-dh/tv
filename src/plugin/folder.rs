@@ -140,7 +140,7 @@ pub struct BatView { pub path: String }
 
 impl Command for BatView {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
-        use crossterm::{execute, terminal::{LeaveAlternateScreen, EnterAlternateScreen, disable_raw_mode, enable_raw_mode}};
+        use ratatui::crossterm::{execute, terminal::{LeaveAlternateScreen, EnterAlternateScreen, disable_raw_mode, enable_raw_mode}};
         use std::io::stdout;
         use std::process::Command as Cmd;
 

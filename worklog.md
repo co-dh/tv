@@ -1,5 +1,112 @@
 # Worklog
 
+## 2025-12-16: Dependency Deduplication - rustix Unified
+
+### Problem
+22 duplicate dependencies, including `linux-raw-sys` (0.4.15 and 0.11.0) via two `rustix` versions.
+
+### Root Cause (Before)
+```
+ratatui 0.29 → crossterm 0.28 → rustix 0.38 → linux-raw-sys 0.4
+polars → polars-io → fs4 → rustix 1.1 → linux-raw-sys 0.11
+```
+
+### Solution
+1. **Removed direct crossterm dep** - use `ratatui::crossterm` re-export
+2. **Updated ratatui 0.29 → 0.30.0-beta.0** - uses crossterm 0.29 → rustix 1.x
+3. **Disabled polars `fmt` feature** - removed comfy-table dependency chain
+4. **Custom print()** - outputs CSV format without polars Display trait
+
+### Results
+| Metric | Before | After |
+|--------|--------|-------|
+| Duplicates | 22 | 10 |
+| rustix | 0.38 + 1.1 | **1.1 only** |
+| linux-raw-sys | 0.4 + 0.11 | **0.11 only** |
+| Binary | 97MB | 97MB |
+
+### Remaining Duplicates (polars internals)
+- foldhash, getrandom, hashbrown, itertools, libc, memchr
+
+### Files Changed
+- `Cargo.toml` - ratatui 0.30.0-beta.0, removed crossterm
+- `src/*.rs` - `use ratatui::crossterm::*` instead of `use crossterm::*`
+- `src/main.rs` - custom `print()` function (no polars fmt)
+- `tests/test_keys.rs` - updated assertions for CSV output format
+
+---
+
+## 2025-12-16: Frequency View Aggregates
+
+### Feature
+Frequency view (F key) now shows min/max/sum for all numeric columns, not just count.
+
+| Column | Description |
+|--------|-------------|
+| col | Grouping column value |
+| Cnt | Count of rows |
+| x_min | Minimum of numeric column x |
+| x_max | Maximum of numeric column x |
+| x_sum | Sum of numeric column x |
+| Pct | Percentage of total |
+| Bar | Visual bar |
+
+### Implementation
+- `freq_agg()` in Backend trait builds GROUP BY with MIN/MAX/SUM for each numeric column
+- `freq_agg_df()` in freq.rs handles in-memory DataFrames
+- Runs synchronously (bg thread had rayon deadlock with polars)
+
+### Files
+- `src/backend/mod.rs` - freq_agg() method
+- `src/plugin/freq.rs` - Frequency command updated, freq_agg_df() helper
+- `src/backend/memory.rs` - test_memory_freq_agg, test_freq_agg_bg_thread
+
+### Known Issue
+Background thread execution causes rayon deadlock with polars. Unit tests pass but integration with TUI event loop deadlocks. Running synchronously for now.
+
+---
+
+## 2025-12-16: Cargo Dependencies Command
+
+### New Command
+Added `:cargo` to analyze current project's Cargo.toml dependencies (like pacman for Rust).
+
+| Column | Description |
+|--------|-------------|
+| name | Package name |
+| version | Current version in use |
+| latest | Latest version on crates.io (cached) |
+| size(k) | Source size in KB |
+| rsize(k) | Removal size (pkg + exclusive deps) |
+| deps | Number of dependencies |
+| req_by | Number of packages depending on this |
+| platform | linux/windows/macos/android/wasm or empty |
+
+### Implementation
+- Uses `cargo metadata --format-version 1` for package info
+- Uses `cargo metadata --filter-platform x86_64-unknown-linux-gnu` to detect linux-compiled packages
+- Platform detection: infers from package name (windows-sys→windows, core-foundation→macos, etc.)
+- Latest version: fetches via `cargo search` in background thread
+
+### Background Version Fetching
+- Cache stored at `~/.cache/tv/cargo_versions.csv`
+- Format: `name,version,timestamp`
+- Re-fetches entries older than 1 day
+- Saves every 10 fetches (incremental)
+- Fully detached from terminal via `setsid()` to avoid garbage on quit
+
+### Dependencies Added
+- `serde_json = "1.0"` - parse cargo metadata JSON
+- `nix` feature `process` - for setsid() to detach background processes
+
+### Files
+- `src/plugin/system.rs` - cargo(), fetch_latest(), load_ver_cache(), save_ver_cache(), update_ver_cache_bg()
+- `src/main.rs` - add "cargo" to command picker
+- `Cargo.toml` - add serde_json, nix process feature
+- `tests/test_system.rs` - test_cargo_command
+
+---
+
 ## 2025-12-15: SQL-based Stats Unification
 
 ### Problem

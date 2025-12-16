@@ -297,8 +297,8 @@ impl Renderer {
     }
 
     /// Get color for correlation value
-    fn correlation_color(value: &str) -> Option<crossterm::style::Color> {
-        use crossterm::style::Color;
+    fn correlation_color(value: &str) -> Option<ratatui::crossterm::style::Color> {
+        use ratatui::crossterm::style::Color;
         let v: f64 = value.parse().ok()?;
         let v = v.clamp(-1.0, 1.0);
 
@@ -570,8 +570,8 @@ impl Renderer {
 }
 
 /// Convert crossterm Color to ratatui Color
-fn to_rcolor(c: crossterm::style::Color) -> RColor {
-    use crossterm::style::Color;
+fn to_rcolor(c: ratatui::crossterm::style::Color) -> RColor {
+    use ratatui::crossterm::style::Color;
     match c {
         Color::Reset => RColor::Reset,
         Color::Black => RColor::Black,

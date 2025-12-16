@@ -1,6 +1,6 @@
 //! Theme support - loads colors from cfg/themes.csv
 
-use crossterm::style::Color;
+use ratatui::crossterm::style::Color;
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;

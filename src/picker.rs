@@ -1,5 +1,5 @@
 use anyhow::Result;
-use crossterm::{cursor, execute, terminal};
+use ratatui::crossterm::{cursor, execute, terminal};
 use std::io::Write;
 use std::process::{Command, Stdio};
 
@@ -67,7 +67,7 @@ fn fzf_filter(items: Vec<String>, query: &str) -> Result<Option<String>> {
 
 /// Simple line editor with pre-filled text
 fn edit_line(prompt: &str, initial: &str) -> Result<Option<String>> {
-    use crossterm::event::{read, Event, KeyCode, KeyModifiers};
+    use ratatui::crossterm::event::{read, Event, KeyCode, KeyModifiers};
 
     let mut line = initial.to_string();
     let mut pos = line.len();

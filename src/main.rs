@@ -20,8 +20,8 @@ use plugin::corr::Correlation;
 use plugin::freq::Frequency;
 use plugin::meta::Metadata;
 use plugin::folder::Ls;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
-use crossterm::{cursor, execute, style::Print, terminal};
+use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
+use ratatui::crossterm::{cursor, execute, style::Print, terminal};
 use render::Renderer;
 use std::fs;
 use std::io::{self, Write};
@@ -87,6 +87,7 @@ fn main() -> Result<()> {
         app.merge_bg_data();
         app.check_bg_saver();
         app.check_bg_meta();
+        app.check_bg_freq();
 
         // Force full redraw if needed (after bat/less/fzf return)
         if app.needs_redraw {
@@ -308,12 +309,22 @@ fn fetch_lazy(view: &mut state::ViewState) {
     }
 }
 
-/// Print current view to stdout (batch mode)
+/// Print view data (without polars fmt feature)
 fn print(app: &mut AppContext) {
     if let Some(view) = app.view_mut() {
         println!("=== {} ({} rows) ===", view.name, view.rows());
         fetch_lazy(view);
-        println!("{}", view.dataframe);
+        // Print columns
+        let cols: Vec<&str> = view.dataframe.get_column_names().iter().map(|c| c.as_str()).collect();
+        println!("{}", cols.join(","));
+        // Print first few rows
+        let n = view.dataframe.height().min(10);
+        for r in 0..n {
+            let row: Vec<String> = (0..cols.len()).map(|c| {
+                view.dataframe.get_columns()[c].get(r).map(|v| v.to_string()).unwrap_or_default()
+            }).collect();
+            println!("{}", row.join(","));
+        }
     } else {
         println!("No table loaded");
     }
@@ -329,6 +340,8 @@ fn mem_mb() -> usize {
 
 /// Print status line info (for key testing) - fetches lazy data first
 fn print_status(app: &mut AppContext) {
+    // Wait for background tasks to complete
+    wait_bg(app);
     if let Some(view) = app.view_mut() {
         fetch_lazy(view);  // simulate render fetch
         let col_name = view.col_name(view.state.cc).unwrap_or_default();
@@ -336,6 +349,19 @@ fn print_status(app: &mut AppContext) {
         let df = view.dataframe.height();
         println!("STATUS: view={} rows={} disk={} df={} col={} col_name={} mem={}MB",
             view.name, view.rows(), disk, df, view.state.cc, col_name, mem_mb());
+    }
+}
+
+/// Wait for all background tasks to complete (freq, meta, loader)
+fn wait_bg(app: &mut AppContext) {
+    use std::time::Duration;
+    // Poll until all bg tasks done (max 5s)
+    for _ in 0..50 {
+        app.check_bg_freq();
+        app.check_bg_meta();
+        app.merge_bg_data();
+        if app.bg_freq.is_none() && app.bg_meta.is_none() && app.bg_loader.is_none() { break; }
+        std::thread::sleep(Duration::from_millis(100));
     }
 }
 
@@ -735,7 +761,7 @@ fn do_command_picker(app: &mut AppContext) -> Result<()> {
     let cmd_list: Vec<String> = vec![
         "from <file>", "save <file>", "ls [dir]", "lr [dir]",
         "ps", "mounts", "tcp", "udp", "lsof [pid]", "env",
-        "systemctl", "journalctl [n]", "pacman",
+        "systemctl", "journalctl [n]", "pacman", "cargo",
         "filter <expr>", "freq <col>", "meta", "corr",
         "select <cols>", "delcol <cols>", "sort <col>", "sort -<col>", "take <n>", "rename <old> <new>",
     ].iter().map(|s| s.to_string()).collect();
