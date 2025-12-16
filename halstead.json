@@ -1,6 +1,6 @@
 {
-  "total_length": 36289.0,
-  "total_bugs": 55.079842012607855,
+  "total_length": 37347.0,
+  "total_bugs": 56.688252065538585,
   "files": [
     {
       "file": "./src/app.rs",
@@ -76,15 +76,15 @@
     },
     {
       "file": "./src/keymap.rs",
-      "length": 1626.0,
-      "bugs": 2.3901798308771145,
-      "volume": 12684.263237270416
+      "length": 1630.0,
+      "bugs": 2.387411670296198,
+      "volume": 12736.463341683771
     },
     {
       "file": "./src/main.rs",
-      "length": 6304.0,
-      "bugs": 9.311072452084774,
-      "volume": 58025.616493346984
+      "length": 6323.0,
+      "bugs": 9.324297254594946,
+      "volume": 58246.76968641438
     },
     {
       "file": "./src/picker.rs",
@@ -118,9 +118,15 @@
     },
     {
       "file": "./src/plugin/mod.rs",
-      "length": 427.0,
-      "bugs": 0.67079274972124,
-      "volume": 2675.917852876723
+      "length": 439.0,
+      "bugs": 0.6959417979536846,
+      "volume": 2767.359748449748
+    },
+    {
+      "file": "./src/plugin/pivot.rs",
+      "length": 1023.0,
+      "bugs": 1.5728043627690274,
+      "volume": 7172.485482297989
     },
     {
       "file": "./src/plugin/system.rs",

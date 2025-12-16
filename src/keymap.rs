@@ -69,6 +69,7 @@ impl KeyMap {
             ("table", "'", "next_bookmark"),
             ("table", "D", "delete"),
             ("table", "!", "xkey"),
+            ("table", "P", "pivot"),
             ("table", "<ret>", "enter"),
             // Folder view
             ("folder", "<ret>", "enter"),

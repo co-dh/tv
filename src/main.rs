@@ -568,6 +568,7 @@ fn handle_cmd(app: &mut AppContext, cmd: &str) -> Result<bool> {
                 if let Some(v) = app.view_mut() { v.selected_cols.clear(); }
             }
         }
+        "pivot" => if app.has_view() { run(app, Box::new(crate::plugin::pivot::PivotPick)); },
         "sort" => on_col(app, |c| Box::new(Sort { col_name: c, descending: false })),
         "sort-" => on_col(app, |c| Box::new(Sort { col_name: c, descending: true })),
         "rename" => {

@@ -106,6 +106,15 @@ fn test_corr_matrix() {
 }
 
 #[test]
+fn test_pivot_requires_xkey() {
+    // P for pivot without xkey should stay on original view (not create pivot view)
+    let out = run_keys("P", "tests/data/full.csv");
+    // Without xkey, pivot should fail and stay on original view (6 rows)
+    assert!(!out.contains("Pivot:"), "Should not create pivot view without xkey: {}", out);
+    assert!(out.contains("(6 rows)"), "Should stay on original view: {}", out);
+}
+
+#[test]
 fn test_filter_then_sort_then_select() {
     // filter city='NYC', sort value, select name,value
     let out = run_keys("<backslash>city = 'NYC'<ret>[sname,value<ret>", "tests/data/full.csv");

@@ -9,7 +9,7 @@ edition = "2021"
 # codegen-units = 1
 
 [dependencies]
-polars = { version = "0.52", features = ["lazy", "csv", "parquet", "sql", "new_streaming"] }
+polars = { version = "0.52", features = ["lazy", "csv", "parquet", "sql", "new_streaming", "pivot"] }
 polars-ops = { version = "0.52", features = ["cov"] }
 crossterm = "0.28"
 ratatui = "0.29"
