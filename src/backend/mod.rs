@@ -68,14 +68,20 @@ pub trait Backend: Send + Sync {
         Ok(schema.iter().map(|(n, dt)| (n.to_string(), format!("{:?}", dt))).collect())
     }
 
-    /// Fetch rows - default uses fetch_where
+    /// Fetch rows - default uses fetch_sel
     fn fetch_rows(&self, path: &str, offset: usize, limit: usize) -> Result<DataFrame> {
-        self.fetch_where(path, "TRUE", offset, limit)
+        self.fetch_sel(path, &[], "TRUE", offset, limit)
     }
 
-    /// Fetch rows with WHERE clause
+    /// Fetch rows with WHERE clause (all columns)
     fn fetch_where(&self, path: &str, w: &str, offset: usize, limit: usize) -> Result<DataFrame> {
-        sql(self.lf(path)?, &format!("SELECT * FROM df WHERE {} LIMIT {} OFFSET {}", w, limit, offset))
+        self.fetch_sel(path, &[], w, offset, limit)
+    }
+
+    /// Fetch selected columns with WHERE clause
+    fn fetch_sel(&self, path: &str, cols: &[String], w: &str, offset: usize, limit: usize) -> Result<DataFrame> {
+        let sel = if cols.is_empty() { "*".into() } else { cols.iter().map(|c| format!("\"{}\"", c)).collect::<Vec<_>>().join(",") };
+        sql(self.lf(path)?, &format!("SELECT {} FROM df WHERE {} LIMIT {} OFFSET {}", sel, w, limit, offset))
     }
 
     /// Count rows matching WHERE clause

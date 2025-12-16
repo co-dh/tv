@@ -196,3 +196,11 @@
 - analysis cargo package, remove unnecessary dependencies. find out big dependency introducer.
 - use | syntax in test script.  modify tests/test_string_filter.sh to use simplified interface.
 - what are 2 impl Viewstate in state.rs?
+
+## Meta Delete for Parquet Views (SQL-based)
+- MetaDelete updates parent's col_names list instead of dataframe
+- Backend::fetch_sel() uses explicit column list in SELECT (not *)
+- Renderer passes view.col_names to fetch_sel for lazy fetch
+- Select/Xkey commands update col_names for parquet views
+- MetaEnter uses col_names to find column index (not dataframe)
+- Cache cleared on column changes to force re-fetch

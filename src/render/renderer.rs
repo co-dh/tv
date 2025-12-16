@@ -67,11 +67,8 @@ impl Renderer {
                 // Fetch 100k rows centered around current position
                 let start = r0.saturating_sub(CACHE_SIZE / 4);  // 25k before
                 dbg_log(&format!("fetch parquet start={} rows={} filter={:?}", start, CACHE_SIZE, view.filter_clause));
-                let df = if let Some(ref w) = view.filter_clause {
-                    Polars.fetch_where(path, w, start, CACHE_SIZE)
-                } else {
-                    Polars.fetch_rows(path, start, CACHE_SIZE)
-                };
+                let w = view.filter_clause.as_deref().unwrap_or("TRUE");
+                let df = Polars.fetch_sel(path, &view.col_names, w, start, CACHE_SIZE);
                 if let Ok(df) = df {
                     let fetched = df.height();
                     view.dataframe = df;

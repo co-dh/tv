@@ -62,7 +62,9 @@ pub struct Select { pub col_names: Vec<String> }
 impl Command for Select {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         let v = app.req_mut()?;
-        v.dataframe = v.dataframe.select(&self.col_names)?;
+        v.col_names = self.col_names.clone();
+        v.fetch_cache = None;
+        if v.parquet_path.is_none() { v.dataframe = v.dataframe.select(&self.col_names)?; }
         v.state.cc = 0;
         Ok(())
     }
@@ -177,11 +179,18 @@ pub struct Xkey { pub col_names: Vec<String> }
 impl Command for Xkey {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         let v = app.req_mut()?;
-        let all: Vec<String> = v.dataframe.get_column_names().iter().map(|s| s.to_string()).collect();
+        // Use col_names for parquet, dataframe for memory
+        let all: Vec<String> = if v.col_names.is_empty() {
+            v.dataframe.get_column_names().iter().map(|s| s.to_string()).collect()
+        } else { v.col_names.clone() };
         let rest: Vec<String> = all.iter().filter(|c| !self.col_names.contains(c)).cloned().collect();
         let mut order = self.col_names.clone();
         order.extend(rest);
-        v.dataframe = v.dataframe.select(&order)?;
+        // Update col_names with new order, clear cache
+        v.col_names = order.clone();
+        v.fetch_cache = None;
+        // For in-memory, also reorder dataframe
+        if v.parquet_path.is_none() { v.dataframe = v.dataframe.select(&order)?; }
         v.selected_cols.clear();
         for i in 0..self.col_names.len() { v.selected_cols.insert(i); }
         v.state.cc = 0;

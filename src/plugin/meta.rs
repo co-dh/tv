@@ -122,7 +122,11 @@ impl Command for MetaEnter {
         let _ = CommandExecutor::exec(app, Box::new(Pop));  // pop meta view
         if self.col_names.len() == 1 {  // single col: move cursor
             if let Some(v) = app.view_mut() {
-                if let Some(idx) = v.dataframe.get_column_names().iter().position(|c| c.as_str() == self.col_names[0]) {
+                // Use col_names for parquet, dataframe for memory
+                let cols: Vec<String> = if v.col_names.is_empty() {
+                    v.dataframe.get_column_names().iter().map(|s| s.to_string()).collect()
+                } else { v.col_names.clone() };
+                if let Some(idx) = cols.iter().position(|c| c == &self.col_names[0]) {
                     v.state.cc = idx;
                 }
             }
@@ -141,14 +145,27 @@ pub struct MetaDelete { pub col_names: Vec<String> }
 impl Command for MetaDelete {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         let n = self.col_names.len();
-        if let Some(pid) = app.view().and_then(|v| v.parent_id) {  // find parent table
+        if let Some(pid) = app.view().and_then(|v| v.parent_id) {
             if let Some(parent) = app.stack.find_mut(pid) {
+                // Adjust col_separator if deleting key columns
                 if let Some(sep) = parent.col_separator {
-                    let all: Vec<String> = parent.dataframe.get_column_names().iter().map(|s| s.to_string()).collect();
-                    let adj = self.col_names.iter().filter(|c| all.iter().position(|n| n == *c).map(|i| i < sep).unwrap_or(false)).count();
+                    let cols = if parent.col_names.is_empty() {
+                        parent.dataframe.get_column_names().iter().map(|s| s.to_string()).collect()
+                    } else { parent.col_names.clone() };
+                    let adj = self.col_names.iter().filter(|c| cols.iter().position(|x| x == *c).map(|i| i < sep).unwrap_or(false)).count();
                     parent.col_separator = Some(sep.saturating_sub(adj));
                 }
-                for c in &self.col_names { let _ = parent.dataframe.drop_in_place(c); }
+                // Init col_names from df if empty, then remove deleted columns
+                if parent.col_names.is_empty() {
+                    parent.col_names = parent.dataframe.get_column_names().iter().map(|s| s.to_string()).collect();
+                }
+                parent.col_names.retain(|c| !self.col_names.contains(c));
+                // Clear cache to force re-fetch with new column list
+                parent.fetch_cache = None;
+                // For in-memory views, also drop from dataframe
+                if parent.parquet_path.is_none() {
+                    for c in &self.col_names { let _ = parent.dataframe.drop_in_place(c); }
+                }
             }
         }
         let _ = CommandExecutor::exec(app, Box::new(Pop));
@@ -196,8 +213,6 @@ fn col_stats(lf: LazyFrame, col: &str, n: f64, is_num: bool) -> ColStats {
             MIN("{}") as min, MAX("{}") as max FROM df"#, col, col, col, col)
     };
     let df = sql(lf, &q).ok();
-    // Debug: print SQL result
-    if let Some(ref d) = df { eprintln!("[col_stats] col={} df={:?}", col, d); }
     let get = |c: &str| df.as_ref().and_then(|d| d.column(c).ok()?.get(0).ok()).map(|v| fmt(&v)).unwrap_or_default();
     let nulls = df.as_ref().and_then(|d| d.column("nulls").ok()?.get(0).ok()?.try_extract::<u32>().ok()).unwrap_or(0) as f64;
     let distinct = df.as_ref().and_then(|d| d.column("dist").ok()?.get(0).ok()?.try_extract::<u32>().ok()).unwrap_or(0);
