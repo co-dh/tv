@@ -143,3 +143,17 @@ fn test_pacman_sort_unicode_description() {
     let out = run_keys(":pacman<ret><right><right><right><right><right><right><right><right>[<a-p>", "tests/data/basic.csv");
     assert!(out.contains("pacman"), "Should handle unicode in sort: {}", out);
 }
+
+#[test]
+fn test_pacman_sort_size_numeric() {
+    // Size column should sort numerically (bytes), not alphabetically
+    // Sort descending on size (col 2), largest packages first
+    let out = run_keys(":pacman<ret><right><right>]<a-p>", "tests/data/basic.csv");
+    assert!(out.contains("pacman"), "Should show pacman: {}", out);
+    // Size is now stored as u64 bytes. Largest packages (>100MB) should be first.
+    // Check for large numbers (8+ digits = >10MB) in the first data rows
+    let has_large = out.lines().take(20).any(|l| {
+        l.split_whitespace().any(|w| w.parse::<u64>().map(|n| n > 100_000_000).unwrap_or(false))
+    });
+    assert!(has_large, "Largest packages (>100MB) should be first when sorting desc: {}", out);
+}

@@ -502,6 +502,21 @@ pub fn journalctl(n: usize) -> anyhow::Result<DataFrame> {
     ])?)
 }
 
+/// Parse pacman size string like "136.04 KiB" or "6.55 MiB" to bytes
+fn parse_size(s: &str) -> u64 {
+    let parts: Vec<&str> = s.split_whitespace().collect();
+    if parts.len() != 2 { return 0; }
+    let num: f64 = parts[0].parse().unwrap_or(0.0);
+    let mult: f64 = match parts[1] {
+        "B" => 1.0,
+        "KiB" => 1024.0,
+        "MiB" => 1024.0 * 1024.0,
+        "GiB" => 1024.0 * 1024.0 * 1024.0,
+        _ => 1.0,
+    };
+    (num * mult) as u64
+}
+
 /// Installed packages from pacman (Arch Linux)
 pub fn pacman() -> anyhow::Result<DataFrame> {
     use std::process::Command;
@@ -519,7 +534,7 @@ pub fn pacman() -> anyhow::Result<DataFrame> {
     let mut names: Vec<String> = Vec::new();
     let mut versions: Vec<String> = Vec::new();
     let mut descs: Vec<String> = Vec::new();
-    let mut sizes: Vec<String> = Vec::new();
+    let mut sizes: Vec<u64> = Vec::new();
     let mut installed: Vec<String> = Vec::new();
     let mut reasons: Vec<String> = Vec::new();
     let mut deps_cnt: Vec<u32> = Vec::new();
@@ -527,9 +542,9 @@ pub fn pacman() -> anyhow::Result<DataFrame> {
     let mut orphan_flags: Vec<&str> = Vec::new();
 
     // Parse each package block (separated by empty lines)
-    let (mut name, mut ver, mut desc, mut size, mut inst, mut reason) =
-        (String::new(), String::new(), String::new(), String::new(), String::new(), String::new());
-    let (mut deps, mut reqs) = (0u32, 0u32);
+    let (mut name, mut ver, mut desc, mut inst, mut reason) =
+        (String::new(), String::new(), String::new(), String::new(), String::new());
+    let (mut size, mut deps, mut reqs) = (0u64, 0u32, 0u32);
 
     for line in text.lines() {
         if line.is_empty() {
@@ -538,11 +553,11 @@ pub fn pacman() -> anyhow::Result<DataFrame> {
                 names.push(std::mem::take(&mut name));
                 versions.push(std::mem::take(&mut ver));
                 descs.push(std::mem::take(&mut desc));
-                sizes.push(std::mem::take(&mut size));
+                sizes.push(size);
                 installed.push(std::mem::take(&mut inst));
                 reasons.push(std::mem::take(&mut reason));
                 deps_cnt.push(deps); req_cnt.push(reqs);
-                deps = 0; reqs = 0;
+                size = 0; deps = 0; reqs = 0;
             }
             continue;
         }
@@ -552,7 +567,7 @@ pub fn pacman() -> anyhow::Result<DataFrame> {
                 "Name" => name = v.into(),
                 "Version" => ver = v.into(),
                 "Description" => desc = v.into(),
-                "Installed Size" => size = v.into(),
+                "Installed Size" => size = parse_size(v),
                 "Install Date" => inst = v.into(),
                 "Install Reason" => reason = if v.contains("dependency") { "dep".into() } else { "explicit".into() },
                 "Depends On" => deps = if v == "None" { 0 } else { v.split_whitespace().count() as u32 },
