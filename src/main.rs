@@ -2,7 +2,6 @@ mod app;
 mod backend;
 mod command;
 mod keymap;
-mod os;
 mod picker;
 mod plugin;
 mod render;

@@ -87,7 +87,7 @@ pub struct Ls { pub dir: PathBuf, pub recursive: bool }
 
 impl Command for Ls {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
-        let df = if self.recursive { crate::os::lr(&self.dir)? } else { crate::os::ls(&self.dir)? };
+        let df = if self.recursive { super::system::lr(&self.dir)? } else { super::system::ls(&self.dir)? };
         let id = app.next_id();
         let name = if self.recursive { format!("ls -r:{}", self.dir.display()) } else { format!("ls:{}", self.dir.display()) };
         app.stack.push(ViewState::new(id, name, df, None));
@@ -119,7 +119,7 @@ impl Command for DelFiles {
                 }
                 app.msg(format!("Deleted {} file(s)", deleted));
                 // Refresh by re-running ls on parent dir
-                let df = crate::os::ls(&self.dir)?;
+                let df = super::system::ls(&self.dir)?;
                 if let Some(view) = app.view_mut() {
                     view.dataframe = df;
                     view.selected_rows.clear();

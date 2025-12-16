@@ -128,7 +128,7 @@ pub fn load(path: &str, id: usize) -> Result<LoadResult> {
     if !p.exists() { return Err(anyhow!("File not found: {}", path)); }
     // Calculate memory limit from config
     let mem_pct: u64 = crate::theme::load_config_value("gz_mem_pct").and_then(|s| s.parse().ok()).unwrap_or(10);
-    let mem_limit = crate::os::mem_total() * mem_pct / 100;
+    let mem_limit = crate::plugin::system::mem_total() * mem_pct / 100;
     let (df, bg_rx) = load_streaming(p, mem_limit)?;
     let df = convert_epoch_cols(df);
     if df.height() == 0 { return Err(anyhow!("File is empty")); }
