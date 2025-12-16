@@ -157,3 +157,19 @@ fn test_pacman_sort_size_numeric() {
     });
     assert!(has_large, "Largest packages (>100MB) should be first when sorting desc: {}", out);
 }
+
+#[test]
+fn test_pacman_installed_iso_date() {
+    // Installed date should be ISO format (2025-10-25), not verbose (Sat Oct 25 23:02:55 2025)
+    let out = run_keys(":pacman<ret><a-p>", "tests/data/basic.csv");
+    assert!(out.contains("pacman"), "Should show pacman: {}", out);
+    // Check for ISO date pattern YYYY-MM-DD in output
+    let has_iso = out.lines().any(|l| {
+        l.contains("2025-") || l.contains("2024-")  // recent years
+    });
+    // Should NOT have verbose date format with day names
+    let has_verbose = out.contains("Sat ") || out.contains("Sun ") || out.contains("Mon ")
+        || out.contains("Tue ") || out.contains("Wed ") || out.contains("Thu ") || out.contains("Fri ");
+    assert!(has_iso, "Should have ISO date format (YYYY-MM-DD): {}", out);
+    assert!(!has_verbose, "Should NOT have verbose date format (day names): {}", out);
+}

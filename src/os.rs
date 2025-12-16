@@ -517,6 +517,22 @@ fn parse_size(s: &str) -> u64 {
     (num * mult) as u64
 }
 
+/// Parse pacman date "Sat Oct 25 23:02:55 2025" to ISO "2025-10-25"
+fn parse_date(s: &str) -> String {
+    // Format: "Day Mon DD HH:MM:SS YYYY"
+    let parts: Vec<&str> = s.split_whitespace().collect();
+    if parts.len() < 5 { return s.into(); }
+    let mon = match parts[1] {
+        "Jan" => "01", "Feb" => "02", "Mar" => "03", "Apr" => "04",
+        "May" => "05", "Jun" => "06", "Jul" => "07", "Aug" => "08",
+        "Sep" => "09", "Oct" => "10", "Nov" => "11", "Dec" => "12",
+        _ => return s.into(),
+    };
+    let day: u32 = parts[2].parse().unwrap_or(0);
+    let year = parts[4];
+    format!("{}-{}-{:02}", year, mon, day)
+}
+
 /// Installed packages from pacman (Arch Linux)
 pub fn pacman() -> anyhow::Result<DataFrame> {
     use std::process::Command;
@@ -568,7 +584,7 @@ pub fn pacman() -> anyhow::Result<DataFrame> {
                 "Version" => ver = v.into(),
                 "Description" => desc = v.into(),
                 "Installed Size" => size = parse_size(v),
-                "Install Date" => inst = v.into(),
+                "Install Date" => inst = parse_date(v),
                 "Install Reason" => reason = if v.contains("dependency") { "dep".into() } else { "explicit".into() },
                 "Depends On" => deps = if v == "None" { 0 } else { v.split_whitespace().count() as u32 },
                 "Required By" => reqs = if v == "None" { 0 } else { v.split_whitespace().count() as u32 },
