@@ -734,7 +734,7 @@ fn do_convert(app: &mut AppContext) -> Result<()> {
 fn do_command_picker(app: &mut AppContext) -> Result<()> {
     let cmd_list: Vec<String> = vec![
         "from <file>", "save <file>", "ls [dir]", "lr [dir]",
-        "ps", "df", "mounts", "tcp", "udp", "lsblk", "who", "lsof [pid]", "env",
+        "ps", "mounts", "tcp", "udp", "lsof [pid]", "env",
         "systemctl", "journalctl [n]", "pacman",
         "filter <expr>", "freq <col>", "meta", "corr",
         "select <cols>", "delcol <cols>", "sort <col>", "sort -<col>", "take <n>", "rename <old> <new>",

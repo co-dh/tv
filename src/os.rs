@@ -130,49 +130,6 @@ pub fn ps() -> anyhow::Result<DataFrame> {
     ])?)
 }
 
-/// Disk usage from statvfs (like df)
-pub fn df() -> anyhow::Result<DataFrame> {
-    let mut filesystems: Vec<String> = Vec::new();
-    let mut mount_points: Vec<String> = Vec::new();
-    let mut total: Vec<u64> = Vec::new();
-    let mut used: Vec<u64> = Vec::new();
-    let mut avail: Vec<u64> = Vec::new();
-
-    let mounts = fs::read_to_string("/proc/mounts")?;
-    for line in mounts.lines() {
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() >= 2 {
-            let fs = parts[0];
-            let mp = parts[1];
-
-            // Skip virtual filesystems
-            if fs.starts_with('/') || mp == "/" {
-                if let Ok(stat) = nix::sys::statvfs::statvfs(mp) {
-                    let block_size = stat.block_size() as u64;
-                    let total_bytes = stat.blocks() * block_size;
-                    let avail_bytes = stat.blocks_available() * block_size;
-                    let free_bytes = stat.blocks_free() * block_size;
-                    let used_bytes = total_bytes - free_bytes;
-
-                    filesystems.push(fs.to_string());
-                    mount_points.push(mp.to_string());
-                    total.push(total_bytes);
-                    used.push(used_bytes);
-                    avail.push(avail_bytes);
-                }
-            }
-        }
-    }
-
-    Ok(DataFrame::new(vec![
-        Series::new("filesystem".into(), filesystems).into(),
-        Series::new("mount".into(), mount_points).into(),
-        Series::new("total".into(), total).into(),
-        Series::new("used".into(), used).into(),
-        Series::new("avail".into(), avail).into(),
-    ])?)
-}
-
 /// Mount points from /proc/mounts
 pub fn mounts() -> anyhow::Result<DataFrame> {
     let mut devices: Vec<String> = Vec::new();
@@ -275,87 +232,6 @@ fn parse_tcp_state(s: &str) -> String {
         "0B" => "CLOSING",
         _ => "UNKNOWN",
     }.to_string()
-}
-
-/// Block devices from /sys/block
-pub fn lsblk() -> anyhow::Result<DataFrame> {
-    let mut names: Vec<String> = Vec::new();
-    let mut sizes: Vec<u64> = Vec::new();
-    let mut removable: Vec<String> = Vec::new();
-    let mut ro: Vec<String> = Vec::new();
-
-    for entry in fs::read_dir("/sys/block")? {
-        let e = entry?;
-        let name = e.file_name().to_string_lossy().to_string();
-        let base = format!("/sys/block/{}", name);
-
-        let size: u64 = fs::read_to_string(format!("{}/size", base))
-            .ok()
-            .and_then(|s| s.trim().parse().ok())
-            .map(|sectors: u64| sectors * 512)  // sectors to bytes
-            .unwrap_or(0);
-
-        let is_removable = fs::read_to_string(format!("{}/removable", base))
-            .map(|s| if s.trim() == "1" { "x" } else { "" })
-            .unwrap_or("");
-
-        let is_ro = fs::read_to_string(format!("{}/ro", base))
-            .map(|s| if s.trim() == "1" { "x" } else { "" })
-            .unwrap_or("");
-
-        names.push(name);
-        sizes.push(size);
-        removable.push(is_removable.to_string());
-        ro.push(is_ro.to_string());
-    }
-
-    Ok(DataFrame::new(vec![
-        Series::new("name".into(), names).into(),
-        Series::new("size".into(), sizes).into(),
-        Series::new("removable".into(), removable).into(),
-        Series::new("ro".into(), ro).into(),
-    ])?)
-}
-
-/// Logged in users from /var/run/utmp
-pub fn who() -> anyhow::Result<DataFrame> {
-    let mut users: Vec<String> = Vec::new();
-    let mut ttys: Vec<String> = Vec::new();
-    let mut hosts: Vec<String> = Vec::new();
-    let mut times: Vec<i64> = Vec::new();
-
-    let data = fs::read("/var/run/utmp")?;
-    // utmp entry is 384 bytes on x86_64 Linux
-    const UTMP_SIZE: usize = 384;
-
-    for chunk in data.chunks(UTMP_SIZE) {
-        if chunk.len() < UTMP_SIZE { break; }
-
-        let ut_type = i32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-        if ut_type == 7 {  // USER_PROCESS
-            let user = String::from_utf8_lossy(&chunk[8..40]).trim_matches('\0').to_string();
-            let tty = String::from_utf8_lossy(&chunk[44..76]).trim_matches('\0').to_string();
-            let host = String::from_utf8_lossy(&chunk[76..332]).trim_matches('\0').to_string();
-            let tv_sec = i32::from_ne_bytes([chunk[332], chunk[333], chunk[334], chunk[335]]) as i64;
-
-            if !user.is_empty() {
-                users.push(user);
-                ttys.push(tty);
-                hosts.push(host);
-                times.push(tv_sec * 1_000_000);
-            }
-        }
-    }
-
-    let time_series = Series::new("login".into(), times)
-        .cast(&DataType::Datetime(TimeUnit::Microseconds, None))?;
-
-    Ok(DataFrame::new(vec![
-        Series::new("user".into(), users).into(),
-        Series::new("tty".into(), ttys).into(),
-        Series::new("host".into(), hosts).into(),
-        time_series.into(),
-    ])?)
 }
 
 /// Open file descriptors for a process from /proc/[pid]/fd

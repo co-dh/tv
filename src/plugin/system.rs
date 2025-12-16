@@ -13,7 +13,7 @@ impl Plugin for SystemPlugin {
     fn tab(&self) -> &str { "table" }
 
     fn matches(&self, name: &str) -> bool {
-        matches!(name, "ps" | "df" | "mounts" | "tcp" | "udp" | "lsblk" | "who" | "env" | "systemctl" | "pacman")
+        matches!(name, "ps" | "mounts" | "tcp" | "udp" | "env" | "systemctl" | "pacman")
             || name.starts_with("lsof") || name.starts_with("journalctl")
     }
 
@@ -23,10 +23,11 @@ impl Plugin for SystemPlugin {
 
     fn parse(&self, cmd: &str, arg: &str) -> Option<Box<dyn Command>> {
         match cmd {
-            "ps" => Some(Box::new(SysCmd::Ps)), "df" => Some(Box::new(SysCmd::Df)),
-            "mounts" => Some(Box::new(SysCmd::Mounts)), "tcp" => Some(Box::new(SysCmd::Tcp)),
-            "udp" => Some(Box::new(SysCmd::Udp)), "lsblk" => Some(Box::new(SysCmd::Lsblk)),
-            "who" => Some(Box::new(SysCmd::Who)), "env" => Some(Box::new(SysCmd::Env)),
+            "ps" => Some(Box::new(SysCmd::Ps)),
+            "mounts" => Some(Box::new(SysCmd::Mounts)),
+            "tcp" => Some(Box::new(SysCmd::Tcp)),
+            "udp" => Some(Box::new(SysCmd::Udp)),
+            "env" => Some(Box::new(SysCmd::Env)),
             "systemctl" => Some(Box::new(SysCmd::Systemctl)),
             "pacman" => Some(Box::new(SysCmd::Pacman)),
             "lsof" => Some(Box::new(Lsof { pid: arg.parse().ok() })),
@@ -38,18 +39,15 @@ impl Plugin for SystemPlugin {
 
 /// Unified system command enum - reduces boilerplate
 #[derive(Clone, Copy)]
-pub enum SysCmd { Ps, Df, Mounts, Tcp, Udp, Lsblk, Who, Env, Systemctl, Pacman }
+pub enum SysCmd { Ps, Mounts, Tcp, Udp, Env, Systemctl, Pacman }
 
 impl Command for SysCmd {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         let (name, df) = match self {
             SysCmd::Ps => ("ps", crate::os::ps()?),
-            SysCmd::Df => ("df", crate::os::df()?),
             SysCmd::Mounts => ("mounts", crate::os::mounts()?),
             SysCmd::Tcp => ("tcp", crate::os::tcp()?),
             SysCmd::Udp => ("udp", crate::os::udp()?),
-            SysCmd::Lsblk => ("lsblk", crate::os::lsblk()?),
-            SysCmd::Who => ("who", crate::os::who()?),
             SysCmd::Env => ("env", crate::os::env()?),
             SysCmd::Systemctl => ("systemctl", crate::os::systemctl()?),
             SysCmd::Pacman => ("pacman", crate::os::pacman()?),
@@ -60,9 +58,8 @@ impl Command for SysCmd {
     }
     fn to_str(&self) -> String {
         match self {
-            SysCmd::Ps => "ps", SysCmd::Df => "df", SysCmd::Mounts => "mounts",
-            SysCmd::Tcp => "tcp", SysCmd::Udp => "udp", SysCmd::Lsblk => "lsblk",
-            SysCmd::Who => "who", SysCmd::Env => "env",
+            SysCmd::Ps => "ps", SysCmd::Mounts => "mounts",
+            SysCmd::Tcp => "tcp", SysCmd::Udp => "udp", SysCmd::Env => "env",
             SysCmd::Systemctl => "systemctl", SysCmd::Pacman => "pacman",
         }.into()
     }
