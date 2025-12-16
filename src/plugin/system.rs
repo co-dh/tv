@@ -17,7 +17,7 @@ impl Plugin for SystemPlugin {
     fn tab(&self) -> &str { "table" }
 
     fn matches(&self, name: &str) -> bool {
-        matches!(name, "ps" | "mounts" | "tcp" | "udp" | "env" | "systemctl" | "pacman")
+        matches!(name, "ps" | "mounts" | "tcp" | "udp" | "env" | "systemctl" | "pacman" | "cargo")
             || name.starts_with("lsof") || name.starts_with("journalctl")
     }
 
@@ -32,6 +32,7 @@ impl Plugin for SystemPlugin {
             "env" => Some(Box::new(SysCmd::Env)),
             "systemctl" => Some(Box::new(SysCmd::Systemctl)),
             "pacman" => Some(Box::new(SysCmd::Pacman)),
+            "cargo" => Some(Box::new(SysCmd::Cargo)),
             "lsof" => Some(Box::new(Lsof { pid: arg.parse().ok() })),
             "journalctl" => Some(Box::new(Journalctl { n: arg.parse().unwrap_or(1000) })),
             _ => None,
@@ -41,7 +42,7 @@ impl Plugin for SystemPlugin {
 
 /// Unified system command enum
 #[derive(Clone, Copy)]
-pub enum SysCmd { Ps, Mounts, Tcp, Udp, Env, Systemctl, Pacman }
+pub enum SysCmd { Ps, Mounts, Tcp, Udp, Env, Systemctl, Pacman, Cargo }
 
 impl Command for SysCmd {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
@@ -53,6 +54,7 @@ impl Command for SysCmd {
             SysCmd::Env => ("env", env()?),
             SysCmd::Systemctl => ("systemctl", systemctl()?),
             SysCmd::Pacman => ("pacman", pacman()?),
+            SysCmd::Cargo => ("cargo", cargo()?),
         };
         let id = app.next_id();
         app.stack.push(ViewState::new(id, name.into(), df, None));
@@ -62,7 +64,7 @@ impl Command for SysCmd {
         match self {
             SysCmd::Ps => "ps", SysCmd::Mounts => "mounts",
             SysCmd::Tcp => "tcp", SysCmd::Udp => "udp", SysCmd::Env => "env",
-            SysCmd::Systemctl => "systemctl", SysCmd::Pacman => "pacman",
+            SysCmd::Systemctl => "systemctl", SysCmd::Pacman => "pacman", SysCmd::Cargo => "cargo",
         }.into()
     }
 }
@@ -378,6 +380,186 @@ fn calc_rsize(name: &str, size: u64, deps: &[String], pkg_size: &std::collection
     deps.iter().fold(size, |acc, dep| {
         acc + pkg_req_by.get(dep).filter(|r| r.len() == 1 && r[0] == name).map(|_| pkg_size.get(dep).copied().unwrap_or(0)).unwrap_or(0)
     })
+}
+
+/// Cache file path for cargo latest versions
+fn cargo_cache_path() -> std::path::PathBuf {
+    dirs::cache_dir().unwrap_or_else(|| std::path::PathBuf::from(".")).join("tv/cargo_versions.csv")
+}
+
+/// Load version cache from disk: name -> (version, timestamp)
+fn load_ver_cache() -> std::collections::HashMap<String, (String, i64)> {
+    let mut cache = std::collections::HashMap::new();
+    let path = cargo_cache_path();
+    if let Ok(content) = fs::read_to_string(&path) {
+        for line in content.lines().skip(1) {  // skip header
+            let p: Vec<&str> = line.split(',').collect();
+            if p.len() >= 3 {
+                cache.insert(p[0].to_string(), (p[1].to_string(), p[2].parse().unwrap_or(0)));
+            }
+        }
+    }
+    cache
+}
+
+/// Save version cache to disk
+fn save_ver_cache(cache: &std::collections::HashMap<String, (String, i64)>) {
+    let path = cargo_cache_path();
+    if let Some(parent) = path.parent() { fs::create_dir_all(parent).ok(); }
+    let mut content = String::from("name,version,timestamp\n");
+    for (name, (ver, ts)) in cache {
+        content.push_str(&format!("{},{},{}\n", name, ver, ts));
+    }
+    fs::write(path, content).ok();
+}
+
+/// Fetch latest version from crates.io (fully detached from terminal)
+fn fetch_latest(name: &str) -> Option<String> {
+    use std::os::unix::process::CommandExt;
+    let mut cmd = std::process::Command::new("cargo");
+    cmd.args(["search", name, "--limit", "1", "--color=never"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null());
+    // Detach from controlling terminal via new session
+    unsafe { cmd.pre_exec(|| { nix::unistd::setsid().ok(); Ok(()) }); }
+    cmd.output().ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .and_then(|s| s.lines().next().map(String::from))
+        .and_then(|l| l.split('"').nth(1).map(String::from))
+}
+
+/// Update stale cache entries in background (older than 1 day)
+fn update_ver_cache_bg(names: Vec<String>) {
+    std::thread::spawn(move || {
+        let now = chrono::Utc::now().timestamp();
+        let day = 86400;
+        let mut cache = load_ver_cache();
+        let mut cnt = 0;
+        for name in names {
+            let stale = cache.get(&name).map(|(_, ts)| now - ts > day).unwrap_or(true);
+            if stale {
+                if let Some(ver) = fetch_latest(&name) {
+                    cache.insert(name, (ver, now));
+                    cnt += 1;
+                    if cnt % 10 == 0 { save_ver_cache(&cache); }  // save every 10 fetches
+                }
+            }
+        }
+        save_ver_cache(&cache);
+    });
+}
+
+/// Get latest version from cache (returns cached value, updates in background)
+fn latest_ver(name: &str, cache: &std::collections::HashMap<String, (String, i64)>) -> String {
+    cache.get(name).map(|(v, _)| v.clone()).unwrap_or_default()
+}
+
+/// Project dependencies from `cargo metadata` (like pacman for Rust)
+fn cargo() -> Result<DataFrame> {
+    use std::collections::{HashMap, HashSet};
+    let text = run_cmd("cargo", &["metadata", "--format-version", "1"])?;
+    let json: serde_json::Value = serde_json::from_str(&text)?;
+
+    // Get linux-compiled packages via --filter-platform
+    let linux_text = run_cmd("cargo", &["metadata", "--format-version", "1", "--filter-platform", "x86_64-unknown-linux-gnu"])?;
+    let linux_json: serde_json::Value = serde_json::from_str(&linux_text)?;
+    let linux_pkgs: HashSet<String> = linux_json["packages"].as_array()
+        .map(|a| a.iter().filter_map(|p| p["name"].as_str().map(String::from)).collect())
+        .unwrap_or_default();
+
+    // Build package info map: id -> (name, ver, desc, deps)
+    let mut pkg_info: HashMap<String, (String, String, String, Vec<String>)> = HashMap::new();
+    let mut pkg_size: HashMap<String, u64> = HashMap::new();
+    if let Some(pkgs) = json["packages"].as_array() {
+        for p in pkgs {
+            let id = p["id"].as_str().unwrap_or("").to_string();
+            let name = p["name"].as_str().unwrap_or("").to_string();
+            let ver = p["version"].as_str().unwrap_or("").to_string();
+            let desc = p["description"].as_str().unwrap_or("").to_string();
+            let deps: Vec<String> = p["dependencies"].as_array()
+                .map(|a| a.iter().filter_map(|d| d["name"].as_str().map(String::from)).collect())
+                .unwrap_or_default();
+            // Estimate size from manifest_path's parent dir
+            let size = p["manifest_path"].as_str()
+                .and_then(|mp| std::path::Path::new(mp).parent())
+                .map(|d| dir_size(d)).unwrap_or(0);
+            pkg_size.insert(name.clone(), size);
+            pkg_info.insert(id, (name, ver, desc, deps));
+        }
+    }
+
+    // Build reverse deps from resolve graph
+    let mut req_by: HashMap<String, Vec<String>> = HashMap::new();
+    let mut resolved: Vec<String> = vec![];
+    if let Some(resolve) = json["resolve"].as_object() {
+        if let Some(nodes) = resolve["nodes"].as_array() {
+            for n in nodes {
+                let id = n["id"].as_str().unwrap_or("");
+                let name = pkg_info.get(id).map(|i| i.0.clone()).unwrap_or_default();
+                if name.is_empty() { continue; }
+                resolved.push(id.to_string());
+                if let Some(deps) = n["deps"].as_array() {
+                    for d in deps {
+                        let dep_name = d["name"].as_str().unwrap_or("");
+                        req_by.entry(dep_name.to_string()).or_default().push(name.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    // Build output vectors
+    let (mut names, mut vers, mut latest, mut descs, mut plat) = (vec![], vec![], vec![], vec![], vec![]);
+    let (mut sizes, mut rsizes, mut deps_cnt, mut req_cnt) = (vec![], vec![], vec![], vec![]);
+    let ver_cache = load_ver_cache();
+    let mut all_names: Vec<String> = vec![];
+
+    for id in &resolved {
+        if let Some((name, ver, desc, deps)) = pkg_info.get(id) {
+            let size = pkg_size.get(name).copied().unwrap_or(0);
+            let rsize = calc_rsize(name, size, deps, &pkg_size, &req_by);
+            let reqs = req_by.get(name).map(|v| v.len()).unwrap_or(0) as u32;
+            let lat = latest_ver(name, &ver_cache);
+            all_names.push(name.clone());
+            names.push(name.clone()); vers.push(ver.clone()); latest.push(lat); descs.push(desc.clone());
+            sizes.push(size / 1024); rsizes.push(rsize / 1024);
+            deps_cnt.push(deps.len() as u32); req_cnt.push(reqs);
+            // Infer platform from package name or linux compilation
+            let p = if linux_pkgs.contains(name) { "linux" }
+                else if name.contains("windows") { "windows" }
+                else if name.contains("macos") || name.contains("core-foundation") || name.contains("objc") { "macos" }
+                else if name.contains("android") { "android" }
+                else if name.contains("wasm") || name.contains("js-sys") || name.contains("web-sys") { "wasm" }
+                else { "" };
+            plat.push(p);
+        }
+    }
+
+    // Update stale cache entries in background
+    update_ver_cache_bg(all_names);
+
+    Ok(DataFrame::new(vec![
+        Series::new("name".into(), names).into(), Series::new("version".into(), vers).into(),
+        Series::new("latest".into(), latest).into(),
+        Series::new("size(k)".into(), sizes).into(), Series::new("rsize(k)".into(), rsizes).into(),
+        Series::new("deps".into(), deps_cnt).into(), Series::new("req_by".into(), req_cnt).into(),
+        Series::new("platform".into(), plat).into(), Series::new("description".into(), descs).into(),
+    ])?)
+}
+
+/// Calculate directory size recursively
+fn dir_size(path: &std::path::Path) -> u64 {
+    fs::read_dir(path).ok().map(|entries| {
+        entries.filter_map(|e| e.ok()).map(|e| {
+            let m = e.metadata().ok();
+            if m.as_ref().map(|m| m.is_dir()).unwrap_or(false) {
+                dir_size(&e.path())
+            } else {
+                m.map(|m| m.len()).unwrap_or(0)
+            }
+        }).sum()
+    }).unwrap_or(0)
 }
 
 /// Installed packages from pacman (Arch Linux)

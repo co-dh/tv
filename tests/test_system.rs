@@ -3,6 +3,7 @@ mod common;
 use common::run_keys;
 use std::fs;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use chrono::Utc;
 
 static TEST_ID: AtomicUsize = AtomicUsize::new(5000);
 fn tid() -> usize { TEST_ID.fetch_add(1, Ordering::SeqCst) }
@@ -179,6 +180,29 @@ fn test_pacman_rsize_column() {
         l.split_whitespace().any(|w| w.parse::<u64>().map(|n| n > 1_000_000).unwrap_or(false))
     });
     assert!(has_large_rsize, "Should have large rsize packages when sorted desc: {}", out);
+}
+
+#[test]
+fn test_cargo_command() {
+    // Pre-populate cache with known value
+    let cache_dir = dirs::cache_dir().unwrap().join("tv");
+    fs::create_dir_all(&cache_dir).ok();
+    let cache_path = cache_dir.join("cargo_versions.csv");
+    // Add adler2 with known latest version (visible in output)
+    let now = Utc::now().timestamp();
+    fs::write(&cache_path, format!("name,version,timestamp\nadler2,99.0.0,{}\n", now)).ok();
+
+    // :cargo to list project dependencies (like pacman for Rust)
+    let out = run_keys(":cargo<ret><a-p>", "tests/data/basic.csv");
+    assert!(out.contains("cargo"), "Should show cargo view: {}", out);
+    assert!(out.contains("name"), "Should have name column: {}", out);
+    assert!(out.contains("size(k)"), "Should have size(k) column: {}", out);
+    assert!(out.contains("deps"), "Should have deps column: {}", out);
+    assert!(out.contains("req_by"), "Should have req_by column: {}", out);
+    assert!(out.contains("platform"), "Should have platform column: {}", out);
+    assert!(out.contains("latest"), "Should have latest column: {}", out);
+    // Check cached version shows up
+    assert!(out.contains("99.0.0"), "Should show cached latest version 99.0.0: {}", out);
 }
 
 #[test]
