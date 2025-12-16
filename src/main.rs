@@ -486,8 +486,8 @@ fn handle_cmd(app: &mut AppContext, cmd: &str) -> Result<bool> {
     match cmd {
         // Exit commands
         "quit" => {
-            if !app.has_view() || app.stack.len() == 1 { return Ok(false); }
-            run(app, Box::new(Pop));
+            if !app.has_view() { return Ok(false); }  // already empty → exit
+            run(app, Box::new(Pop));  // pop view, may return to empty state
         }
         "force_quit" => return Ok(false),
         "print_status" => { print_status(app); return Ok(false); }

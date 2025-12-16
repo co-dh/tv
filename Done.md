@@ -179,3 +179,20 @@
 - Frequency on filtered view uses filter_clause to query disk
 - Tests: test_parquet_chained_filter_count, test_parquet_chained_filter_name, test_parquet_filtered_freq_on_disk
 
+- Unify all 3 backends via lf() + SQL trait defaults - Polars/Memory/Gz share same SQL ops
+- Unify fetch_rows with SQL - now same pattern as fetch_where
+- Fix ctrl-d page down in filtered parquet view (viewport inheritance + fetch_lazy offset)
+- Render loop caching: 100k row cache, only re-fetch when scroll outside cache
+- DRY gz.rs and memory.rs - both use shared df_* helpers
+- DRY the sql functions inside fetch_where and freq_where (557f145)
+- Fix memory usage: use streaming for all parquet SQL ops (981a3de)
+- Add print_status command and large parquet key tests (6244122)
+- Fix FilterIn to create lazy filtered views for parquet (d733d69)
+- Remove prql dependency - use SQL directly (c4773dc)
+-
+-
+- add comments to each functions, to newbie rust programmer but know c++.
+- implement all busybox command that are has a table output. each command view should have their own special command, like ps view has kill, kill -9, start strace,
+- analysis cargo package, remove unnecessary dependencies. find out big dependency introducer.
+- use | syntax in test script.  modify tests/test_string_filter.sh to use simplified interface.
+- what are 2 impl Viewstate in state.rs?

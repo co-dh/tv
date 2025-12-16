@@ -188,8 +188,8 @@ impl StateStack {
         if let Some(cur) = self.stack.last() { v.state.viewport = cur.state.viewport; }
         self.stack.push(v);
     }
-    /// Pop top view (keeps at least one)
-    pub fn pop(&mut self) -> Option<ViewState> { if self.stack.len() > 1 { self.stack.pop() } else { None } }
+    /// Pop top view (allows returning to empty state)
+    pub fn pop(&mut self) -> Option<ViewState> { self.stack.pop() }
     /// Current view reference
     pub fn cur(&self) -> Option<&ViewState> { self.stack.last() }
     /// Current view mutable reference

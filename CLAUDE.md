@@ -17,8 +17,4 @@
 ## Do not repeat yourself. Not just on the syntax level, but also conceptually. Do not hold a in memory copy of parquet, but use a lazy frame.
 
 # Todo
-- add comments to each functions, to newbie rust programmer but know c++.
-- implement all busybox command that are has a table output. each command view should have their own special command, like ps view has kill, kill -9, start strace,
-- analysis cargo package, remove unnecessary dependencies. find out big dependency introducer.
-- use | syntax in test script.  modify tests/test_string_filter.sh to use simplified interface.
-- what are 2 impl Viewstate in state.rs?
+

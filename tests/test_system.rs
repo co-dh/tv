@@ -96,6 +96,15 @@ fn test_goto_row() {
 
 // OS command tests
 #[test]
+fn test_ps_quit_returns_to_empty() {
+    // Start without file, :ps to view processes, q should return to empty screen, not quit
+    let out = run_keys(":ps<ret>q", "");
+    // Should return to empty state
+    assert!(out.contains("No table loaded"),
+        "q from :ps should return to empty screen: {}", out);
+}
+
+#[test]
 fn test_pacman_command() {
     // :pacman to list packages
     let out = run_keys(":pacman<ret><a-p>", "tests/data/basic.csv");
