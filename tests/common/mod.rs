@@ -1,14 +1,6 @@
 //! Common test utilities shared across test modules.
 
 use std::process::Command;
-use std::sync::atomic::{AtomicUsize, Ordering};
-
-static TEST_ID: AtomicUsize = AtomicUsize::new(0);
-
-/// Generate unique test ID for parallel test isolation
-pub fn unique_id() -> usize {
-    TEST_ID.fetch_add(1, Ordering::SeqCst)
-}
 
 /// Run tv with --keys mode (interactive key replay) and return output
 pub fn run_keys(keys: &str, file: &str) -> String {

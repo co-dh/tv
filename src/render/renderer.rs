@@ -87,9 +87,16 @@ impl Renderer {
 
         // Calculate column widths if needed
         if view.state.need_widths() {
-            let widths: Vec<u16> = (0..df.width())
+            let mut widths: Vec<u16> = (0..df.width())
                 .map(|col_idx| Self::col_width(df, col_idx, &view.state, decimals))
                 .collect();
+            // Last column gets remaining screen width
+            if !widths.is_empty() {
+                let used: u16 = widths.iter().take(widths.len() - 1).map(|w| w + 1).sum();
+                let avail = area.width.saturating_sub(used + 1);
+                let last = widths.last_mut().unwrap();
+                *last = (*last).max(avail.min(200));  // cap at 200 to avoid huge widths
+            }
             view.state.col_widths = widths;
             view.state.widths_row = view.state.cr;
         }

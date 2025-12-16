@@ -13,8 +13,8 @@ impl Plugin for SystemPlugin {
     fn tab(&self) -> &str { "table" }
 
     fn matches(&self, name: &str) -> bool {
-        matches!(name, "ps" | "df" | "mounts" | "tcp" | "udp" | "lsblk" | "who" | "env")
-            || name.starts_with("lsof")
+        matches!(name, "ps" | "df" | "mounts" | "tcp" | "udp" | "lsblk" | "who" | "env" | "systemctl" | "pacman")
+            || name.starts_with("lsof") || name.starts_with("journalctl")
     }
 
     fn handle(&self, _cmd: &str, _app: &mut AppContext) -> Option<Box<dyn Command>> {
@@ -27,7 +27,10 @@ impl Plugin for SystemPlugin {
             "mounts" => Some(Box::new(SysCmd::Mounts)), "tcp" => Some(Box::new(SysCmd::Tcp)),
             "udp" => Some(Box::new(SysCmd::Udp)), "lsblk" => Some(Box::new(SysCmd::Lsblk)),
             "who" => Some(Box::new(SysCmd::Who)), "env" => Some(Box::new(SysCmd::Env)),
+            "systemctl" => Some(Box::new(SysCmd::Systemctl)),
+            "pacman" => Some(Box::new(SysCmd::Pacman)),
             "lsof" => Some(Box::new(Lsof { pid: arg.parse().ok() })),
+            "journalctl" => Some(Box::new(Journalctl { n: arg.parse().unwrap_or(1000) })),
             _ => None,
         }
     }
@@ -35,7 +38,7 @@ impl Plugin for SystemPlugin {
 
 /// Unified system command enum - reduces boilerplate
 #[derive(Clone, Copy)]
-pub enum SysCmd { Ps, Df, Mounts, Tcp, Udp, Lsblk, Who, Env }
+pub enum SysCmd { Ps, Df, Mounts, Tcp, Udp, Lsblk, Who, Env, Systemctl, Pacman }
 
 impl Command for SysCmd {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
@@ -48,6 +51,8 @@ impl Command for SysCmd {
             SysCmd::Lsblk => ("lsblk", crate::os::lsblk()?),
             SysCmd::Who => ("who", crate::os::who()?),
             SysCmd::Env => ("env", crate::os::env()?),
+            SysCmd::Systemctl => ("systemctl", crate::os::systemctl()?),
+            SysCmd::Pacman => ("pacman", crate::os::pacman()?),
         };
         let id = app.next_id();
         app.stack.push(ViewState::new(id, name.into(), df, None));
@@ -58,6 +63,7 @@ impl Command for SysCmd {
             SysCmd::Ps => "ps", SysCmd::Df => "df", SysCmd::Mounts => "mounts",
             SysCmd::Tcp => "tcp", SysCmd::Udp => "udp", SysCmd::Lsblk => "lsblk",
             SysCmd::Who => "who", SysCmd::Env => "env",
+            SysCmd::Systemctl => "systemctl", SysCmd::Pacman => "pacman",
         }.into()
     }
 }
@@ -74,4 +80,17 @@ impl Command for Lsof {
         Ok(())
     }
     fn to_str(&self) -> String { self.pid.map(|p| format!("lsof {}", p)).unwrap_or("lsof".into()) }
+}
+
+/// journalctl with optional line count
+pub struct Journalctl { pub n: usize }
+
+impl Command for Journalctl {
+    fn exec(&mut self, app: &mut AppContext) -> Result<()> {
+        let df = crate::os::journalctl(self.n)?;
+        let id = app.next_id();
+        app.stack.push(ViewState::new(id, "journalctl".into(), df, None));
+        Ok(())
+    }
+    fn to_str(&self) -> String { format!("journalctl {}", self.n) }
 }

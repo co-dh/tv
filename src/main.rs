@@ -34,15 +34,6 @@ fn main() -> Result<()> {
     // Parse flags first (before early returns)
     let raw_save = args.iter().any(|a| a == "--raw");
 
-    // Check for -c argument (inline script)
-    if let Some(idx) = args.iter().position(|a| a == "-c") {
-        if args.len() <= idx + 1 {
-            eprintln!("Usage: tv -c '<commands>'");
-            std::process::exit(1);
-        }
-        return run_commands(&args[idx + 1]);
-    }
-
     // Check for --script argument
     if let Some(idx) = args.iter().position(|a| a == "--script") {
         if args.len() <= idx + 1 {
@@ -153,11 +144,6 @@ fn run_batch<I: Iterator<Item = String>>(lines: I) -> Result<()> {
     wait_bg_meta(&mut app);
     print(&mut app);
     Ok(())
-}
-
-/// Run inline commands (-c "from x | filter y")
-fn run_commands(commands: &str) -> Result<()> {
-    run_batch(std::iter::once(commands.to_string()))
 }
 
 /// Run script file (--script path)
@@ -749,6 +735,7 @@ fn do_command_picker(app: &mut AppContext) -> Result<()> {
     let cmd_list: Vec<String> = vec![
         "from <file>", "save <file>", "ls [dir]", "lr [dir]",
         "ps", "df", "mounts", "tcp", "udp", "lsblk", "who", "lsof [pid]", "env",
+        "systemctl", "journalctl [n]", "pacman",
         "filter <expr>", "freq <col>", "meta", "corr",
         "select <cols>", "delcol <cols>", "sort <col>", "sort -<col>", "take <n>", "rename <old> <new>",
     ].iter().map(|s| s.to_string()).collect();

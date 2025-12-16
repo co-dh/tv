@@ -424,3 +424,103 @@ pub fn mem_total() -> u64 {
         })
         .unwrap_or(8 * 1024 * 1024 * 1024)  // default 8GB
 }
+
+/// Systemd services from systemctl
+pub fn systemctl() -> anyhow::Result<DataFrame> {
+    use std::process::Command;
+    let out = Command::new("systemctl")
+        .args(["list-units", "--type=service", "--all", "--no-pager", "--no-legend"])
+        .output()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+
+    let mut units: Vec<String> = Vec::new();
+    let mut loads: Vec<String> = Vec::new();
+    let mut actives: Vec<String> = Vec::new();
+    let mut subs: Vec<String> = Vec::new();
+    let mut descs: Vec<String> = Vec::new();
+
+    for line in text.lines() {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() >= 5 {
+            units.push(parts[0].into());
+            loads.push(parts[1].into());
+            actives.push(parts[2].into());
+            subs.push(parts[3].into());
+            descs.push(parts[4..].join(" "));
+        }
+    }
+
+    Ok(DataFrame::new(vec![
+        Series::new("unit".into(), units).into(),
+        Series::new("load".into(), loads).into(),
+        Series::new("active".into(), actives).into(),
+        Series::new("sub".into(), subs).into(),
+        Series::new("description".into(), descs).into(),
+    ])?)
+}
+
+/// Journal logs from journalctl (last 1000 entries)
+pub fn journalctl(n: usize) -> anyhow::Result<DataFrame> {
+    use std::process::Command;
+    let out = Command::new("journalctl")
+        .args(["--no-pager", "-o", "short-iso", "-n", &n.to_string()])
+        .output()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+
+    let mut times: Vec<String> = Vec::new();
+    let mut hosts: Vec<String> = Vec::new();
+    let mut units: Vec<String> = Vec::new();
+    let mut msgs: Vec<String> = Vec::new();
+
+    for line in text.lines() {
+        // Format: 2025-01-15T10:30:00+0000 hostname unit[pid]: message
+        let parts: Vec<&str> = line.splitn(4, ' ').collect();
+        if parts.len() >= 4 {
+            times.push(parts[0].into());
+            hosts.push(parts[1].into());
+            // unit[pid]: or unit: - extract unit name
+            let unit_part = parts[2];
+            let unit = unit_part.split('[').next()
+                .unwrap_or(unit_part)
+                .trim_end_matches(':');
+            units.push(unit.into());
+            msgs.push(parts[3].into());
+        } else if parts.len() >= 1 {
+            // continuation line
+            times.push("".into());
+            hosts.push("".into());
+            units.push("".into());
+            msgs.push(line.into());
+        }
+    }
+
+    Ok(DataFrame::new(vec![
+        Series::new("time".into(), times).into(),
+        Series::new("host".into(), hosts).into(),
+        Series::new("unit".into(), units).into(),
+        Series::new("message".into(), msgs).into(),
+    ])?)
+}
+
+/// Installed packages from pacman (Arch Linux)
+pub fn pacman() -> anyhow::Result<DataFrame> {
+    use std::process::Command;
+    let out = Command::new("pacman").args(["-Q"]).output()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+
+    let mut names: Vec<String> = Vec::new();
+    let mut versions: Vec<String> = Vec::new();
+
+    for line in text.lines() {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() >= 2 {
+            names.push(parts[0].into());
+            versions.push(parts[1].into());
+        }
+    }
+
+    Ok(DataFrame::new(vec![
+        Series::new("name".into(), names).into(),
+        Series::new("version".into(), versions).into(),
+    ])?)
+}
