@@ -93,6 +93,7 @@ pub struct ViewState {
     pub sort_col: Option<String>,  // sort column for lazy parquet
     pub sort_desc: bool,  // sort descending
     pub filter_clause: Option<String>,  // SQL WHERE clause for filtered parquet views
+    pub fetch_cache: Option<(usize, usize)>,  // (start, end) row range cached in dataframe
 }
 
 impl ViewState {
@@ -129,7 +130,7 @@ impl ViewState {
             filename, show_row_numbers: false, parent_id: None, parent_rows: None, parent_name: None, freq_col: None,
             selected_cols: HashSet::new(), selected_rows: HashSet::new(), gz_source: None,
             stats_cache: None, col_separator: None, meta_cache: None, partial: false, disk_rows: None, parquet_path: None, col_names: Vec::new(),
-            sort_col: None, sort_desc: false, filter_clause: None,
+            sort_col: None, sort_desc: false, filter_clause: None, fetch_cache: None,
         }
     }
 
@@ -140,7 +141,7 @@ impl ViewState {
             filename: Some(path.clone()), show_row_numbers: false, parent_id: None, parent_rows: None, parent_name: None, freq_col: None,
             selected_cols: HashSet::new(), selected_rows: HashSet::new(), gz_source: None,
             stats_cache: None, col_separator: None, meta_cache: None, partial: false, disk_rows: Some(total_rows), parquet_path: Some(path), col_names: cols,
-            sort_col: None, sort_desc: false, filter_clause: None,
+            sort_col: None, sort_desc: false, filter_clause: None, fetch_cache: None,
         }
     }
 
@@ -151,7 +152,7 @@ impl ViewState {
             filename, show_row_numbers: false, parent_id: None, parent_rows: None, parent_name: None, freq_col: None,
             selected_cols: HashSet::new(), selected_rows: HashSet::new(), gz_source: Some(gz),
             stats_cache: None, col_separator: None, meta_cache: None, partial, disk_rows: None, parquet_path: None, col_names: Vec::new(),
-            sort_col: None, sort_desc: false, filter_clause: None,
+            sort_col: None, sort_desc: false, filter_clause: None, fetch_cache: None,
         }
     }
 
@@ -162,7 +163,7 @@ impl ViewState {
             filename: None, show_row_numbers: false, parent_id: Some(pid), parent_rows: Some(prows), parent_name: Some(pname), freq_col: None,
             selected_cols: HashSet::new(), selected_rows: HashSet::new(), gz_source: None,
             stats_cache: None, col_separator: None, meta_cache: None, partial: false, disk_rows: None, parquet_path: None, col_names: Vec::new(),
-            sort_col: None, sort_desc: false, filter_clause: None,
+            sort_col: None, sort_desc: false, filter_clause: None, fetch_cache: None,
         }
     }
 
@@ -173,7 +174,7 @@ impl ViewState {
             filename: None, show_row_numbers: false, parent_id: Some(pid), parent_rows: Some(prows), parent_name: Some(pname), freq_col: Some(col),
             selected_cols: HashSet::new(), selected_rows: HashSet::new(), gz_source: None,
             stats_cache: None, col_separator: None, meta_cache: None, partial: false, disk_rows: None, parquet_path: None, col_names: Vec::new(),
-            sort_col: None, sort_desc: false, filter_clause: None,
+            sort_col: None, sort_desc: false, filter_clause: None, fetch_cache: None,
         }
     }
 
@@ -184,7 +185,7 @@ impl ViewState {
             filename: Some(path.clone()), show_row_numbers: false, parent_id: None, parent_rows: None, parent_name: None, freq_col: None,
             selected_cols: HashSet::new(), selected_rows: HashSet::new(), gz_source: None,
             stats_cache: None, col_separator: None, meta_cache: None, partial: false, disk_rows: Some(count), parquet_path: Some(path), col_names: cols,
-            sort_col: None, sort_desc: false, filter_clause: Some(filter),
+            sort_col: None, sort_desc: false, filter_clause: Some(filter), fetch_cache: None,
         }
     }
 
@@ -209,8 +210,11 @@ pub struct StateStack { stack: Vec<ViewState> }
 impl StateStack {
     /// Empty stack
     pub fn new() -> Self { Self { stack: Vec::new() } }
-    /// Push new view on top
-    pub fn push(&mut self, v: ViewState) { self.stack.push(v); }
+    /// Push new view on top (inherits viewport from current view)
+    pub fn push(&mut self, mut v: ViewState) {
+        if let Some(cur) = self.stack.last() { v.state.viewport = cur.state.viewport; }
+        self.stack.push(v);
+    }
     /// Pop top view (keeps at least one)
     pub fn pop(&mut self) -> Option<ViewState> { if self.stack.len() > 1 { self.stack.pop() } else { None } }
     /// Current view reference

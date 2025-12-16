@@ -7,6 +7,16 @@ use ratatui::prelude::*;
 use ratatui::style::{Color as RColor, Modifier, Style};
 use ratatui::widgets::Tabs;
 use std::collections::HashSet;
+use std::io::Write;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+/// Debug log to /tmp/tv.debug.log with timestamp
+fn dbg_log(msg: &str) {
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/tv.debug.log") {
+        let ts = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
+        let _ = writeln!(f, "{} {}", ts, msg);
+    }
+}
 
 pub struct Renderer;
 
@@ -46,16 +56,30 @@ impl Renderer {
 
     /// Render table data
     fn render_table(frame: &mut Frame, view: &mut ViewState, area: Rect, selected_cols: &HashSet<usize>, selected_rows: &HashSet<usize>, decimals: usize, theme: &Theme, show_tabs: bool) {
-        // For lazy parquet views, fetch visible rows from disk
+        const CACHE_SIZE: usize = 100_000;  // cache 100k rows
+        // For lazy parquet views, fetch visible rows from disk (with cache)
         let lazy_offset = if let Some(ref path) = view.parquet_path {
-            let rows_needed = area.height as usize + 10; // buffer
-            let df = if let Some(ref w) = view.filter_clause {
-                Polars.fetch_where(path, w, view.state.r0, rows_needed)
-            } else {
-                Polars.fetch_rows(path, view.state.r0, rows_needed)
-            };
-            if let Ok(df) = df { view.dataframe = df; }
-            view.state.r0  // df rows start at this offset
+            let rows_needed = area.height as usize + 10;
+            let (r0, rend) = (view.state.r0, view.state.r0 + rows_needed);
+            // Check if visible range is within cache
+            let in_cache = view.fetch_cache.map(|(s, e)| r0 >= s && rend <= e).unwrap_or(false);
+            if !in_cache {
+                // Fetch 100k rows centered around current position
+                let start = r0.saturating_sub(CACHE_SIZE / 4);  // 25k before
+                dbg_log(&format!("fetch parquet start={} rows={} filter={:?}", start, CACHE_SIZE, view.filter_clause));
+                let df = if let Some(ref w) = view.filter_clause {
+                    Polars.fetch_where(path, w, start, CACHE_SIZE)
+                } else {
+                    Polars.fetch_rows(path, start, CACHE_SIZE)
+                };
+                if let Ok(df) = df {
+                    let fetched = df.height();
+                    view.dataframe = df;
+                    view.fetch_cache = Some((start, start + fetched));
+                }
+            }
+            // Return offset: df row 0 = cache start
+            view.fetch_cache.map(|(s, _)| s).unwrap_or(0)
         } else { 0 };
         let df = &view.dataframe;
         let total_rows = view.rows();  // use disk_rows for parquet

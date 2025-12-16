@@ -200,3 +200,18 @@ fn test_large_parquet_freq_enter_memory() {
         .and_then(|s| s.parse().ok()).unwrap_or(9999);
     assert!(mem < 1000, "Memory should be < 1GB, got {}MB: {}", mem, out);
 }
+
+#[test]
+fn test_filtered_parquet_page_down() {
+    // Bug: ctrl-d doesn't scroll in filtered parquet view
+    // Filter by Exchange=P, then page down - should show different rows
+    let without = run_keys("<right>F<ret>", "tests/data/nyse/1.parquet");
+    let with_pgdn = run_keys("<right>F<ret><c-d>", "tests/data/nyse/1.parquet");
+    // Extract first data row Time value - should differ after page down
+    let get_first_time = |s: &str| {
+        s.lines().find(|l| l.contains("│ 4")).map(|l| l.to_string())
+    };
+    let t1 = get_first_time(&without);
+    let t2 = get_first_time(&with_pgdn);
+    assert_ne!(t1, t2, "Page down should scroll: before={:?} after={:?}", t1, t2);
+}

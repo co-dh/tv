@@ -192,12 +192,12 @@ enum InputMode { None, Search, Filter, Load, Save, Command, Goto, GotoCol, Selec
 /// Run key replay mode (--keys "F<ret>" file) - state machine with text input
 fn run_keys(keys: &str, file: Option<&str>) -> Result<()> {
     let mut app = AppContext::new();
-    app.viewport(50, 120);
     if let Some(path) = file {
         if let Err(e) = CommandExecutor::exec(&mut app, Box::new(From { file_path: path.to_string() })) {
             eprintln!("Error loading {}: {}", path, e);
         }
     }
+    app.viewport(50, 120);  // set after load so first view gets viewport
     let mut mode = InputMode::None;
     let mut buf = String::new();
 
@@ -313,10 +313,11 @@ fn wait_bg_meta(app: &mut AppContext) {
 /// Fetch visible rows for lazy parquet view (simulates render)
 fn fetch_lazy(view: &mut state::ViewState) {
     if let Some(ref path) = view.parquet_path {
+        let offset = view.state.r0;
         let df = if let Some(ref w) = view.filter_clause {
-            backend::Polars.fetch_where(path, w, 0, 50)
+            backend::Polars.fetch_where(path, w, offset, 50)
         } else {
-            backend::Polars.fetch_rows(path, 0, 50)
+            backend::Polars.fetch_rows(path, offset, 50)
         };
         if let Ok(df) = df { view.dataframe = df; }
     }
