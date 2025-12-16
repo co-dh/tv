@@ -1,5 +1,54 @@
 # Worklog
 
+## 2025-12-15: Backend Unification & Dependency Analysis
+
+### Backend Refactoring
+Unified all 3 backends (Polars, Memory, Gz) to use single SQL path via `lf()` trait method.
+
+**Before:** Each backend had custom implementations for cols, schema, metadata, fetch, freq, filter, sort, distinct.
+
+**After:** Backend trait requires only `lf()` - all operations use SQL defaults:
+- `metadata()` - `SELECT COUNT(*) FROM df` + schema
+- `cols()` - `lf().collect_schema()`
+- `schema()` - `lf().collect_schema()` with types
+- `fetch_rows/where()` - `SELECT * LIMIT OFFSET`
+- `freq/freq_where()` - `SELECT col, COUNT(*) GROUP BY`
+- `filter()` - `SELECT * WHERE`
+- `sort_head()` - `SELECT * ORDER BY LIMIT`
+- `distinct()` - `SELECT DISTINCT`
+- `count_where()` - `SELECT COUNT(*) WHERE`
+
+**Commits:**
+- `3fb3606` Unify backends via lf() + SQL trait defaults
+- `2856742` Backend: metadata() via SQL, remove convert_epoch_cols
+- `a3439b9` Add 100k row cache and fix filtered view page down
+- `2d25332` DRY ViewState constructors with base() helper
+
+### Dependency Analysis
+
+| Dependency | Version | Usage | Status |
+|------------|---------|-------|--------|
+| polars | 0.52 | Core dataframe engine | Required (391 deps, 96MB) |
+| polars-ops | 0.52 | pearson_corr for correlation | Already transitive dep |
+| crossterm | 0.28 | Terminal I/O | Required |
+| ratatui | 0.29 | TUI framework | Required |
+| anyhow | 1.0 | Error handling | Required |
+| chrono | 0.4 | 3 date parses | Already polars transitive |
+| dirs | 5 | 1 home_dir() call | Tiny, keep |
+| nix | 0.29 | 1 statvfs call | Tiny, keep |
+
+**Findings:**
+- 391 total dependencies, ~380 from polars
+- Binary size: 96MB (polars dominates)
+- Removed unused "strings" polars feature (no size change - already transitive)
+- polars-ops already pulled by polars, only adds "cov" feature for correlation
+- dirs/nix are <1KB code each, not worth removing
+- chrono already a polars transitive dependency
+
+**Conclusion:** Dependencies are minimal. Polars is unavoidable size driver for dataframe operations.
+
+---
+
 ## 2025-12-15: Lazy Filtered Parquet Views
 
 ### Problem
