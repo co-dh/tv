@@ -1,5 +1,18 @@
 # Worklog
 
+## 2025-12-16: DRY Refactoring Summary
+
+| Commit | Changes | Δ len | Δ bugs |
+|--------|---------|-------|--------|
+| `5170da9` | `ser!` macro (50 sites) | -366 | -1.0 |
+| `fafac94` | `df_cols()` + `test_df!` (23 sites) | -231 | -0.5 |
+| `...` | Remove dead code (Backend::freq, Memory keys) | -330 | -0.6 |
+| **Total** | | **-927** | **-2.1** |
+
+Final: **39,009 len, 58.9 bugs** (from 39,936 len, 61.0 bugs)
+
+---
+
 ## 2025-12-16: DRY Refactoring - ser! Macro
 
 ### Problem

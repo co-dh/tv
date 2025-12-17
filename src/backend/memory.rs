@@ -2,34 +2,15 @@
 //! Used for OS commands (ls, ps, tcp), CSV files, and filtered results.
 //! Path parameter is ignored - data comes from stored DataFrame reference.
 use super::Backend;
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use polars::prelude::*;
 
-/// Memory backend: tuple struct (df, keys).
-/// - `'a` = lifetime parameter, ensures struct doesn't outlive the DataFrame it borrows
-/// - Tuple struct fields accessed via .0, .1 (like array indexing)
-/// - `pub` on fields allows construction: Memory(&df, vec![])
-pub struct Memory<'a>(pub &'a DataFrame, pub Vec<String>);
+/// Memory backend wrapping a DataFrame reference.
+/// All trait defaults work via lf() - no custom overrides needed.
+pub struct Memory<'a>(pub &'a DataFrame);
 
-/// `impl Backend for Memory<'_>` - implement trait for Memory with any lifetime
-/// `'_` = elided lifetime, compiler infers it
-/// Only lf() and keyed freq need custom impl - all else uses trait defaults.
 impl Backend for Memory<'_> {
-    /// LazyFrame from in-memory DataFrame (SQL operations use this)
     fn lf(&self, _: &str) -> Result<LazyFrame> { Ok(self.0.clone().lazy()) }
-
-    /// Frequency count - keyed group_by (simple case uses trait default via SQL)
-    fn freq(&self, p: &str, c: &str) -> Result<DataFrame> {
-        if self.1.is_empty() { return self.freq_where(p, c, "TRUE"); }
-        // keyed: group_by [keys..., col] then count
-        let mut g: Vec<Expr> = self.1.iter().map(|k| col(k)).collect();
-        g.push(col(c));
-        self.0.clone().lazy()
-            .group_by(g).agg([len().alias("Cnt")])
-            .sort(["Cnt"], SortMultipleOptions::default().with_order_descending(true))
-            .collect()
-            .map_err(|e| anyhow!("{}", e))
-    }
 }
 
 #[cfg(test)]
@@ -40,13 +21,13 @@ mod tests {
     #[test]
     fn test_memory_cols() {
         let df = test_df!("a" => vec![1, 2, 3], "b" => vec!["x", "y", "z"]);
-        assert_eq!(Memory(&df, vec![]).cols("").unwrap(), vec!["a", "b"]);
+        assert_eq!(Memory(&df).cols("").unwrap(), vec!["a", "b"]);
     }
 
     #[test]
     fn test_memory_metadata() {
         let df = test_df!("a" => vec![1, 2, 3]);
-        let (rows, cols) = Memory(&df, vec![]).metadata("").unwrap();
+        let (rows, cols) = Memory(&df).metadata("").unwrap();
         assert_eq!(rows, 3);
         assert_eq!(cols, vec!["a"]);
     }
@@ -54,7 +35,7 @@ mod tests {
     #[test]
     fn test_memory_fetch_rows() {
         let df = test_df!("a" => (0..100).collect::<Vec<i32>>());
-        let slice = Memory(&df, vec![]).fetch_rows("", 10, 5).unwrap();
+        let slice = Memory(&df).fetch_rows("", 10, 5).unwrap();
         assert_eq!(slice.height(), 5);
         assert_eq!(slice.column("a").unwrap().get(0).unwrap().try_extract::<i32>().unwrap(), 10);
     }
@@ -62,44 +43,32 @@ mod tests {
     #[test]
     fn test_memory_distinct() {
         let df = test_df!("cat" => vec!["a", "b", "a", "c", "b"]);
-        let vals = Memory(&df, vec![]).distinct("", "cat").unwrap();
-        assert_eq!(vals.len(), 3);
+        assert_eq!(Memory(&df).distinct("", "cat").unwrap().len(), 3);
     }
 
     #[test]
-    fn test_memory_freq_simple() {
+    fn test_memory_freq() {
         let df = test_df!("cat" => vec!["a", "b", "a", "a", "b"]);
-        let freq = Memory(&df, vec![]).freq("", "cat").unwrap();
+        let freq = Memory(&df).freq_where("", "cat", "TRUE").unwrap();
         assert_eq!(freq.height(), 2);
         assert_eq!(freq.column("Cnt").unwrap().get(0).unwrap().try_extract::<u32>().unwrap(), 3);
     }
 
     #[test]
-    fn test_memory_freq_keyed() {
-        let df = test_df!("grp" => vec!["x", "x", "y", "y"], "cat" => vec!["a", "a", "a", "b"]);
-        let freq = Memory(&df, vec!["grp".into()]).freq("", "cat").unwrap();
-        assert_eq!(freq.height(), 3); // (x,a)=2, (y,a)=1, (y,b)=1
-    }
-
-    #[test]
     fn test_memory_filter() {
         let df = test_df!("a" => vec![1, 2, 3, 4, 5]);
-        assert_eq!(Memory(&df, vec![]).filter("", "a > 3", 1000).unwrap().height(), 2);
+        assert_eq!(Memory(&df).filter("", "a > 3", 1000).unwrap().height(), 2);
     }
 
     #[test]
     fn test_memory_sort_head() {
         let df = test_df!("a" => vec![3, 1, 4, 1, 5, 9, 2, 6]);
-        // Sort ascending, take 3
-        let r = Memory(&df, vec![]).sort_head("", "a", false, 3).unwrap();
+        let r = Memory(&df).sort_head("", "a", false, 3).unwrap();
         assert_eq!(r.height(), 3);
         assert_eq!(r.column("a").unwrap().get(0).unwrap().try_extract::<i32>().unwrap(), 1);
-        assert_eq!(r.column("a").unwrap().get(2).unwrap().try_extract::<i32>().unwrap(), 2);
-        // Sort descending, take 2
-        let r = Memory(&df, vec![]).sort_head("", "a", true, 2).unwrap();
+        let r = Memory(&df).sort_head("", "a", true, 2).unwrap();
         assert_eq!(r.height(), 2);
         assert_eq!(r.column("a").unwrap().get(0).unwrap().try_extract::<i32>().unwrap(), 9);
-        assert_eq!(r.column("a").unwrap().get(1).unwrap().try_extract::<i32>().unwrap(), 6);
     }
 
     #[test]
@@ -109,7 +78,7 @@ mod tests {
             "x" => vec![1i64, 2, 3, 4, 5],
             "y" => vec![10i64, 20, 30, 40, 50]
         );
-        let r = Memory(&df, vec![]).freq_agg("", "cat", "TRUE").unwrap();
+        let r = Memory(&df).freq_agg("", "cat", "TRUE").unwrap();
         // Should have: cat, Cnt, x_min, x_max, x_sum, y_min, y_max, y_sum
         assert!(r.column("Cnt").is_ok());
         assert!(r.column("x_min").is_ok());
@@ -125,16 +94,10 @@ mod tests {
 
     #[test]
     fn test_freq_agg_bg_thread() {
-        // Test SQL in background thread - reproduces the hang issue
+        // Test SQL in background thread
         let df = test_df!("cat" => vec!["A", "A", "B", "B", "B"], "x" => vec![1i64, 2, 3, 4, 5]);
         let df2 = df.clone();
-        let handle = std::thread::spawn(move || {
-            eprintln!("BG: starting freq_agg");
-            let r = Memory(&df2, vec![]).freq_agg("", "cat", "TRUE");
-            eprintln!("BG: freq_agg done");
-            r
-        });
-        let r = handle.join().unwrap().unwrap();
-        assert!(r.column("x_sum").is_ok());
+        let handle = std::thread::spawn(move || Memory(&df2).freq_agg("", "cat", "TRUE"));
+        assert!(handle.join().unwrap().unwrap().column("x_sum").is_ok());
     }
 }

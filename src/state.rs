@@ -104,7 +104,7 @@ impl ViewState {
         } else if self.gz_source.is_some() {
             Box::new(Gz { df: &self.dataframe, partial: self.partial })
         } else {
-            Box::new(Memory(&self.dataframe, self.key_cols()))
+            Box::new(Memory(&self.dataframe))
         }
     }
 

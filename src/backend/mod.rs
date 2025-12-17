@@ -143,11 +143,6 @@ pub trait Backend: Send + Sync {
         }
     }
 
-    /// Frequency counts - default uses freq_where
-    fn freq(&self, path: &str, col: &str) -> Result<DataFrame> {
-        self.freq_where(path, col, "TRUE")
-    }
-
     /// Frequency with WHERE clause
     fn freq_where(&self, path: &str, col: &str, w: &str) -> Result<DataFrame> {
         sql(self.lf(path)?, &format!("SELECT \"{}\", COUNT(*) as Cnt FROM df WHERE {} GROUP BY \"{}\" ORDER BY Cnt DESC", col, w, col))

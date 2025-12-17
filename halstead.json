@@ -1,6 +1,6 @@
 {
-  "total_length": 39339.0,
-  "total_bugs": 59.523912461810504,
+  "total_length": 39009.0,
+  "total_bugs": 58.90341339457023,
   "files": [
     {
       "file": "./src/app.rs",
@@ -10,21 +10,21 @@
     },
     {
       "file": "./src/backend/gz.rs",
-      "length": 2028.0,
-      "bugs": 3.0967002019223138,
-      "volume": 16022.957886584958
+      "length": 1998.0,
+      "bugs": 3.057199907716619,
+      "volume": 15761.709011298723
     },
     {
       "file": "./src/backend/memory.rs",
-      "length": 988.0,
-      "bugs": 1.6241068884971812,
-      "volume": 6938.099399272113
+      "length": 717.0,
+      "bugs": 1.0920667782437736,
+      "volume": 4890.06831605169
     },
     {
       "file": "./src/backend/mod.rs",
-      "length": 1229.0,
-      "bugs": 1.8702668249561205,
-      "volume": 9074.57257545061
+      "length": 1204.0,
+      "bugs": 1.8289686691472589,
+      "volume": 8879.547475341697
     },
     {
       "file": "./src/backend/polars.rs",
@@ -154,9 +154,9 @@
     },
     {
       "file": "./src/state.rs",
-      "length": 1470.0,
-      "bugs": 2.4054808871486935,
-      "volume": 10464.843376903556
+      "length": 1466.0,
+      "bugs": 2.3978203801763747,
+      "volume": 10436.367612612663
     },
     {
       "file": "./src/theme.rs",

@@ -52,8 +52,6 @@ impl Backend for Gz<'_> {
         let df = sql(self.lf(p)?, &format!("SELECT DISTINCT \"{}\" FROM df ORDER BY \"{}\"", col, col))?;
         Ok(df.column(col).map(|c| (0..c.len()).filter_map(|i| c.get(i).ok().map(|v| v.to_string())).collect()).unwrap_or_default())
     }
-    /// Frequency count - blocked if partial
-    fn freq(&self, p: &str, col: &str) -> Result<DataFrame> { self.require_complete()?; self.freq_where(p, col, "TRUE") }
     /// Filter - blocked if partial
     fn filter(&self, p: &str, w: &str, limit: usize) -> Result<DataFrame> { self.require_complete()?; self.fetch_where(p, w, 0, limit) }
     /// Fetch where - blocked if partial
