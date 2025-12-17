@@ -51,6 +51,9 @@ impl Renderer {
             Self::render_status_bar(frame, view, &message, is_loading, area, &theme);
         } else {
             Self::empty_msg(frame, &message, area);
+            if show_info {
+                Self::render_info_box(frame, "table", stack_len, area, &hints, &theme);
+            }
         }
     }
 
