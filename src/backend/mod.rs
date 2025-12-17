@@ -19,6 +19,14 @@ use ::polars::prelude::*;
 use std::path::Path;
 use std::sync::mpsc::Receiver;
 
+/// Check if DataType is numeric (int/uint/float)
+pub fn is_numeric(dt: &DataType) -> bool {
+    matches!(dt,
+        DataType::Int8 | DataType::Int16 | DataType::Int32 | DataType::Int64 |
+        DataType::UInt8 | DataType::UInt16 | DataType::UInt32 | DataType::UInt64 |
+        DataType::Float32 | DataType::Float64)
+}
+
 /// Result of loading a file: ViewState + optional background loader
 pub struct LoadResult {
     pub view: ViewState,
@@ -29,9 +37,14 @@ pub struct LoadResult {
 
 /// Execute SQL on LazyFrame with streaming engine
 pub fn sql(lf: LazyFrame, query: &str) -> Result<DataFrame> {
+    sql_lazy(lf, query)?.collect_with_engine(Engine::Streaming).map_err(|e| anyhow!("{}", e))
+}
+
+/// Execute SQL returning LazyFrame (for chained operations)
+pub fn sql_lazy(lf: LazyFrame, query: &str) -> Result<LazyFrame> {
     let mut ctx = ::polars::sql::SQLContext::new();
     ctx.register("df", lf);
-    ctx.execute(query)?.collect_with_engine(Engine::Streaming).map_err(|e| anyhow!("{}", e))
+    ctx.execute(query).map_err(|e| anyhow!("{}", e))
 }
 
 /// Save DataFrame to parquet
@@ -114,30 +127,34 @@ pub trait Backend: Send + Sync {
         sql(self.lf(path)?, &format!("SELECT \"{}\", COUNT(*) as Cnt FROM df WHERE {} GROUP BY \"{}\" ORDER BY Cnt DESC", col, w, col))
     }
 
-    /// Frequency with aggregates (min/max/sum) for all numeric columns
+    /// Frequency with aggregates (min/max/sum) - one column at a time to save memory
     fn freq_agg(&self, path: &str, grp: &str, w: &str) -> Result<DataFrame> {
-        // Materialize data first (avoid lazy in bg thread - polars threading issues)
-        let df = if w != "TRUE" { self.filter(path, w, usize::MAX)? } else { self.lf(path)?.collect()? };
-        let schema = df.schema();
-        // Build aggregate expressions: COUNT + MIN/MAX/SUM for numeric columns
-        let mut agg_exprs: Vec<Expr> = vec![len().alias("Cnt")];
-        for (name, dt) in schema.iter() {
-            let n = name.to_string();
-            if n == grp { continue; }
-            let numeric = matches!(dt, DataType::Int8 | DataType::Int16 | DataType::Int32 | DataType::Int64
-                | DataType::UInt8 | DataType::UInt16 | DataType::UInt32 | DataType::UInt64
-                | DataType::Float32 | DataType::Float64);
-            if numeric {
-                agg_exprs.push(col(&n).min().alias(&format!("{}_min", n)));
-                agg_exprs.push(col(&n).max().alias(&format!("{}_max", n)));
-                agg_exprs.push(col(&n).sum().alias(&format!("{}_sum", n)));
+        // First: count query
+        let base = if w != "TRUE" { format!("WHERE {}", w) } else { String::new() };
+        let cnt_q = format!("SELECT \"{}\", COUNT(*) as Cnt FROM df {} GROUP BY \"{}\" ORDER BY Cnt DESC", grp, base, grp);
+        let mut result = sql(self.lf(path)?, &cnt_q)?;
+
+        // Get numeric columns
+        let schema = self.lf(path)?.collect_schema()?;
+        let num_cols: Vec<String> = schema.iter()
+            .filter(|(n, dt)| n.as_str() != grp && is_numeric(dt))
+            .map(|(n, _)| n.to_string())
+            .collect();
+
+        // Process each numeric column separately to avoid memory explosion
+        for c in num_cols {
+            let agg_q = format!(
+                "SELECT \"{}\", MIN(\"{}\") as {}_min, MAX(\"{}\") as {}_max, SUM(\"{}\") as {}_sum FROM df {} GROUP BY \"{}\"",
+                grp, c, c, c, c, c, c, base, grp
+            );
+            if let Ok(agg_df) = sql(self.lf(path)?, &agg_q) {
+                // Left join on grp column
+                result = result.lazy()
+                    .join(agg_df.lazy(), [col(grp)], [col(grp)], JoinArgs::new(JoinType::Left))
+                    .collect()?;
             }
         }
-        df.lazy().group_by([col(grp)])
-            .agg(agg_exprs)
-            .sort(["Cnt"], SortMultipleOptions::default().with_order_descending(true))
-            .collect()
-            .map_err(|e| anyhow!("{}", e))
+        Ok(result)
     }
 
     /// Filter rows

@@ -1,6 +1,7 @@
 //! Meta view plugin - data profile/metadata statistics
 
 use crate::app::AppContext;
+use crate::backend::is_numeric;
 use crate::command::Command;
 use crate::command::executor::CommandExecutor;
 use crate::command::transform::Xkey;
@@ -224,11 +225,6 @@ fn col_stats(lf: LazyFrame, col: &str, n: f64, is_num: bool) -> ColStats {
     }
 }
 
-/// Check if datatype is numeric (for mean/std computation)
-fn is_numeric(dt: &DataType) -> bool {
-    matches!(dt, DataType::Int8|DataType::Int16|DataType::Int32|DataType::Int64|
-        DataType::UInt8|DataType::UInt16|DataType::UInt32|DataType::UInt64|DataType::Float32|DataType::Float64)
-}
 
 /// Check if type string is numeric (for parquet schema)
 fn is_numeric_str(s: &str) -> bool {

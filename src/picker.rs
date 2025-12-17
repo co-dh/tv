@@ -3,13 +3,22 @@ use ratatui::crossterm::{cursor, execute, terminal};
 use std::io::Write;
 use std::process::{Command, Stdio};
 
-/// Use external fzf - returns selected item
+/// Simple fzf - single select, returns selection or typed query
 pub fn fzf(items: Vec<String>, prompt: &str) -> Result<Option<String>> {
+    let (sels, query) = fzf_multi(items, prompt)?;
+    if let Some(s) = sels.into_iter().next() { Ok(Some(s)) }
+    else if !query.is_empty() { Ok(Some(query)) }
+    else { Ok(None) }
+}
+
+/// Use external fzf with multi-select - returns (selections, query)
+/// --print-query: line1=query, rest=selections (tab to select multiple)
+pub fn fzf_multi(items: Vec<String>, prompt: &str) -> Result<(Vec<String>, String)> {
     terminal::disable_raw_mode()?;
     execute!(std::io::stdout(), cursor::Show)?;
 
     let mut child = Command::new("fzf")
-        .args(["--prompt", prompt, "--layout=reverse", "--height=50%", "--no-sort"])
+        .args(["--prompt", prompt, "--layout=reverse", "--height=50%", "--no-sort", "--print-query", "--multi"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()?;
@@ -23,31 +32,43 @@ pub fn fzf(items: Vec<String>, prompt: &str) -> Result<Option<String>> {
     terminal::enable_raw_mode()?;
     execute!(std::io::stdout(), cursor::Hide)?;
 
-    if output.status.success() {
-        Ok(Some(String::from_utf8_lossy(&output.stdout).trim().to_string()))
-    } else {
-        Ok(None)
-    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut lines = text.lines();
+    let query = lines.next().unwrap_or("").trim().to_string();
+    let sels: Vec<String> = lines.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+    Ok((sels, query))
 }
 
-/// fzf with optional edit - if user selects existing item, return directly; else allow edit
-pub fn fzf_edit(items: Vec<String>, prompt: &str) -> Result<Option<String>> {
-    match fzf(items.clone(), prompt)? {
-        Some(selected) => {
-            // If exact match to an item, return directly (no edit needed)
-            if items.contains(&selected) {
-                Ok(Some(selected))
-            } else {
-                edit_line(prompt, &selected)
-            }
-        }
-        None => Ok(None),
-    }
+/// fzf for filter - returns SQL expression based on selection
+/// - 1 item from hints → col = 'value'
+/// - N items from hints → col IN ('a', 'b')
+/// - else → raw SQL
+pub fn fzf_filter(hints: Vec<String>, prompt: &str, col: &str, is_str: bool) -> Result<Option<String>> {
+    let (sels, query) = fzf_multi(hints.clone(), prompt)?;
+    // Check how many selections are from hints
+    let from_hints: Vec<&String> = sels.iter().filter(|s| hints.contains(s)).collect();
+    let expr = if from_hints.len() == 1 {
+        // Single hint selected → equality
+        let v = &from_hints[0];
+        if is_str { format!("\"{}\" = '{}'", col, v) } else { format!("\"{}\" = {}", col, v) }
+    } else if from_hints.len() > 1 {
+        // Multiple hints → IN clause
+        let vals: Vec<String> = from_hints.iter().map(|v| {
+            if is_str { format!("'{}'", v) } else { v.to_string() }
+        }).collect();
+        format!("\"{}\" IN ({})", col, vals.join(", "))
+    } else if !query.is_empty() {
+        // No hint match, use query as raw SQL
+        query
+    } else {
+        return Ok(None);  // Esc pressed
+    };
+    Ok(Some(expr))
 }
 
 /// Run fzf in filter mode (non-interactive, for testing)
 #[cfg(test)]
-fn fzf_filter(items: Vec<String>, query: &str) -> Result<Option<String>> {
+fn fzf_test_filter(items: Vec<String>, query: &str) -> Result<Option<String>> {
     let mut child = Command::new("fzf")
         .args(["--filter", query])
         .stdin(Stdio::piped())
@@ -65,59 +86,6 @@ fn fzf_filter(items: Vec<String>, query: &str) -> Result<Option<String>> {
         .map(|s| String::from_utf8_lossy(s).to_string()))
 }
 
-/// Simple line editor with pre-filled text
-fn edit_line(prompt: &str, initial: &str) -> Result<Option<String>> {
-    use ratatui::crossterm::event::{read, Event, KeyCode, KeyModifiers};
-
-    let mut line = initial.to_string();
-    let mut pos = line.len();
-    let mut stdout = std::io::stdout();
-
-    terminal::disable_raw_mode()?;
-    execute!(stdout, cursor::Show)?;
-
-    let (_, h) = terminal::size()?;
-    execute!(stdout, cursor::MoveTo(0, h - 1), terminal::Clear(terminal::ClearType::CurrentLine))?;
-    print!("{}{}", prompt, line);
-    stdout.flush()?;
-
-    terminal::enable_raw_mode()?;
-
-    loop {
-        if let Event::Key(key) = read()? {
-            match key.code {
-                KeyCode::Enter => {
-                    execute!(stdout, cursor::Hide)?;
-                    return Ok(Some(line));
-                }
-                KeyCode::Esc => {
-                    execute!(stdout, cursor::Hide)?;
-                    return Ok(None);
-                }
-                KeyCode::Backspace if pos > 0 => { pos -= 1; line.remove(pos); }
-                KeyCode::Delete if pos < line.len() => { line.remove(pos); }
-                KeyCode::Left if pos > 0 => { pos -= 1; }
-                KeyCode::Right if pos < line.len() => { pos += 1; }
-                KeyCode::Home => { pos = 0; }
-                KeyCode::End => { pos = line.len(); }
-                KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => { pos = 0; }
-                KeyCode::Char('e') if key.modifiers.contains(KeyModifiers::CONTROL) => { pos = line.len(); }
-                KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => { line.clear(); pos = 0; }
-                KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    execute!(stdout, cursor::Hide)?;
-                    return Ok(None);
-                }
-                KeyCode::Char(c) => { line.insert(pos, c); pos += 1; }
-                _ => {}
-            }
-            execute!(stdout, cursor::MoveTo(0, h - 1), terminal::Clear(terminal::ClearType::CurrentLine))?;
-            print!("{}{}", prompt, line);
-            execute!(stdout, cursor::MoveTo((prompt.len() + pos) as u16, h - 1))?;
-            stdout.flush()?;
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -125,14 +93,14 @@ mod tests {
     #[test]
     fn test_fzf_filter_exact_match() {
         let items = vec!["apple".into(), "banana".into(), "cherry".into()];
-        let result = fzf_filter(items, "banana").unwrap();
+        let result = fzf_test_filter(items, "banana").unwrap();
         assert_eq!(result, Some("banana".to_string()));
     }
 
     #[test]
     fn test_fzf_filter_partial_match() {
         let items = vec!["apple".into(), "pineapple".into(), "grape".into()];
-        let result = fzf_filter(items, "apple").unwrap();
+        let result = fzf_test_filter(items, "apple").unwrap();
         // fzf returns first match
         assert!(result.is_some());
         assert!(result.unwrap().contains("apple"));
@@ -141,14 +109,14 @@ mod tests {
     #[test]
     fn test_fzf_filter_no_match() {
         let items = vec!["apple".into(), "banana".into()];
-        let result = fzf_filter(items, "xyz").unwrap();
+        let result = fzf_test_filter(items, "xyz").unwrap();
         assert_eq!(result, None);
     }
 
     #[test]
     fn test_fzf_filter_empty_items() {
         let items: Vec<String> = vec![];
-        let result = fzf_filter(items, "test").unwrap();
+        let result = fzf_test_filter(items, "test").unwrap();
         assert_eq!(result, None);
     }
 }

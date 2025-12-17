@@ -70,6 +70,12 @@ src/
 - SQL for all queries (unify freq/freq_where, filter operations)
 - DRY: similar functions share code (e.g., freq is freq_where with empty condition)
 
+## Filter Logic (fzf)
+- fzf shows hints (column values), supports multi-select
+- If result is 1 item from hints → `col = 'value'`
+- If result is N items from hints → `col IN ('a', 'b', ...)`
+- Otherwise (not in hints) → raw SQL WHERE clause
+
 # Todo
 - load tests/data/nyse/1.parquet M0D is not working, M1<ret> neither.
 - :cargo background fetch still leaks package descriptions to terminal (setsid not enough)

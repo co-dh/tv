@@ -3,14 +3,11 @@ mod common;
 use common::{run_keys};
 use std::fs;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Mutex;
 use polars::prelude::*;
 
 static TEST_ID: AtomicUsize = AtomicUsize::new(4000);
 fn tid() -> usize { TEST_ID.fetch_add(1, Ordering::SeqCst) }
 
-/// Lock for large parquet tests - ensures serial execution to avoid OOM
-static LARGE_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 // Test data files:
 // - tests/data/freq_test.parquet: sym column with A/B values
@@ -159,11 +156,9 @@ fn test_parquet_freq_enter_then_freq() {
 }
 
 // === Large parquet workflow tests (1.parquet ~300M rows) ===
-// These tests acquire LARGE_TEST_LOCK to run serially (avoid OOM)
 
 #[test]
 fn test_large_parquet_freq_enter_single() {
-    let _lock = LARGE_TEST_LOCK.lock().unwrap();
     // Freq Exchange (18 vals), Enter filters by P, freq Exchange shows 1 row
     let out = run_keys("<right>F<ret><right>F<a-p>", "tests/data/nyse/1.parquet");
     assert!(out.contains("rows=1"), "Filtered freq should show 1 row: {}", out);
@@ -171,7 +166,6 @@ fn test_large_parquet_freq_enter_single() {
 
 #[test]
 fn test_large_parquet_filter_not_10k() {
-    let _lock = LARGE_TEST_LOCK.lock().unwrap();
     // Filter by Exchange=P should show 94M rows, not 10k
     let out = run_keys("<right>F<ret><ret><a-p>", "tests/data/nyse/1.parquet");
     assert!(!out.contains("rows=10000"), "Should NOT be limited to 10k: {}", out);
@@ -180,7 +174,6 @@ fn test_large_parquet_filter_not_10k() {
 
 #[test]
 fn test_large_parquet_filtered_freq_symbol() {
-    let _lock = LARGE_TEST_LOCK.lock().unwrap();
     // Filter Exchange=P, then freq Symbol should have >1000 unique values
     let out = run_keys("<right>F<ret><ret><right><right>F<a-p>", "tests/data/nyse/1.parquet");
     assert!(out.contains("rows=11342") || out.contains("(11342 rows)") || out.contains("11,342"),
@@ -189,7 +182,6 @@ fn test_large_parquet_filtered_freq_symbol() {
 
 #[test]
 fn test_large_parquet_status_single_total() {
-    let _lock = LARGE_TEST_LOCK.lock().unwrap();
     // Status should show disk_rows once, not twice (bug: rows=disk when disk_rows is set)
     // print_status fetches 50 rows to simulate render, disk=304M, rows should equal disk
     let out = run_keys("<a-p>", "tests/data/nyse/1.parquet");
@@ -201,7 +193,6 @@ fn test_large_parquet_status_single_total() {
 
 #[test]
 fn test_large_parquet_freq_enter_memory() {
-    let _lock = LARGE_TEST_LOCK.lock().unwrap();
     // Freq + Enter should use < 1GB memory (was 1.8GB before streaming fix)
     let out = run_keys("<right>F<ret><a-p>", "tests/data/nyse/1.parquet");
     // Parse mem=XXXmb from output
@@ -213,16 +204,13 @@ fn test_large_parquet_freq_enter_memory() {
 
 #[test]
 fn test_filtered_parquet_page_down() {
-    let _lock = LARGE_TEST_LOCK.lock().unwrap();
     // Bug: ctrl-d doesn't scroll in filtered parquet view
     // Filter by Exchange=P, then page down - should show different rows
     let without = run_keys("<right>F<ret>", "tests/data/nyse/1.parquet");
     let with_pgdn = run_keys("<right>F<ret><c-d>", "tests/data/nyse/1.parquet");
-    // Extract first data row Time value - should differ after page down
-    let get_first_time = |s: &str| {
-        s.lines().find(|l| l.contains("│ 4")).map(|l| l.to_string())
-    };
-    let t1 = get_first_time(&without);
-    let t2 = get_first_time(&with_pgdn);
+    // Extract first data row (skip header line)
+    let get_first_row = |s: &str| s.lines().nth(2).map(|l| l.to_string());
+    let t1 = get_first_row(&without);
+    let t2 = get_first_row(&with_pgdn);
     assert_ne!(t1, t2, "Page down should scroll: before={:?} after={:?}", t1, t2);
 }

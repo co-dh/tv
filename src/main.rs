@@ -704,13 +704,13 @@ fn do_search(app: &mut AppContext) -> Result<()> {
         Some((hints(&v.dataframe, &col_name, v.state.cr, file), col_name, v.name.starts_with("ls")))
     });
     if let Some((hint_list, col_name, is_folder)) = info {
-        let expr_opt = picker::fzf_edit(hint_list, "Search> ");
+        let expr_opt = picker::fzf(hint_list, "Search> ");
         app.needs_redraw = true;
         if let Ok(Some(expr)) = expr_opt {
             let prql_mode = theme::load_config_value("prql_hints").map(|v| v == "true").unwrap_or(false);
             let expr = if !prql_mode && is_plain_value(&expr) {
                 format!("{} LIKE '%{}%'", col_name, expr)
-            } else { expr };
+            } else { expr.to_string() };
             let matches = app.view().map(|v| find(&v.dataframe, &expr)).unwrap_or_default();
             app.search.col_name = None;
             app.search.value = Some(expr.clone());
@@ -727,7 +727,7 @@ fn do_search(app: &mut AppContext) -> Result<()> {
     Ok(())
 }
 
-/// Filter with fzf (\)
+/// Filter with fzf (\) - multi-select support
 fn do_filter(app: &mut AppContext) -> Result<()> {
     let info = app.view().and_then(|v| {
         let col_name = v.col_name(v.state.cc)?;
@@ -737,14 +737,9 @@ fn do_filter(app: &mut AppContext) -> Result<()> {
         Some((hints(&v.dataframe, &col_name, v.state.cr, file), col_name, is_str))
     });
     if let Some((hint_list, col_name, is_str)) = info {
-        let expr_opt = picker::fzf_edit(hint_list, "WHERE> ");
+        let expr_opt = picker::fzf_filter(hint_list, "WHERE> ", &col_name, is_str);
         app.needs_redraw = true;
         if let Ok(Some(expr)) = expr_opt {
-            // If plain value selected, construct equality expression (quote column for reserved words)
-            let expr = if is_plain_value(&expr) {
-                if is_str { format!("\"{}\" = '{}'", col_name, expr) }
-                else { format!("\"{}\" = {}", col_name, expr) }
-            } else { expr };
             run(app, Box::new(Filter { expr }));
         }
     } else { app.no_table(); }
@@ -774,7 +769,7 @@ fn do_command_picker(app: &mut AppContext) -> Result<()> {
         "filter <expr>", "freq <col>", "meta", "corr",
         "select <cols>", "delcol <cols>", "sort <col>", "sort -<col>", "take <n>", "rename <old> <new>",
     ].iter().map(|s| s.to_string()).collect();
-    let result = picker::fzf_edit(cmd_list, ": ");
+    let result = picker::fzf(cmd_list, ": ");
     app.needs_redraw = true;
     if let Ok(Some(selected)) = result {
         let cmd_str = selected.split_whitespace().next().unwrap_or(&selected);
@@ -884,12 +879,15 @@ fn prql_hints(col: &polars::prelude::Column, col_name: &str, row: usize, is_str:
     items
 }
 
-/// Check if expression is a plain value (no operators)
+/// Check if expression is a plain value (simple identifier or literal)
 fn is_plain_value(expr: &str) -> bool {
     let e = expr.trim();
-    !e.contains('=') && !e.contains('>') && !e.contains('<') && !e.contains('~')
-        && !e.contains("&&") && !e.contains("||") && !e.contains(" AND ")
-        && !e.contains(" OR ") && !e.contains(" LIKE ") && !e.contains(" IN ")
+    // Empty or has spaces (likely SQL) → not plain
+    if e.is_empty() || e.contains(' ') { return false; }
+    // Quoted string literal → plain
+    if (e.starts_with('\'') && e.ends_with('\'')) || (e.starts_with('"') && e.ends_with('"')) { return true; }
+    // Alphanumeric/underscore (identifier or number) → plain
+    e.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.' || c == '-')
 }
 
 /// Find rows matching SQL WHERE expression, returns row indices

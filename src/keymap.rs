@@ -42,46 +42,37 @@ impl KeyMap {
             ("common", "<space>", "toggle_sel"),
             ("common", "<esc>", "clear_sel"),
             ("common", "<backslash>", "filter"),
-            // Table view
-            ("table", "L", "from"),
-            ("table", "S", "save"),
-            ("table", "/", "search"),
-            ("table", "n", "next_match"),
-            ("table", "N", "prev_match"),
-            ("table", "*", "search_cell"),
-            ("table", "s", "select_cols"),
-            ("table", "F", "freq"),
-            ("table", "M", "meta"),
-            ("table", "C", "corr"),
-            ("table", "[", "sort"),
-            ("table", "]", "sort-"),
-            ("table", "^", "rename"),
-            ("table", "c", "derive"),
-            ("table", "$", "convert"),
-            ("table", "b", "aggregate"),
-            ("table", "T", "dup"),
-            ("table", "W", "swap"),
-            ("table", "l", "ls"),
-            ("table", "r", "lr"),
-            ("table", ":", "command"),
-            ("table", "@", "goto_col"),
-            ("table", "m", "bookmark"),
-            ("table", "'", "next_bookmark"),
-            ("table", "D", "delete"),
-            ("table", "!", "xkey"),
-            ("table", "P", "pivot"),
-            ("table", "<ret>", "enter"),
-            // Folder view
-            ("folder", "<ret>", "enter"),
-            ("folder", "/", "search"),
-            ("folder", "D", "delete"),
-            ("folder", "[", "sort"),
-            ("folder", "]", "sort-"),
-            ("folder", "F", "freq"),
-            // Freq view
+            ("common", "/", "search"),
+            ("common", "n", "next_match"),
+            ("common", "N", "prev_match"),
+            ("common", "*", "search_cell"),
+            ("common", "[", "sort"),
+            ("common", "]", "sort-"),
+            ("common", "F", "freq"),
+            ("common", "M", "meta"),
+            ("common", "D", "delete"),
+            ("common", "T", "dup"),
+            ("common", "W", "swap"),
+            ("common", ":", "command"),
+            ("common", "@", "goto_col"),
+            ("common", "<ret>", "enter"),
+            ("common", "L", "from"),
+            ("common", "S", "save"),
+            ("common", "s", "select_cols"),
+            ("common", "l", "ls"),
+            ("common", "r", "lr"),
+            ("common", "C", "corr"),
+            ("common", "^", "rename"),
+            ("common", "c", "derive"),
+            ("common", "$", "convert"),
+            ("common", "b", "aggregate"),
+            ("common", "m", "bookmark"),
+            ("common", "'", "next_bookmark"),
+            ("common", "!", "xkey"),
+            ("common", "P", "pivot"),
+            // Freq view - override enter to filter parent
             ("freq", "<ret>", "filter_parent"),
-            ("freq", "D", "delete"),
-            // Meta view
+            // Meta view - override enter/D for column operations
             ("meta", "<ret>", "goto_col"),
             ("meta", "D", "delete_sel"),
             ("meta", "0", "sel_null"),
@@ -155,8 +146,8 @@ impl KeyMap {
         if let Some(cmds) = self.key_to_cmd.get(tab) {
             if let Some(cmd) = cmds.get(key) { return Some(cmd); }
         }
-        // Fall back to table for data views (freq/meta/corr inherit table keys)
-        if tab != "table" && tab != "folder" {
+        // Fall back to table (all views inherit table keys)
+        if tab != "table" {
             if let Some(cmds) = self.key_to_cmd.get("table") {
                 if let Some(cmd) = cmds.get(key) { return Some(cmd); }
             }

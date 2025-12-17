@@ -1,6 +1,7 @@
 //! Correlation matrix plugin - calculate and display correlation matrix
 
 use crate::app::AppContext;
+use crate::backend::is_numeric;
 use crate::command::Command;
 use crate::plugin::Plugin;
 use crate::state::ViewState;
@@ -87,13 +88,6 @@ impl Command for Correlation {
     fn to_str(&self) -> String { "corr".into() }
 }
 
-/// Check if dtype is numeric
-fn is_numeric(dtype: &DataType) -> bool {
-    matches!(dtype,
-        DataType::Int8 | DataType::Int16 | DataType::Int32 | DataType::Int64 |
-        DataType::UInt8 | DataType::UInt16 | DataType::UInt32 | DataType::UInt64 |
-        DataType::Float32 | DataType::Float64)
-}
 
 /// Corr Enter: pop view and go to column in parent
 pub struct CorrEnter { pub col_name: String }

@@ -2,6 +2,7 @@
 //! Combines: view detection, command handling, Frequency command
 
 use crate::app::AppContext;
+use crate::backend::is_numeric;
 use crate::command::Command;
 use crate::command::executor::CommandExecutor;
 use crate::command::transform::FilterIn;
@@ -181,16 +182,12 @@ fn freq_agg_path(path: &str, col: &str, w: &str) -> Result<DataFrame> {
 
 /// Freq aggregates from in-memory DataFrame
 fn freq_agg_df(df: &DataFrame, grp: &str, _w: &str) -> Result<DataFrame> {
-    use polars::prelude::*;
     // Build aggregate expressions: COUNT + MIN/MAX/SUM for numeric columns
     let mut agg_exprs: Vec<Expr> = vec![len().alias("Cnt")];
     for (name, dt) in df.schema().iter() {
         let n = name.to_string();
         if n == grp { continue; }
-        let numeric = matches!(dt, DataType::Int8 | DataType::Int16 | DataType::Int32 | DataType::Int64
-            | DataType::UInt8 | DataType::UInt16 | DataType::UInt32 | DataType::UInt64
-            | DataType::Float32 | DataType::Float64);
-        if numeric {
+        if is_numeric(dt) {
             agg_exprs.push(col(&n).min().alias(&format!("{}_min", n)));
             agg_exprs.push(col(&n).max().alias(&format!("{}_max", n)));
             agg_exprs.push(col(&n).sum().alias(&format!("{}_sum", n)));
