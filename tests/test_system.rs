@@ -162,7 +162,7 @@ fn test_pacman_sort_size_numeric() {
     assert!(out.contains("pacman"), "Should show pacman: {}", out);
     // Size is now stored as u64 KB. Largest packages (>100MB = >100000KB) should be first.
     let has_large = out.lines().take(20).any(|l| {
-        l.split_whitespace().any(|w| w.parse::<u64>().map(|n| n > 100_000).unwrap_or(false))
+        l.split(',').any(|w| w.parse::<u64>().map(|n| n > 100_000).unwrap_or(false))
     });
     assert!(has_large, "Largest packages (>100MB) should be first when sorting desc: {}", out);
 }
@@ -177,7 +177,7 @@ fn test_pacman_rsize_column() {
     // Some packages have rsize > size (due to exclusive deps)
     // cuda is ~5GB removal size with deps
     let has_large_rsize = out.lines().take(20).any(|l| {
-        l.split_whitespace().any(|w| w.parse::<u64>().map(|n| n > 1_000_000).unwrap_or(false))
+        l.split(',').any(|w| w.parse::<u64>().map(|n| n > 1_000_000).unwrap_or(false))
     });
     assert!(has_large_rsize, "Should have large rsize packages when sorted desc: {}", out);
 }
