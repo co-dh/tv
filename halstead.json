@@ -1,6 +1,6 @@
 {
-  "total_length": 39934.0,
-  "total_bugs": 61.01494058189302,
+  "total_length": 39570.0,
+  "total_bugs": 60.01619095443835,
   "files": [
     {
       "file": "./src/app.rs",
@@ -22,15 +22,15 @@
     },
     {
       "file": "./src/backend/mod.rs",
-      "length": 1160.0,
-      "bugs": 1.828105384464376,
-      "volume": 8440.304310118116
+      "length": 1175.0,
+      "bugs": 1.829617799455692,
+      "volume": 8592.637472459119
     },
     {
       "file": "./src/backend/polars.rs",
-      "length": 1415.0,
-      "bugs": 2.06351877545465,
-      "volume": 10915.657407497563
+      "length": 1417.0,
+      "bugs": 2.0615724823186974,
+      "volume": 10940.797550398082
     },
     {
       "file": "./src/command/executor.rs",
@@ -94,9 +94,9 @@
     },
     {
       "file": "./src/plugin/corr.rs",
-      "length": 759.0,
-      "bugs": 1.0241773223547266,
-      "volume": 5251.417197091418
+      "length": 751.0,
+      "bugs": 1.0172225875954561,
+      "volume": 5187.074837301998
     },
     {
       "file": "./src/plugin/folder.rs",
@@ -112,9 +112,9 @@
     },
     {
       "file": "./src/plugin/meta.rs",
-      "length": 2809.0,
-      "bugs": 4.29630948312504,
-      "volume": 22055.563057337706
+      "length": 2726.0,
+      "bugs": 4.108989156562035,
+      "volume": 21420.85619271776
     },
     {
       "file": "./src/plugin/mod.rs",
@@ -124,15 +124,15 @@
     },
     {
       "file": "./src/plugin/pivot.rs",
-      "length": 1023.0,
-      "bugs": 1.5728043627690274,
-      "volume": 7172.485482297989
+      "length": 1013.0,
+      "bugs": 1.553952478393903,
+      "volume": 7113.658594597824
     },
     {
       "file": "./src/plugin/system.rs",
-      "length": 5458.0,
-      "bugs": 8.580189073638675,
-      "volume": 48792.22335172959
+      "length": 5178.0,
+      "bugs": 7.795000270026043,
+      "volume": 46258.65021134266
     },
     {
       "file": "./src/render/mod.rs",

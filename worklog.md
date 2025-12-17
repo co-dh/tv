@@ -1,5 +1,51 @@
 # Worklog
 
+## 2025-12-16: DRY Refactoring - ser! Macro
+
+### Problem
+50+ occurrences of `Series::new("name".into(), data).into()` boilerplate across plugin files.
+
+### Solution
+Added `ser!` macro in `backend/mod.rs`:
+```rust
+#[macro_export]
+macro_rules! ser {
+    ($name:expr, $data:expr) => { Series::new($name.into(), $data).into() };
+}
+```
+
+### Halstead Metrics
+| Metric | Before | After | Change |
+|--------|--------|-------|--------|
+| Length | 39,936 | 39,570 | -366 (-0.9%) |
+| Bugs | 61.01 | 60.02 | -1.0 (-1.6%) |
+
+### Files Improved
+| File | Δ len | Δ bugs |
+|------|-------|--------|
+| system.rs | -280 | -0.8 |
+| meta.rs | -83 | -0.2 |
+| pivot.rs | -10 | - |
+| corr.rs | -8 | - |
+
+### Pattern Replaced
+```rust
+// Before (50+ occurrences)
+Series::new("name".into(), data).into()
+
+// After
+ser!("name", data)
+```
+
+### Files Changed
+- `src/backend/mod.rs` - added ser! macro
+- `src/plugin/system.rs` - 28 replacements
+- `src/plugin/meta.rs` - 10 replacements
+- `src/plugin/corr.rs` - 2 replacements
+- `src/plugin/pivot.rs` - 2 replacements
+
+---
+
 ## 2025-12-16: Dependency Deduplication - rustix Unified
 
 ### Problem

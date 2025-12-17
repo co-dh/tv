@@ -5,6 +5,7 @@ use crate::backend::{is_numeric, unquote};
 use crate::command::Command;
 use crate::plugin::Plugin;
 use crate::state::ViewState;
+use crate::ser;
 use anyhow::{anyhow, Result};
 use polars::prelude::*;
 
@@ -72,12 +73,12 @@ impl Command for Correlation {
             .map(|c| df.column(c).unwrap().as_materialized_series().cast(&DataType::Float64).unwrap().f64().unwrap().clone())
             .collect();
 
-        let mut columns: Vec<Column> = vec![Series::new("column".into(), numeric_cols.clone()).into()];
+        let mut columns: Vec<Column> = vec![ser!("column", numeric_cols.clone())];
         for (i, col_name) in numeric_cols.iter().enumerate() {
             let corrs: Vec<f64> = (0..n).map(|j| {
                 if i == j { 1.0 } else { polars_ops::chunked_array::cov::pearson_corr(&chunks[i], &chunks[j]).unwrap_or(f64::NAN) }
             }).collect();
-            columns.push(Series::new(col_name.clone().into(), corrs).into());
+            columns.push(ser!(col_name.clone(), corrs));
         }
         let corr_df = DataFrame::new(columns)?;
 

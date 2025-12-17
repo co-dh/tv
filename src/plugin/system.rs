@@ -4,6 +4,7 @@ use crate::app::AppContext;
 use crate::command::Command;
 use crate::plugin::Plugin;
 use crate::state::ViewState;
+use crate::ser;
 use anyhow::Result;
 use polars::prelude::*;
 use std::fs;
@@ -142,11 +143,8 @@ pub fn ls(dir: &Path) -> Result<DataFrame> {
         .cast(&DataType::Datetime(TimeUnit::Microseconds, None))?;
 
     Ok(DataFrame::new(vec![
-        Series::new("name".into(), names).into(),
-        Series::new("path".into(), paths).into(),
-        Series::new("size".into(), sizes).into(),
-        modified_series.into(),
-        Series::new("dir".into(), is_dir).into(),
+        ser!("name", names), ser!("path", paths), ser!("size", sizes),
+        modified_series.into(), ser!("dir", is_dir),
     ])?)
 }
 
@@ -175,9 +173,7 @@ pub fn lr(dir: &Path) -> Result<DataFrame> {
         .cast(&DataType::Datetime(TimeUnit::Microseconds, None))?;
 
     Ok(DataFrame::new(vec![
-        Series::new("path".into(), paths).into(),
-        Series::new("size".into(), sizes).into(),
-        modified_series.into(),
+        ser!("path", paths), ser!("size", sizes), modified_series.into(),
     ])?)
 }
 
@@ -202,12 +198,9 @@ fn ps() -> Result<DataFrame> {
     }
 
     Ok(DataFrame::new(vec![
-        Series::new("user".into(), users).into(), Series::new("pid".into(), pids).into(),
-        Series::new("%cpu".into(), cpus).into(), Series::new("%mem".into(), mems).into(),
-        Series::new("vsz".into(), vszs).into(), Series::new("rss".into(), rsss).into(),
-        Series::new("tty".into(), ttys).into(), Series::new("stat".into(), stats).into(),
-        Series::new("start".into(), starts).into(), Series::new("time".into(), times).into(),
-        Series::new("command".into(), cmds).into(),
+        ser!("user", users), ser!("pid", pids), ser!("%cpu", cpus), ser!("%mem", mems),
+        ser!("vsz", vszs), ser!("rss", rsss), ser!("tty", ttys), ser!("stat", stats),
+        ser!("start", starts), ser!("time", times), ser!("command", cmds),
     ])?)
 }
 
@@ -222,8 +215,7 @@ fn mounts() -> Result<DataFrame> {
         }
     }
     Ok(DataFrame::new(vec![
-        Series::new("device".into(), devs).into(), Series::new("mount".into(), mps).into(),
-        Series::new("type".into(), types).into(), Series::new("options".into(), opts).into(),
+        ser!("device", devs), ser!("mount", mps), ser!("type", types), ser!("options", opts),
     ])?)
 }
 
@@ -245,9 +237,8 @@ fn parse_net(path: &str) -> Result<DataFrame> {
         }
     }
     Ok(DataFrame::new(vec![
-        Series::new("local_addr".into(), la).into(), Series::new("local_port".into(), lp).into(),
-        Series::new("remote_addr".into(), ra).into(), Series::new("remote_port".into(), rp).into(),
-        Series::new("state".into(), st).into(), Series::new("inode".into(), ino).into(),
+        ser!("local_addr", la), ser!("local_port", lp), ser!("remote_addr", ra),
+        ser!("remote_port", rp), ser!("state", st), ser!("inode", ino),
     ])?)
 }
 
@@ -289,17 +280,14 @@ fn lsof(pid: Option<i32>) -> Result<DataFrame> {
         }
     }
     Ok(DataFrame::new(vec![
-        Series::new("pid".into(), pids).into(), Series::new("fd".into(), fds).into(),
-        Series::new("path".into(), paths).into(),
+        ser!("pid", pids), ser!("fd", fds), ser!("path", paths),
     ])?)
 }
 
 /// Environment variables
 fn env() -> Result<DataFrame> {
     let (names, vals): (Vec<String>, Vec<String>) = std::env::vars().unzip();
-    Ok(DataFrame::new(vec![
-        Series::new("name".into(), names).into(), Series::new("value".into(), vals).into(),
-    ])?)
+    Ok(DataFrame::new(vec![ser!("name", names), ser!("value", vals)])?)
 }
 
 /// Total system memory in bytes
@@ -323,9 +311,8 @@ fn systemctl() -> Result<DataFrame> {
         }
     }
     Ok(DataFrame::new(vec![
-        Series::new("unit".into(), units).into(), Series::new("load".into(), loads).into(),
-        Series::new("active".into(), actives).into(), Series::new("sub".into(), subs).into(),
-        Series::new("description".into(), descs).into(),
+        ser!("unit", units), ser!("load", loads), ser!("active", actives),
+        ser!("sub", subs), ser!("description", descs),
     ])?)
 }
 
@@ -345,8 +332,7 @@ fn journalctl(n: usize) -> Result<DataFrame> {
         }
     }
     Ok(DataFrame::new(vec![
-        Series::new("time".into(), times).into(), Series::new("host".into(), hosts).into(),
-        Series::new("unit".into(), units).into(), Series::new("message".into(), msgs).into(),
+        ser!("time", times), ser!("host", hosts), ser!("unit", units), ser!("message", msgs),
     ])?)
 }
 
@@ -540,11 +526,10 @@ fn cargo() -> Result<DataFrame> {
     update_ver_cache_bg(all_names);
 
     Ok(DataFrame::new(vec![
-        Series::new("name".into(), names).into(), Series::new("version".into(), vers).into(),
-        Series::new("latest".into(), latest).into(),
-        Series::new("size(k)".into(), sizes).into(), Series::new("rsize(k)".into(), rsizes).into(),
-        Series::new("deps".into(), deps_cnt).into(), Series::new("req_by".into(), req_cnt).into(),
-        Series::new("platform".into(), plat).into(), Series::new("description".into(), descs).into(),
+        ser!("name", names), ser!("version", vers), ser!("latest", latest),
+        ser!("size(k)", sizes), ser!("rsize(k)", rsizes),
+        ser!("deps", deps_cnt), ser!("req_by", req_cnt),
+        ser!("platform", plat), ser!("description", descs),
     ])?)
 }
 
@@ -623,12 +608,13 @@ fn pacman() -> Result<DataFrame> {
     }
     push_pkg(&mut name, &mut ver, &mut desc, &mut inst, &mut reason, &mut size, &mut deps, &mut reqs, &mut deps_list);
 
+    let sizes: Vec<u64> = sizes.iter().map(|b| b / 1024).collect();
+    let rsizes: Vec<u64> = rsizes.iter().map(|b| b / 1024).collect();
     Ok(DataFrame::new(vec![
-        Series::new("name".into(), names).into(), Series::new("version".into(), vers).into(),
-        Series::new("size(k)".into(), sizes.iter().map(|b| b / 1024).collect::<Vec<u64>>()).into(),
-        Series::new("rsize(k)".into(), rsizes.iter().map(|b| b / 1024).collect::<Vec<u64>>()).into(),
-        Series::new("deps".into(), deps_cnt).into(), Series::new("req_by".into(), req_cnt).into(),
-        Series::new("orphan".into(), orphan_flags).into(), Series::new("reason".into(), reasons).into(),
-        Series::new("installed".into(), installed).into(), Series::new("description".into(), descs).into(),
+        ser!("name", names), ser!("version", vers),
+        ser!("size(k)", sizes), ser!("rsize(k)", rsizes),
+        ser!("deps", deps_cnt), ser!("req_by", req_cnt),
+        ser!("orphan", orphan_flags), ser!("reason", reasons),
+        ser!("installed", installed), ser!("description", descs),
     ])?)
 }

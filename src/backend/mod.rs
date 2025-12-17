@@ -42,6 +42,12 @@ pub fn unquote(s: &str) -> String {
     s.trim_matches('"').to_string()
 }
 
+/// Create Column from name and data (shorthand for Series::new().into())
+#[macro_export]
+macro_rules! ser {
+    ($name:expr, $data:expr) => { Series::new($name.into(), $data).into() };
+}
+
 /// Result of loading a file: ViewState + optional background loader
 pub struct LoadResult {
     pub view: ViewState,
@@ -158,8 +164,9 @@ pub trait Backend: Send + Sync {
 
         // Process each numeric column separately to avoid memory explosion
         for c in num_cols {
+            // Cast to DOUBLE for SUM to avoid integer overflow on large datasets
             let agg_q = format!(
-                "SELECT \"{}\", MIN(\"{}\") as {}_min, MAX(\"{}\") as {}_max, SUM(\"{}\") as {}_sum FROM df {} GROUP BY \"{}\"",
+                "SELECT \"{}\", MIN(\"{}\") as {}_min, MAX(\"{}\") as {}_max, SUM(CAST(\"{}\" AS DOUBLE)) as {}_sum FROM df {} GROUP BY \"{}\"",
                 grp, c, c, c, c, c, c, base, grp
             );
             if let Ok(agg_df) = sql(self.lf(path)?, &agg_q) {

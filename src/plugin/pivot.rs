@@ -5,6 +5,7 @@ use crate::command::Command;
 use crate::picker;
 use crate::plugin::Plugin;
 use crate::state::ViewState;
+use crate::ser;
 use anyhow::{anyhow, Result};
 use polars::prelude::*;
 use polars::lazy::frame::pivot;
@@ -79,10 +80,8 @@ impl Command for PivotPick {
 
 /// Create placeholder DataFrame for pivot (shows "..." while computing)
 fn placeholder_pivot(keys: &[String], pivot_col: &str) -> Result<DataFrame> {
-    let mut cols: Vec<Column> = keys.iter()
-        .map(|k| Series::new(k.as_str().into(), &["..."]).into())
-        .collect();
-    cols.push(Series::new(pivot_col.into(), &["..."]).into());
+    let mut cols: Vec<Column> = keys.iter().map(|k| ser!(k.as_str(), &["..."])).collect();
+    cols.push(ser!(pivot_col, &["..."]));
     Ok(DataFrame::new(cols)?)
 }
 

@@ -8,6 +8,7 @@ use crate::command::transform::Xkey;
 use crate::command::view::Pop;
 use crate::plugin::Plugin;
 use crate::state::ViewState;
+use crate::ser;
 use anyhow::{anyhow, Result};
 use polars::prelude::*;
 
@@ -185,10 +186,8 @@ use crate::backend::sql;
 fn stats_df(cols: Vec<String>, types: Vec<String>, nulls: Vec<String>, dists: Vec<String>,
             mins: Vec<String>, maxs: Vec<String>, meds: Vec<String>, sigs: Vec<String>) -> Result<DataFrame> {
     Ok(DataFrame::new(vec![
-        Series::new("column".into(), cols).into(), Series::new("type".into(), types).into(),
-        Series::new("null%".into(), nulls).into(), Series::new("distinct".into(), dists).into(),
-        Series::new("min".into(), mins).into(), Series::new("max".into(), maxs).into(),
-        Series::new("median".into(), meds).into(), Series::new("sigma".into(), sigs).into(),
+        ser!("column", cols), ser!("type", types), ser!("null%", nulls), ser!("distinct", dists),
+        ser!("min", mins), ser!("max", maxs), ser!("median", meds), ser!("sigma", sigs),
     ])?)
 }
 
@@ -266,7 +265,7 @@ fn grp_stats(df: &DataFrame, keys: &[String]) -> Result<DataFrame> {
         for r in 0..unique.height() {
             for _ in &non_keys { vals.push(unique.column(k).ok().and_then(|c| c.get(r).ok()).map(|v| fmt(&v)).unwrap_or_default()); }
         }
-        result.push(Series::new(k.as_str().into(), vals).into());
+        result.push(ser!(k.as_str(), vals));
     }
 
     // Compute stats per group per column using SQL
@@ -292,10 +291,8 @@ fn grp_stats(df: &DataFrame, keys: &[String]) -> Result<DataFrame> {
     }
 
     result.extend([
-        Series::new("column".into(), names).into(), Series::new("type".into(), types).into(),
-        Series::new("null%".into(), nulls).into(), Series::new("distinct".into(), dists).into(),
-        Series::new("min".into(), mins).into(), Series::new("max".into(), maxs).into(),
-        Series::new("median".into(), meds).into(), Series::new("sigma".into(), sigs).into(),
+        ser!("column", names), ser!("type", types), ser!("null%", nulls), ser!("distinct", dists),
+        ser!("min", mins), ser!("max", maxs), ser!("median", meds), ser!("sigma", sigs),
     ]);
     Ok(DataFrame::new(result)?)
 }
