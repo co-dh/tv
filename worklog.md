@@ -1,5 +1,23 @@
 # Worklog
 
+## 2025-12-16: DRY Round 2 - get_schema & push_meta
+
+| Metric | Before | After | Change |
+|--------|--------|-------|--------|
+| Length | 39,002 | 39,005 | +3 |
+| Bugs | 58.888 | 58.864 | -0.024 |
+
+**Changes:**
+- `backend/mod.rs`: Extracted `get_schema()` helper - `cols()` and `schema()` now share it
+- `plugin/meta.rs`: Extracted `push_meta()` helper (3 call sites → 1 function)
+
+**Analysis:** Codebase is already fairly DRY. dedup_rust patterns were mostly:
+- Trait impl boilerplate (unavoidable)
+- Test assertions (not worth DRYing)
+- Match arms (inherent to Rust)
+
+---
+
 ## 2025-12-16: DRY Refactoring Summary
 
 | Commit | Changes | Δ len | Δ bugs |

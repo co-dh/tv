@@ -52,6 +52,15 @@ fn sel_cols(app: &AppContext, reverse: bool) -> Option<Vec<String>> {
 
 // === Commands ===
 
+/// Push meta view onto stack
+fn push_meta(app: &mut AppContext, df: DataFrame, pid: usize, prows: usize, pname: String, pcol: usize, sep: Option<usize>) {
+    let id = app.next_id();
+    let mut v = ViewState::new_child(id, "metadata".into(), df, pid, prows, pname);
+    v.state.cr = pcol;
+    if let Some(s) = sep { v.col_separator = Some(s); }
+    app.stack.push(v);
+}
+
 /// Metadata command - shows column statistics (null%, distinct, min, max, median, sigma)
 pub struct Metadata;
 
@@ -72,10 +81,7 @@ impl Command for Metadata {
         // Check cache (only for non-grouped)
         if key_cols.is_empty() {
             if let Some(cached_df) = cached {
-                let id = app.next_id();
-                let mut v = ViewState::new_child(id, "metadata".into(), cached_df, parent_id, parent_rows, parent_name);
-                v.state.cr = parent_col;
-                app.stack.push(v);
+                push_meta(app, cached_df, parent_id, parent_rows, parent_name, parent_col, None);
                 return Ok(());
             }
         }
@@ -84,12 +90,7 @@ impl Command for Metadata {
         if !key_cols.is_empty() {
             let types: Vec<String> = df.dtypes().iter().map(|dt| format!("{:?}", dt)).collect();
             let placeholder = placeholder_df(col_names, types)?;
-            let id = app.next_id();
-            let mut v = ViewState::new_child(id, "metadata".into(), placeholder, parent_id, parent_rows, parent_name);
-            v.state.cr = parent_col;
-            v.col_separator = Some(key_cols.len());
-            app.stack.push(v);
-
+            push_meta(app, placeholder, parent_id, parent_rows, parent_name, parent_col, Some(key_cols.len()));
             let (tx, rx) = std::sync::mpsc::channel();
             std::thread::spawn(move || { if let Ok(r) = grp_stats(&df, &key_cols) { let _ = tx.send(r); } });
             app.bg_meta = Some((parent_id, rx));
@@ -99,11 +100,7 @@ impl Command for Metadata {
         // Non-grouped: unified LazyFrame path (parquet or in-memory)
         let types: Vec<String> = schema.iter().map(|(_, dt)| dt.clone()).collect();
         let placeholder = placeholder_df(col_names, types)?;
-        let id = app.next_id();
-        let mut v = ViewState::new_child(id, "metadata".into(), placeholder, parent_id, parent_rows, parent_name);
-        v.state.cr = parent_col;
-        app.stack.push(v);
-
+        push_meta(app, placeholder, parent_id, parent_rows, parent_name, parent_col, None);
         let (tx, rx) = std::sync::mpsc::channel();
         if let Some(path) = pq_path {
             std::thread::spawn(move || { if let Ok(r) = lf_stats_path(&path) { let _ = tx.send(r); } });

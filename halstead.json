@@ -1,6 +1,6 @@
 {
-  "total_length": 39009.0,
-  "total_bugs": 58.90341339457023,
+  "total_length": 39005.0,
+  "total_bugs": 58.86443757674272,
   "files": [
     {
       "file": "./src/app.rs",
@@ -22,9 +22,9 @@
     },
     {
       "file": "./src/backend/mod.rs",
-      "length": 1204.0,
-      "bugs": 1.8289686691472589,
-      "volume": 8879.547475341697
+      "length": 1197.0,
+      "bugs": 1.8130820340312523,
+      "volume": 8827.922199322269
     },
     {
       "file": "./src/backend/polars.rs",
@@ -112,9 +112,9 @@
     },
     {
       "file": "./src/plugin/meta.rs",
-      "length": 2665.0,
-      "bugs": 4.024840580705356,
-      "volume": 20958.056075503657
+      "length": 2668.0,
+      "bugs": 4.001751397993863,
+      "volume": 21047.166988060555
     },
     {
       "file": "./src/plugin/mod.rs",

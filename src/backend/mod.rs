@@ -88,23 +88,25 @@ pub trait Backend: Send + Sync {
     /// Get LazyFrame for SQL operations (path ignored by Memory/Gz)
     fn lf(&self, path: &str) -> Result<LazyFrame>;
 
+    /// Get schema Arc (shared by cols/schema)
+    fn get_schema(&self, path: &str) -> Result<std::sync::Arc<Schema>> {
+        self.lf(path)?.collect_schema().map_err(|e| anyhow!("{}", e))
+    }
+
     /// Get metadata: (row_count, column_names) - default via SQL COUNT(*)
     fn metadata(&self, path: &str) -> Result<(usize, Vec<String>)> {
         let r = sql(self.lf(path)?, "SELECT COUNT(*) as cnt FROM df")?;
-        let cnt = r.column("cnt")?.get(0)?.try_extract::<u64>().unwrap_or(0) as usize;
-        Ok((cnt, self.cols(path)?))
+        Ok((r.column("cnt")?.get(0)?.try_extract::<u64>().unwrap_or(0) as usize, self.cols(path)?))
     }
 
-    /// Get column names - default via lf().collect_schema()
+    /// Get column names via get_schema()
     fn cols(&self, path: &str) -> Result<Vec<String>> {
-        let schema = self.lf(path)?.collect_schema().map_err(|e| anyhow!("{}", e))?;
-        Ok(schema.iter_names().map(|s| s.to_string()).collect())
+        Ok(self.get_schema(path)?.iter_names().map(|s| s.to_string()).collect())
     }
 
-    /// Get schema as (name, type) pairs - default via lf().collect_schema()
+    /// Get schema as (name, type) pairs via get_schema()
     fn schema(&self, path: &str) -> Result<Vec<(String, String)>> {
-        let schema = self.lf(path)?.collect_schema().map_err(|e| anyhow!("{}", e))?;
-        Ok(schema.iter().map(|(n, dt)| (n.to_string(), format!("{:?}", dt))).collect())
+        Ok(self.get_schema(path)?.iter().map(|(n, dt)| (n.to_string(), format!("{:?}", dt))).collect())
     }
 
     /// Fetch rows - default uses fetch_sel
