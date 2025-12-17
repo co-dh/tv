@@ -2,7 +2,7 @@
 //! Combines: view detection, command handling, Frequency command
 
 use crate::app::AppContext;
-use crate::backend::is_numeric;
+use crate::backend::{is_numeric, unquote};
 use crate::command::Command;
 use crate::command::executor::CommandExecutor;
 use crate::command::transform::FilterIn;
@@ -31,7 +31,7 @@ impl Plugin for FreqPlugin {
                     let rows: Vec<usize> = if v.selected_rows.is_empty() { vec![v.state.cr] }
                         else { v.selected_rows.iter().copied().collect() };
                     let vals: Vec<String> = rows.iter()
-                        .filter_map(|&r| v.dataframe.get_columns()[0].get(r).ok().map(|x| x.to_string().trim_matches('"').to_string()))
+                        .filter_map(|&r| v.dataframe.get_columns()[0].get(r).ok().map(|x| unquote(&x.to_string())))
                         .collect();
                     Some((col, vals))
                 });
@@ -142,7 +142,7 @@ impl Command for FreqEnterCmd {
             let rows: Vec<usize> = if v.selected_rows.is_empty() { vec![v.state.cr] }
                 else { v.selected_rows.iter().copied().collect() };
             let vals: Vec<String> = rows.iter()
-                .filter_map(|&r| v.dataframe.get_columns()[0].get(r).ok().map(|x| x.to_string().trim_matches('"').to_string()))
+                .filter_map(|&r| v.dataframe.get_columns()[0].get(r).ok().map(|x| unquote(&x.to_string())))
                 .collect();
             Some((col, vals))
         }).ok_or_else(|| anyhow!("Not a freq view"))?;

@@ -1,7 +1,7 @@
 //! Meta view plugin - data profile/metadata statistics
 
 use crate::app::AppContext;
-use crate::backend::is_numeric;
+use crate::backend::{is_numeric, unquote};
 use crate::command::Command;
 use crate::command::executor::CommandExecutor;
 use crate::command::transform::Xkey;
@@ -43,7 +43,7 @@ fn sel_cols(app: &AppContext, reverse: bool) -> Option<Vec<String>> {
         if reverse { rows.sort_by(|a, b| b.cmp(a)); } else { rows.sort(); }
         let names: Vec<String> = rows.iter()
             .filter_map(|&r| v.dataframe.get_columns()[0].get(r).ok()
-                .map(|v| v.to_string().trim_matches('"').to_string()))
+                .map(|v| unquote(&v.to_string())))
             .collect();
         if names.is_empty() { None } else { Some(names) }
     })
@@ -332,6 +332,6 @@ fn fmt(v: &AnyValue) -> String {
         AnyValue::Null => String::new(),
         AnyValue::Float64(f) => format!("{:.2}", f),
         AnyValue::Float32(f) => format!("{:.2}", f),
-        _ => { let s = v.to_string(); if s == "null" { String::new() } else { s.trim_matches('"').to_string() } }
+        _ => { let s = v.to_string(); if s == "null" { String::new() } else { unquote(&s) } }
     }
 }

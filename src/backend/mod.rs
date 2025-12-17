@@ -27,6 +27,21 @@ pub fn is_numeric(dt: &DataType) -> bool {
         DataType::Float32 | DataType::Float64)
 }
 
+/// Format number with commas (1234567 -> "1,234,567")
+pub fn commify(s: &str) -> String {
+    let mut r = String::with_capacity(s.len() + s.len() / 3);
+    for (i, c) in s.chars().rev().enumerate() {
+        if i > 0 && i % 3 == 0 { r.push(','); }
+        r.push(c);
+    }
+    r.chars().rev().collect()
+}
+
+/// Extract string value without quotes
+pub fn unquote(s: &str) -> String {
+    s.trim_matches('"').to_string()
+}
+
 /// Result of loading a file: ViewState + optional background loader
 pub struct LoadResult {
     pub view: ViewState,

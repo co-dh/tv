@@ -1,7 +1,7 @@
 //! Correlation matrix plugin - calculate and display correlation matrix
 
 use crate::app::AppContext;
-use crate::backend::is_numeric;
+use crate::backend::{is_numeric, unquote};
 use crate::command::Command;
 use crate::plugin::Plugin;
 use crate::state::ViewState;
@@ -20,7 +20,7 @@ impl Plugin for CorrPlugin {
         // Get column name from current row (first column is row label)
         let col_name = app.view().and_then(|v| {
             v.dataframe.column("column").ok()?.get(v.state.cr).ok()
-                .map(|v| v.to_string().trim_matches('"').to_string())
+                .map(|v| unquote(&v.to_string()))
         })?;
         Some(Box::new(CorrEnter { col_name }))
     }

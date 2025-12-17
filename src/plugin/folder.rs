@@ -1,6 +1,7 @@
 //! Folder view plugin - directory listing (ls [-r])
 
 use crate::app::AppContext;
+use crate::backend::unquote;
 use crate::command::Command;
 use crate::command::io::From;
 use crate::plugin::Plugin;
@@ -40,8 +41,7 @@ impl Plugin for FolderPlugin {
             let rows: Vec<usize> = if v.selected_rows.is_empty() { vec![v.state.cr] }
                 else { v.selected_rows.iter().copied().collect() };
             let paths: Vec<String> = rows.iter().filter_map(|&r| {
-                df.column("path").ok()?.get(r).ok()
-                    .map(|v| v.to_string().trim_matches('"').to_string())
+                df.column("path").ok()?.get(r).ok().map(|v| unquote(&v.to_string()))
             }).collect();
             if !paths.is_empty() {
                 return Some(Box::new(DelFiles { paths, dir }));
@@ -51,10 +51,10 @@ impl Plugin for FolderPlugin {
 
         // For enter: get current row info
         let path = df.column("path").ok()?.get(v.state.cr).ok()
-            .map(|v| v.to_string().trim_matches('"').to_string())?;
+            .map(|v| unquote(&v.to_string()))?;
         let is_dir = df.column("dir").ok()
             .and_then(|c| c.get(v.state.cr).ok())
-            .map(|v| v.to_string().trim_matches('"') == "x")
+            .map(|v| unquote(&v.to_string()) == "x")
             .unwrap_or(false);
 
         match cmd {

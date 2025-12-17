@@ -1,36 +1,36 @@
 {
-  "total_length": 37347.0,
-  "total_bugs": 56.688252065538585,
+  "total_length": 39934.0,
+  "total_bugs": 61.01494058189302,
   "files": [
     {
       "file": "./src/app.rs",
-      "length": 905.0,
-      "bugs": 1.3391460122959398,
-      "volume": 6433.214633384243
+      "length": 1000.0,
+      "bugs": 1.5050646931663565,
+      "volume": 7139.551352398794
     },
     {
       "file": "./src/backend/gz.rs",
-      "length": 2092.0,
-      "bugs": 3.410606446932356,
-      "volume": 16578.707757543296
+      "length": 2028.0,
+      "bugs": 3.0967002019223138,
+      "volume": 16022.957886584958
     },
     {
       "file": "./src/backend/memory.rs",
-      "length": 802.0,
-      "bugs": 1.34470719171799,
-      "volume": 5316.744009303847
+      "length": 1111.0,
+      "bugs": 1.9054305966896792,
+      "volume": 7826.321866607242
     },
     {
       "file": "./src/backend/mod.rs",
-      "length": 754.0,
-      "bugs": 1.02925716129802,
-      "volume": 5093.185176631255
+      "length": 1160.0,
+      "bugs": 1.828105384464376,
+      "volume": 8440.304310118116
     },
     {
       "file": "./src/backend/polars.rs",
-      "length": 1291.0,
-      "bugs": 1.8930756291021056,
-      "volume": 9792.186588431012
+      "length": 1415.0,
+      "bugs": 2.06351877545465,
+      "volume": 10915.657407497563
     },
     {
       "file": "./src/command/executor.rs",
@@ -64,9 +64,9 @@
     },
     {
       "file": "./src/command/transform.rs",
-      "length": 2201.0,
-      "bugs": 3.3271494787171956,
-      "volume": 17097.773698834015
+      "length": 2249.0,
+      "bugs": 3.4121874341957112,
+      "volume": 17470.646546423308
     },
     {
       "file": "./src/command/view.rs",
@@ -76,45 +76,45 @@
     },
     {
       "file": "./src/keymap.rs",
-      "length": 1630.0,
-      "bugs": 2.387411670296198,
-      "volume": 12736.463341683771
+      "length": 1594.0,
+      "bugs": 2.235142390723734,
+      "volume": 12444.923745759821
     },
     {
       "file": "./src/main.rs",
-      "length": 6323.0,
-      "bugs": 9.324297254594946,
-      "volume": 58246.76968641438
+      "length": 6551.0,
+      "bugs": 9.716678331799162,
+      "volume": 60394.772977547625
     },
     {
       "file": "./src/picker.rs",
-      "length": 888.0,
-      "bugs": 1.4534546435821984,
-      "volume": 6255.421977990307
+      "length": 709.0,
+      "bugs": 0.932920056341596,
+      "volume": 4826.414639738841
     },
     {
       "file": "./src/plugin/corr.rs",
-      "length": 787.0,
-      "bugs": 1.0556924803694208,
-      "volume": 5526.603468853394
+      "length": 759.0,
+      "bugs": 1.0241773223547266,
+      "volume": 5251.417197091418
     },
     {
       "file": "./src/plugin/folder.rs",
       "length": 1042.0,
-      "bugs": 1.397255301879469,
-      "volume": 7806.510926375521
+      "bugs": 1.394206808512371,
+      "volume": 7823.122015087041
     },
     {
       "file": "./src/plugin/freq.rs",
-      "length": 979.0,
-      "bugs": 1.4157733429790935,
-      "volume": 6761.84589310074
+      "length": 1265.0,
+      "bugs": 1.8075201154129503,
+      "volume": 9095.128066983223
     },
     {
       "file": "./src/plugin/meta.rs",
-      "length": 2765.0,
-      "bugs": 4.161459522808915,
-      "volume": 21879.139014675846
+      "length": 2809.0,
+      "bugs": 4.29630948312504,
+      "volume": 22055.563057337706
     },
     {
       "file": "./src/plugin/mod.rs",
@@ -130,9 +130,9 @@
     },
     {
       "file": "./src/plugin/system.rs",
-      "length": 4034.0,
-      "bugs": 5.784667889245696,
-      "volume": 34840.14371927308
+      "length": 5458.0,
+      "bugs": 8.580189073638675,
+      "volume": 48792.22335172959
     },
     {
       "file": "./src/render/mod.rs",
@@ -142,15 +142,15 @@
     },
     {
       "file": "./src/render/renderer.rs",
-      "length": 4356.0,
-      "bugs": 7.299079589114878,
-      "volume": 37509.62401707083
+      "length": 4284.0,
+      "bugs": 7.151310921171952,
+      "volume": 36889.6302316647
     },
     {
       "file": "./src/render/terminal.rs",
-      "length": 113.0,
-      "bugs": 0.1283421207668992,
-      "volume": 593.0158090191251
+      "length": 114.0,
+      "bugs": 0.13084870622362832,
+      "volume": 598.2637365325687
     },
     {
       "file": "./src/state.rs",
@@ -160,9 +160,9 @@
     },
     {
       "file": "./src/theme.rs",
-      "length": 560.0,
-      "bugs": 0.8890420661797532,
-      "volume": 3797.5614395738094
+      "length": 561.0,
+      "bugs": 0.8867960230385825,
+      "volume": 3811.6673010224094
     }
   ]
 }

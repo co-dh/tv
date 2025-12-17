@@ -1,6 +1,6 @@
 //! Gz backend - streaming gzipped CSV with memory limits.
 //! Refuses expensive operations on partial (memory-limited) data.
-use super::{Backend, LoadResult, sql};
+use super::{Backend, LoadResult, sql, commify};
 use crate::command::io::convert::{convert_epoch_cols, apply_schema, convert_types};
 use crate::state::ViewState;
 use super::polars::{detect_sep, parse_csv_buf};
@@ -170,17 +170,6 @@ fn stream_chunks(
 
 // ── Streaming save ──────────────────────────────────────────────────────────
 
-/// Format number with commas (1234567 -> "1,234,567")
-fn commify(n: usize) -> String {
-    let s = n.to_string();
-    let mut r = String::with_capacity(s.len() + s.len() / 3);
-    for (i, c) in s.chars().rev().enumerate() {
-        if i > 0 && i % 3 == 0 { r.push(','); }
-        r.push(c);
-    }
-    r.chars().rev().collect()
-}
-
 /// Stream gz file to parquet (background)
 pub fn stream_to_parquet(gz_path: &str, out_path: &Path, raw: bool) -> Receiver<String> {
     let (gz, out) = (gz_path.to_string(), out_path.to_path_buf());
@@ -237,7 +226,7 @@ fn stream_save(gz_path: &str, out_path: &Path, raw: bool, tx: &Sender<String>) -
     let mut first_df = first_df;
     first_df.rechunk_mut();
     writer.write_batch(&first_df)?;
-    let _ = tx.send(format!("Written {} rows", commify(total_rows)));
+    let _ = tx.send(format!("Written {} rows", commify(&total_rows.to_string())));
 
     loop {
         let (buf, lines) = read_chunk(CHUNK_ROWS)?;
@@ -247,12 +236,12 @@ fn stream_save(gz_path: &str, out_path: &Path, raw: bool, tx: &Sender<String>) -
         df.rechunk_mut();
         writer.write_batch(&df)?;
         total_rows += df.height();
-        let _ = tx.send(format!("Written {} rows", commify(total_rows)));
+        let _ = tx.send(format!("Written {} rows", commify(&total_rows.to_string())));
     }
 
     writer.finish()?;
     let _ = child.wait();
-    let _ = tx.send(format!("Done: {} rows", commify(total_rows)));
+    let _ = tx.send(format!("Done: {} rows", commify(&total_rows.to_string())));
     Ok(())
 }
 

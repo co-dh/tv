@@ -1,5 +1,5 @@
 use crate::app::AppContext;
-use crate::backend::{Backend, Polars};
+use crate::backend::{Backend, Polars, commify};
 use crate::state::{TableState, ViewState};
 use crate::theme::Theme;
 use polars::prelude::*;
@@ -372,20 +372,12 @@ impl Renderer {
         max_width.max(MIN_WIDTH).min(MAX_WIDTH) as u16
     }
 
-    /// Format number with commas
-    fn commify(n: usize) -> String { Self::commify_str(&n.to_string()) }
-
+    /// Format number with commas (handles negatives)
     fn commify_str(s: &str) -> String {
-        let (neg, s) = if s.starts_with('-') { (true, &s[1..]) } else { (false, s) };
-        let mut result = String::new();
-        for (i, c) in s.chars().rev().enumerate() {
-            if i > 0 && i % 3 == 0 { result.push(','); }
-            result.push(c);
-        }
-        if neg { result.push('-'); }
-        result.chars().rev().collect()
+        if s.starts_with('-') { format!("-{}", commify(&s[1..])) } else { commify(s) }
     }
 
+    /// Format float with commas in integer part
     fn commify_float(s: &str) -> String {
         if let Some(dot) = s.find('.') {
             format!("{}{}", Self::commify_str(&s[..dot]), &s[dot..])
@@ -512,13 +504,13 @@ impl Renderer {
         for x in 0..area.width { buf[(x, row)].set_style(style); buf[(x, row)].set_char(' '); }
 
         // Show total rows: just disk_rows if set, else dataframe height
-        let total_str = Self::commify(view.rows());
+        let total_str = commify(&view.rows().to_string());
 
         let left = if !message.is_empty() { message.to_string() }
         else if view.name.starts_with("Freq:") || view.name == "metadata" {
             // Show parent name and row count for Meta/Freq views
             let pn = view.parent_name.as_deref().unwrap_or("");
-            let pr = view.parent_rows.map(|n| format!(" ({})", Self::commify(n))).unwrap_or_default();
+            let pr = view.parent_rows.map(|n| format!(" ({})", commify(&n.to_string()))).unwrap_or_default();
             format!("{} <- {}{}", view.name, pn, pr)
         }
         else { view.filename.as_deref().unwrap_or("(no file)").to_string() };
