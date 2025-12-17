@@ -43,8 +43,6 @@ tv --script commands.txt
 
 ### Search & Filter
 
-Both search and filter use **PRQL/SQL syntax**:
-
 | Key | Action |
 |-----|--------|
 | `/` | Search (navigate to matching row) |
@@ -53,20 +51,18 @@ Both search and filter use **PRQL/SQL syntax**:
 | `N` | Find previous match |
 | `*` | Search for current cell value |
 
-PRQL syntax:
-- `col == 100` - Numeric equality
-- `col == 'NYC'` - String equality
+Filter uses **SQL WHERE syntax**:
+- `col = 100` - Numeric equality
+- `col = 'NYC'` - String equality
 - `col > 100`, `col <= 50` - Comparisons
-- `(col | text.starts_with 'abc')` - Starts with
-- `(col | text.ends_with 'abc')` - Ends with
-- `(col | text.contains 'abc')` - Contains
-- `col >= @2020-01-01 && col < @2021-01-01` - Date range
-- `col > 10 && col < 100` - Combined conditions (use `&&` for AND, `||` for OR)
-
-SQL syntax also supported:
 - `col LIKE 'abc%'` - Starts with
+- `col LIKE '%abc'` - Ends with
+- `col LIKE '%abc%'` - Contains
 - `col BETWEEN 10 AND 100` - Range
 - `col IN ('a', 'b', 'c')` - In list
+- `col > 10 AND col < 100` - Combined (AND/OR)
+
+Selecting a value from the fzf picker generates the appropriate SQL automatically.
 
 Filtering pushes a new view onto the stack. Press `q` to return.
 
@@ -187,7 +183,7 @@ Create a script file with commands:
 
 ```
 # Comments start with #
-load data.csv
+from data.csv
 filter age > 30
 sort name
 save filtered.csv
@@ -196,7 +192,7 @@ quit
 
 Commands can be separated by `|` on a single line:
 ```
-load data.csv | filter age > 30 AND city = 'NYC' | sort name | save filtered.csv
+from data.csv | filter age > 30 AND city = 'NYC' | sort name | save filtered.csv
 ```
 
 Run with:
@@ -208,19 +204,23 @@ tv --script myscript.txt
 
 | Command | Description |
 |---------|-------------|
-| `from <path>` | Load CSV, Parquet, or gzipped CSV file |
+| `from <path>` / `load` | Load CSV, Parquet, or gzipped CSV file |
 | `save <path>` | Save to CSV or Parquet file |
-| `filter <expr>` | Filter rows (PRQL/SQL syntax) |
+| `filter <expr>` | Filter rows (SQL WHERE syntax) |
 | `take <n>` | Limit to first n rows |
 | `sort <col>` | Sort ascending (use `-col` for descending) |
+| `select <col1,col2>` / `sel` | Select columns |
+| `delcol <col1,col2>` | Delete column(s) |
+| `xkey <col1,col2>` | Move columns to front as key columns |
+| `rename <old> <new>` | Rename column |
+| `goto <row>` | Go to row number |
+| `goto_col <col>` | Go to column by name |
 | `freq <col>` | Frequency table |
 | `meta` | Metadata view |
-| `corr` | Correlation matrix (all numeric columns) |
+| `corr` | Correlation matrix |
 | `pivot <pivot_col> <value_col> [agg]` | Pivot table (requires xkey set first) |
-| `delcol <col1,col2>` | Delete column(s) |
-| `select <col1,col2>` | Select columns |
-| `xkey <col1,col2>` | Move columns to front as key columns (with separator) |
-| `rename <old> <new>` | Rename column |
+| `ls [-r] [dir]` | List directory (recursive with -r) |
+| `ps` | Process list |
 | `quit` | Exit script |
 
 ## Examples
@@ -247,7 +247,7 @@ tv --script myscript.txt
 1. Load file: `tv input.csv`
 2. Delete unwanted columns: navigate + `D`
 3. Rename columns: `^`
-4. Filter rows: `\` then type `status == 'active'`
+4. Filter rows: `\` then type `status = 'active'`
 5. Save result: `S` then enter filename
 
 ### Pivot Table
@@ -263,7 +263,7 @@ tv --script myscript.txt
 
 1. `tv` (no file) or press `:` then type `ps`
 2. View all processes with CPU/memory usage
-3. Filter with `\` to find specific processes: `command == 'firefox'`
+3. Filter with `\` to find specific processes: `command LIKE '%firefox%'`
 4. Navigate to `%cpu` column, press `]` to sort by CPU usage
 5. Use `F` on `user` column to see process count by user
 
