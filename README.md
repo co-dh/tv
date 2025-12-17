@@ -149,6 +149,11 @@ Access system information via `:` command mode:
 
 Numbers display with comma separators (e.g., 1,000,000). Floats show 3 decimal places by default.
 
+**Screen Layout** (bottom to top):
+- Status bar: filename, column stats, row position
+- Tab bar: view stack tabs (when multiple views)
+- Footer header: column names aligned with table (stays visible during fzf filter)
+
 ### Other
 
 | Key | Action |
@@ -293,6 +298,7 @@ Theme colors are defined in `cfg/themes.csv` (long format):
 theme,name,color
 default,header_bg,#282832
 default,header_fg,#ffffff
+default,tab_bg,#303040
 ...
 ```
 
