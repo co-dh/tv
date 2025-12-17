@@ -48,6 +48,11 @@ macro_rules! ser {
     ($name:expr, $data:expr) => { Series::new($name.into(), $data).into() };
 }
 
+/// Get column names as Vec<String> from DataFrame
+pub fn df_cols(df: &DataFrame) -> Vec<String> {
+    df.get_column_names().iter().map(|s| s.to_string()).collect()
+}
+
 /// Result of loading a file: ViewState + optional background loader
 pub struct LoadResult {
     pub view: ViewState,
@@ -194,4 +199,13 @@ pub trait Backend: Send + Sync {
     fn load(&self, _path: &str, _id: usize) -> Result<LoadResult> {
         Err(anyhow!("Load not supported by this backend"))
     }
+}
+
+/// Test helper: create DataFrame from columns (use in tests only)
+#[cfg(test)]
+#[macro_export]
+macro_rules! test_df {
+    ($($name:literal => $data:expr),+ $(,)?) => {
+        DataFrame::new(vec![$(Column::new($name.into(), $data),)+]).unwrap()
+    };
 }

@@ -1,7 +1,7 @@
 //! Correlation matrix plugin - calculate and display correlation matrix
 
 use crate::app::AppContext;
-use crate::backend::{is_numeric, unquote};
+use crate::backend::{is_numeric, unquote, df_cols};
 use crate::command::Command;
 use crate::plugin::Plugin;
 use crate::state::ViewState;
@@ -45,7 +45,7 @@ impl Command for Correlation {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         let view = app.req()?;
         let df = &view.dataframe;
-        let all_col_names: Vec<String> = df.get_column_names().iter().map(|s| s.to_string()).collect();
+        let all_col_names = df_cols(df);
 
         // Get columns to correlate: selected columns (if any and numeric) or all numeric
         let numeric_cols: Vec<String> = if self.selected_cols.len() >= 2 {

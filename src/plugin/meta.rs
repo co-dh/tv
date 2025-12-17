@@ -1,7 +1,7 @@
 //! Meta view plugin - data profile/metadata statistics
 
 use crate::app::AppContext;
-use crate::backend::{is_numeric, unquote};
+use crate::backend::{is_numeric, unquote, df_cols};
 use crate::command::Command;
 use crate::command::executor::CommandExecutor;
 use crate::command::transform::Xkey;
@@ -125,9 +125,7 @@ impl Command for MetaEnter {
         if self.col_names.len() == 1 {  // single col: move cursor
             if let Some(v) = app.view_mut() {
                 // Use col_names for parquet, dataframe for memory
-                let cols: Vec<String> = if v.col_names.is_empty() {
-                    v.dataframe.get_column_names().iter().map(|s| s.to_string()).collect()
-                } else { v.col_names.clone() };
+                let cols = if v.col_names.is_empty() { df_cols(&v.dataframe) } else { v.col_names.clone() };
                 if let Some(idx) = cols.iter().position(|c| c == &self.col_names[0]) {
                     v.state.cc = idx;
                 }
@@ -151,16 +149,12 @@ impl Command for MetaDelete {
             if let Some(parent) = app.stack.find_mut(pid) {
                 // Adjust col_separator if deleting key columns
                 if let Some(sep) = parent.col_separator {
-                    let cols = if parent.col_names.is_empty() {
-                        parent.dataframe.get_column_names().iter().map(|s| s.to_string()).collect()
-                    } else { parent.col_names.clone() };
+                    let cols = if parent.col_names.is_empty() { df_cols(&parent.dataframe) } else { parent.col_names.clone() };
                     let adj = self.col_names.iter().filter(|c| cols.iter().position(|x| x == *c).map(|i| i < sep).unwrap_or(false)).count();
                     parent.col_separator = Some(sep.saturating_sub(adj));
                 }
                 // Init col_names from df if empty, then remove deleted columns
-                if parent.col_names.is_empty() {
-                    parent.col_names = parent.dataframe.get_column_names().iter().map(|s| s.to_string()).collect();
-                }
+                if parent.col_names.is_empty() { parent.col_names = df_cols(&parent.dataframe); }
                 parent.col_names.retain(|c| !self.col_names.contains(c));
                 // Clear cache to force re-fetch with new column list
                 parent.fetch_cache = None;
@@ -232,7 +226,7 @@ fn is_numeric_str(s: &str) -> bool {
 
 /// Compute stats from in-memory DataFrame via LazyFrame + SQL
 fn lf_stats(df: &DataFrame) -> Result<DataFrame> {
-    let cols: Vec<String> = df.get_column_names().iter().map(|s| s.to_string()).collect();
+    let cols = df_cols(df);
     let dtypes = df.dtypes();
     let types: Vec<String> = dtypes.iter().map(|dt| format!("{:?}", dt)).collect();
     let n = df.height() as f64;
@@ -248,7 +242,7 @@ fn lf_stats(df: &DataFrame) -> Result<DataFrame> {
 /// Compute grouped column statistics - stats per unique key combination
 /// Used when xkey columns are set; shows stats for each group separately
 fn grp_stats(df: &DataFrame, keys: &[String]) -> Result<DataFrame> {
-    let all: Vec<String> = df.get_column_names().iter().map(|s| s.to_string()).collect();
+    let all = df_cols(df);
     let non_keys: Vec<&String> = all.iter().filter(|c| !keys.contains(c)).collect();
 
     // Get unique key combinations

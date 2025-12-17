@@ -35,21 +35,17 @@ impl Backend for Memory<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_df;
 
     #[test]
     fn test_memory_cols() {
-        let df = DataFrame::new(vec![
-            Column::new("a".into(), vec![1, 2, 3]),
-            Column::new("b".into(), vec!["x", "y", "z"]),
-        ]).unwrap();
+        let df = test_df!("a" => vec![1, 2, 3], "b" => vec!["x", "y", "z"]);
         assert_eq!(Memory(&df, vec![]).cols("").unwrap(), vec!["a", "b"]);
     }
 
     #[test]
     fn test_memory_metadata() {
-        let df = DataFrame::new(vec![
-            Column::new("a".into(), vec![1, 2, 3]),
-        ]).unwrap();
+        let df = test_df!("a" => vec![1, 2, 3]);
         let (rows, cols) = Memory(&df, vec![]).metadata("").unwrap();
         assert_eq!(rows, 3);
         assert_eq!(cols, vec!["a"]);
@@ -57,9 +53,7 @@ mod tests {
 
     #[test]
     fn test_memory_fetch_rows() {
-        let df = DataFrame::new(vec![
-            Column::new("a".into(), (0..100).collect::<Vec<i32>>()),
-        ]).unwrap();
+        let df = test_df!("a" => (0..100).collect::<Vec<i32>>());
         let slice = Memory(&df, vec![]).fetch_rows("", 10, 5).unwrap();
         assert_eq!(slice.height(), 5);
         assert_eq!(slice.column("a").unwrap().get(0).unwrap().try_extract::<i32>().unwrap(), 10);
@@ -67,18 +61,14 @@ mod tests {
 
     #[test]
     fn test_memory_distinct() {
-        let df = DataFrame::new(vec![
-            Column::new("cat".into(), vec!["a", "b", "a", "c", "b"]),
-        ]).unwrap();
+        let df = test_df!("cat" => vec!["a", "b", "a", "c", "b"]);
         let vals = Memory(&df, vec![]).distinct("", "cat").unwrap();
         assert_eq!(vals.len(), 3);
     }
 
     #[test]
     fn test_memory_freq_simple() {
-        let df = DataFrame::new(vec![
-            Column::new("cat".into(), vec!["a", "b", "a", "a", "b"]),
-        ]).unwrap();
+        let df = test_df!("cat" => vec!["a", "b", "a", "a", "b"]);
         let freq = Memory(&df, vec![]).freq("", "cat").unwrap();
         assert_eq!(freq.height(), 2);
         assert_eq!(freq.column("Cnt").unwrap().get(0).unwrap().try_extract::<u32>().unwrap(), 3);
@@ -86,27 +76,20 @@ mod tests {
 
     #[test]
     fn test_memory_freq_keyed() {
-        let df = DataFrame::new(vec![
-            Column::new("grp".into(), vec!["x", "x", "y", "y"]),
-            Column::new("cat".into(), vec!["a", "a", "a", "b"]),
-        ]).unwrap();
+        let df = test_df!("grp" => vec!["x", "x", "y", "y"], "cat" => vec!["a", "a", "a", "b"]);
         let freq = Memory(&df, vec!["grp".into()]).freq("", "cat").unwrap();
         assert_eq!(freq.height(), 3); // (x,a)=2, (y,a)=1, (y,b)=1
     }
 
     #[test]
     fn test_memory_filter() {
-        let df = DataFrame::new(vec![
-            Column::new("a".into(), vec![1, 2, 3, 4, 5]),
-        ]).unwrap();
+        let df = test_df!("a" => vec![1, 2, 3, 4, 5]);
         assert_eq!(Memory(&df, vec![]).filter("", "a > 3", 1000).unwrap().height(), 2);
     }
 
     #[test]
     fn test_memory_sort_head() {
-        let df = DataFrame::new(vec![
-            Column::new("a".into(), vec![3, 1, 4, 1, 5, 9, 2, 6]),
-        ]).unwrap();
+        let df = test_df!("a" => vec![3, 1, 4, 1, 5, 9, 2, 6]);
         // Sort ascending, take 3
         let r = Memory(&df, vec![]).sort_head("", "a", false, 3).unwrap();
         assert_eq!(r.height(), 3);
@@ -121,11 +104,11 @@ mod tests {
 
     #[test]
     fn test_memory_freq_agg() {
-        let df = DataFrame::new(vec![
-            Column::new("cat".into(), vec!["A", "A", "B", "B", "B"]),
-            Column::new("x".into(), vec![1i64, 2, 3, 4, 5]),
-            Column::new("y".into(), vec![10i64, 20, 30, 40, 50]),
-        ]).unwrap();
+        let df = test_df!(
+            "cat" => vec!["A", "A", "B", "B", "B"],
+            "x" => vec![1i64, 2, 3, 4, 5],
+            "y" => vec![10i64, 20, 30, 40, 50]
+        );
         let r = Memory(&df, vec![]).freq_agg("", "cat", "TRUE").unwrap();
         // Should have: cat, Cnt, x_min, x_max, x_sum, y_min, y_max, y_sum
         assert!(r.column("Cnt").is_ok());
@@ -143,10 +126,7 @@ mod tests {
     #[test]
     fn test_freq_agg_bg_thread() {
         // Test SQL in background thread - reproduces the hang issue
-        let df = DataFrame::new(vec![
-            Column::new("cat".into(), vec!["A", "A", "B", "B", "B"]),
-            Column::new("x".into(), vec![1i64, 2, 3, 4, 5]),
-        ]).unwrap();
+        let df = test_df!("cat" => vec!["A", "A", "B", "B", "B"], "x" => vec![1i64, 2, 3, 4, 5]);
         let df2 = df.clone();
         let handle = std::thread::spawn(move || {
             eprintln!("BG: starting freq_agg");

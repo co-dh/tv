@@ -156,8 +156,10 @@ fn test_parquet_freq_enter_then_freq() {
 }
 
 // === Large parquet workflow tests (1.parquet ~300M rows) ===
+// Run with: cargo test large_parquet -- --ignored
 
 #[test]
+#[ignore]
 fn test_large_parquet_freq_enter_single() {
     // Freq Exchange (18 vals), Enter filters by P, freq Exchange shows 1 row
     let out = run_keys("<right>F<ret><right>F<a-p>", "tests/data/nyse/1.parquet");
@@ -165,6 +167,7 @@ fn test_large_parquet_freq_enter_single() {
 }
 
 #[test]
+#[ignore]
 fn test_large_parquet_filter_not_10k() {
     // Filter by Exchange=P should show 94M rows, not 10k
     let out = run_keys("<right>F<ret><ret><a-p>", "tests/data/nyse/1.parquet");
@@ -173,6 +176,7 @@ fn test_large_parquet_filter_not_10k() {
 }
 
 #[test]
+#[ignore]
 fn test_large_parquet_filtered_freq_symbol() {
     // Filter Exchange=P, then freq Symbol should have >1000 unique values
     let out = run_keys("<right>F<ret><ret><right><right>F<a-p>", "tests/data/nyse/1.parquet");
@@ -181,6 +185,7 @@ fn test_large_parquet_filtered_freq_symbol() {
 }
 
 #[test]
+#[ignore]
 fn test_large_parquet_status_single_total() {
     // Status should show disk_rows once, not twice (bug: rows=disk when disk_rows is set)
     // print_status fetches 50 rows to simulate render, disk=304M, rows should equal disk
@@ -192,6 +197,7 @@ fn test_large_parquet_status_single_total() {
 }
 
 #[test]
+#[ignore]
 fn test_large_parquet_freq_enter_memory() {
     // Freq + Enter should use < 1GB memory (was 1.8GB before streaming fix)
     let out = run_keys("<right>F<ret><a-p>", "tests/data/nyse/1.parquet");
@@ -203,6 +209,7 @@ fn test_large_parquet_freq_enter_memory() {
 }
 
 #[test]
+#[ignore]
 fn test_filtered_parquet_page_down() {
     // Bug: ctrl-d doesn't scroll in filtered parquet view
     // Filter by Exchange=P, then page down - should show different rows

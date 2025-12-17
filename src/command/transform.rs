@@ -1,4 +1,5 @@
 use crate::app::AppContext;
+use crate::backend::df_cols;
 use crate::command::Command;
 use anyhow::{anyhow, Result};
 use polars::prelude::*;
@@ -13,7 +14,7 @@ impl Command for DelCol {
             let v = app.req_mut()?;
             // Count how many deleted cols are before separator
             let sep_adjust = if let Some(sep) = v.col_separator {
-                let all: Vec<String> = v.dataframe.get_column_names().iter().map(|s| s.to_string()).collect();
+                let all = df_cols(&v.dataframe);
                 self.col_names.iter().filter(|c| all.iter().position(|n| n == *c).map(|i| i < sep).unwrap_or(false)).count()
             } else { 0 };
             for c in &self.col_names { v.dataframe = v.dataframe.drop(c)?; }
@@ -180,9 +181,7 @@ impl Command for Xkey {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         let v = app.req_mut()?;
         // Use col_names for parquet, dataframe for memory
-        let all: Vec<String> = if v.col_names.is_empty() {
-            v.dataframe.get_column_names().iter().map(|s| s.to_string()).collect()
-        } else { v.col_names.clone() };
+        let all = if v.col_names.is_empty() { df_cols(&v.dataframe) } else { v.col_names.clone() };
         let rest: Vec<String> = all.iter().filter(|c| !self.col_names.contains(c)).cloned().collect();
         let mut order = self.col_names.clone();
         order.extend(rest);

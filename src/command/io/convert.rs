@@ -170,6 +170,7 @@ pub fn apply_schema(df: DataFrame, schema: &Schema) -> (DataFrame, Option<String
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_df;
 
     #[test]
     fn test_is_pure_int() {
@@ -199,11 +200,11 @@ mod tests {
 
     #[test]
     fn test_convert_types_mixed() {
-        let df = DataFrame::new(vec![
-            Column::new("bbo_ind".into(), &["O", "E", "A"]),
-            Column::new("price".into(), &["10.5", "11", "12.5"]),
-            Column::new("volume".into(), &["100", "200", "300"]),
-        ]).unwrap();
+        let df = test_df!(
+            "bbo_ind" => &["O", "E", "A"],
+            "price" => &["10.5", "11", "12.5"],
+            "volume" => &["100", "200", "300"]
+        );
         let df = convert_types(df);
         assert_eq!(df.column("bbo_ind").unwrap().dtype(), &DataType::String);
         assert_eq!(df.column("price").unwrap().dtype(), &DataType::Float64);

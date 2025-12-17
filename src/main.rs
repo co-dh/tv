@@ -10,7 +10,7 @@ mod theme;
 
 use anyhow::Result;
 use app::AppContext;
-use backend::Backend;
+use backend::{Backend, df_cols};
 use command::executor::CommandExecutor;
 use command::io::{From, Save};
 use command::nav::{Goto, GotoCol, ToggleInfo, Decimals, ToggleSel, ClearSel, SelAll, SelRows};
@@ -324,7 +324,7 @@ fn print(app: &mut AppContext) {
         println!("=== {} ({} rows) ===", view.name, view.rows());
         fetch_lazy(view);
         // Print columns
-        let cols: Vec<&str> = view.dataframe.get_column_names().iter().map(|c| c.as_str()).collect();
+        let cols = df_cols(&view.dataframe);
         println!("{}", cols.join(","));
         // Print first few rows
         let n = view.dataframe.height().min(10);
@@ -783,7 +783,7 @@ fn do_command_picker(app: &mut AppContext) -> Result<()> {
 /// Jump to column by name (@)
 fn do_goto_col(app: &mut AppContext) -> Result<()> {
     if let Some(view) = app.view() {
-        let col_names: Vec<String> = view.dataframe.get_column_names().iter().map(|s| s.to_string()).collect();
+        let col_names = df_cols(&view.dataframe);
         let result = picker::fzf(col_names.clone(), "Column: ");
         app.needs_redraw = true;
         if let Ok(Some(selected)) = result {

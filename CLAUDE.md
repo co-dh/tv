@@ -76,6 +76,8 @@ src/
 - If result is N items from hints → `col IN ('a', 'b', ...)`
 - Otherwise (not in hints) → raw SQL WHERE clause
 
+# Idea
+GPU? cache meta.
 # Todo
 - load tests/data/nyse/1.parquet M0D is not working, M1<ret> neither.
 - :cargo background fetch still leaks package descriptions to terminal (setsid not enough)

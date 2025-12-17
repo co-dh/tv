@@ -1,6 +1,7 @@
 //! Pivot table plugin - reshape data with row keys, pivot column, and aggregation
 
 use crate::app::AppContext;
+use crate::backend::df_cols;
 use crate::command::Command;
 use crate::picker;
 use crate::plugin::Plugin;
@@ -41,7 +42,7 @@ impl Command for PivotPick {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         let (cols, keys, df, parent_id, parent_name) = {
             let v = app.req()?;
-            let cols: Vec<String> = v.dataframe.get_column_names().iter().map(|s| s.to_string()).collect();
+            let cols = df_cols(&v.dataframe);
             let keys: Vec<String> = v.col_separator.map(|sep| cols[..sep].to_vec()).unwrap_or_default();
             if keys.is_empty() { return Err(anyhow!("Set xkey columns first (!)")); }
             (cols, keys, v.dataframe.clone(), v.id, v.name.clone())
@@ -96,7 +97,7 @@ impl Command for Pivot {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         let (keys, df, parent_id, parent_name) = {
             let v = app.req()?;
-            let cols: Vec<String> = v.dataframe.get_column_names().iter().map(|s| s.to_string()).collect();
+            let cols = df_cols(&v.dataframe);
             let keys: Vec<String> = v.col_separator.map(|sep| cols[..sep].to_vec()).unwrap_or_default();
             if keys.is_empty() { return Err(anyhow!("Set xkey columns first (!)")); }
             (keys, v.dataframe.clone(), v.id, v.name.clone())

@@ -27,3 +27,12 @@ python3 tool/measure.py
 ```
 
 Focus on files with highest bug counts first (main.rs, system.rs, renderer.rs).
+
+## dedup_rust Tool
+
+Find logic duplication using alpha-equivalence (normalizes variable names):
+```bash
+~/repo/dedup_rust/target/release/dedup_rust src/
+```
+
+Finds patterns like `Series::new().into()`, `.column().unwrap().get()` repeated across files.
