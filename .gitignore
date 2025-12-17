@@ -9,3 +9,4 @@ commands.txt
 !tests/data/*.parquet
 *.gz
 tmp/
+nouse/
