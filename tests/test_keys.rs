@@ -40,6 +40,21 @@ fn test_keys_csv_meta() {
 }
 
 #[test]
+fn test_keys_meta_filter() {
+    // Meta view, then filter with \ - should filter columns
+    let output = run_keys("M<backslash>a<ret>", "tests/data/basic.csv");
+    assert!(output.contains("(1 row"), "\\ in meta should filter to 1 row (col a): {}", output);
+}
+
+#[test]
+fn test_keys_folder_filter() {
+    // Folder view, then filter with \ - should filter files
+    let output = run_keys(":ls<ret><backslash>Cargo<ret>", ".");
+    assert!(output.contains("Cargo"), "\\ in folder should filter to Cargo files: {}", output);
+    assert!(!output.contains("No binding"), "backslash should have binding in folder: {}", output);
+}
+
+#[test]
 fn test_keys_freq_filter() {
     // Freq on b, then filter with \ - should work in any view
     let output = run_keys("<right>F<backslash>x<ret>", "tests/data/basic.csv");

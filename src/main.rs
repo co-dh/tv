@@ -473,6 +473,7 @@ fn key_str(key: &KeyEvent) -> String {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     match key.code {
         KeyCode::Char(c) if ctrl => format!("<c-{}>", c.to_ascii_lowercase()),
+        KeyCode::Char('\\') => "<backslash>".into(),
         KeyCode::Char(c) => c.to_string(),
         KeyCode::Enter => "<ret>".into(),
         KeyCode::Esc => "<esc>".into(),
@@ -1021,5 +1022,12 @@ mod tests {
         let h = hints(&df, "val", 0, None);
         // All distinct values returned
         assert_eq!(h.len(), 600, "All distinct values should be returned");
+    }
+
+    #[test]
+    fn test_key_str_backslash() {
+        use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let key = KeyEvent::new(KeyCode::Char('\\'), KeyModifiers::NONE);
+        assert_eq!(key_str(&key), "<backslash>", "backslash should map to <backslash>");
     }
 }
