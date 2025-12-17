@@ -735,10 +735,11 @@ fn do_filter(app: &mut AppContext) -> Result<()> {
         let is_str = v.dataframe.column(&col_name).ok()
             .map(|c| matches!(c.dtype(), polars::prelude::DataType::String)).unwrap_or(false);
         let file = v.filename.as_deref();
-        Some((hints(&v.dataframe, &col_name, v.state.cr, file), col_name, is_str))
+        let header = backend::df_cols(&v.dataframe).join(" | ");
+        Some((hints(&v.dataframe, &col_name, v.state.cr, file), col_name, is_str, header))
     });
-    if let Some((hint_list, col_name, is_str)) = info {
-        let expr_opt = picker::fzf_filter(hint_list, "WHERE> ", &col_name, is_str);
+    if let Some((hint_list, col_name, is_str, header)) = info {
+        let expr_opt = picker::fzf_filter(hint_list, "WHERE> ", &col_name, is_str, Some(&header));
         app.needs_redraw = true;
         if let Ok(Some(expr)) = expr_opt {
             run(app, Box::new(Filter { expr }));

@@ -14,11 +14,22 @@ pub fn fzf(items: Vec<String>, prompt: &str) -> Result<Option<String>> {
 /// Use external fzf with multi-select - returns (selections, query)
 /// --print-query: line1=query, rest=selections (tab to select multiple)
 pub fn fzf_multi(items: Vec<String>, prompt: &str) -> Result<(Vec<String>, String)> {
+    fzf_multi_header(items, prompt, None)
+}
+
+/// fzf with optional header line (for showing column context)
+pub fn fzf_multi_header(items: Vec<String>, prompt: &str, header: Option<&str>) -> Result<(Vec<String>, String)> {
     terminal::disable_raw_mode()?;
     execute!(std::io::stdout(), cursor::Show)?;
 
+    let mut args = vec!["--prompt", prompt, "--layout=reverse", "--height=50%", "--no-sort", "--print-query", "--multi"];
+    let header_owned: String;
+    if let Some(h) = header {
+        header_owned = h.to_string();
+        args.extend(["--header", &header_owned]);
+    }
     let mut child = Command::new("fzf")
-        .args(["--prompt", prompt, "--layout=reverse", "--height=50%", "--no-sort", "--print-query", "--multi"])
+        .args(&args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()?;
@@ -43,8 +54,8 @@ pub fn fzf_multi(items: Vec<String>, prompt: &str) -> Result<(Vec<String>, Strin
 /// - 1 item from hints → col = 'value'
 /// - N items from hints → col IN ('a', 'b')
 /// - else → raw SQL
-pub fn fzf_filter(hints: Vec<String>, prompt: &str, col: &str, is_str: bool) -> Result<Option<String>> {
-    let (sels, query) = fzf_multi(hints.clone(), prompt)?;
+pub fn fzf_filter(hints: Vec<String>, prompt: &str, col: &str, is_str: bool, header: Option<&str>) -> Result<Option<String>> {
+    let (sels, query) = fzf_multi_header(hints.clone(), prompt, header)?;
     // Check how many selections are from hints
     let from_hints: Vec<&String> = sels.iter().filter(|s| hints.contains(s)).collect();
     let expr = if from_hints.len() == 1 {
