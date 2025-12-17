@@ -126,8 +126,8 @@ impl Renderer {
             for x in xs.iter_mut() { *x -= shift; }
         }
 
-        // Reserve rows at bottom: header(1) + status(1) + tabs(1 if shown)
-        let bottom_reserve = if show_tabs { 3 } else { 2 };
+        // Reserve rows: header(1) + footer_header(1) + status(1) + tabs(1 if shown)
+        let bottom_reserve = if show_tabs { 4 } else { 3 };
         let end_row = (state.r0 + (area.height as usize).saturating_sub(bottom_reserve)).min(total_rows);
 
         let col_sep = view.col_separator;
@@ -167,6 +167,9 @@ impl Renderer {
                 buf[(x, screen_row)].reset();
             }
         }
+
+        // Footer header (aligned with table)
+        Self::render_header_footer(frame, df, state, &xs, screen_width, row_num_width, theme, area, show_tabs);
     }
 
     /// Render column headers
@@ -480,9 +483,9 @@ impl Renderer {
             let n = n.split(':').next().unwrap_or(n);   // remove :suffix
             if n.len() > 20 { format!("{}…", &n[..19]) } else { n.to_string() }
         }).collect();
-        // Fill background (use header_bg for contrast)
+        // Fill background
         let buf = frame.buffer_mut();
-        let bg = to_rcolor(theme.header_bg);
+        let bg = to_rcolor(theme.tab_bg);
         for x in 0..area.width { buf[(x, row)].set_style(Style::default().bg(bg)).set_char(' '); }
         // Render tabs
         let selected = names.len().saturating_sub(1);
@@ -492,6 +495,31 @@ impl Renderer {
             .highlight_style(Style::default().fg(to_rcolor(theme.header_fg)).bg(bg).add_modifier(Modifier::BOLD))
             .divider("│");
         frame.render_widget(tabs, tab_area);
+    }
+
+    /// Render column header above tabs/status (footer header) - aligned with table
+    fn render_header_footer(frame: &mut Frame, df: &DataFrame, state: &TableState, xs: &[i32], screen_width: i32, row_num_width: u16, theme: &Theme, area: Rect, show_tabs: bool) {
+        let row = area.height.saturating_sub(if show_tabs { 3 } else { 2 });
+        if row == 0 { return; }
+        let buf = frame.buffer_mut();
+        let style = Style::default().bg(to_rcolor(theme.header_bg)).fg(to_rcolor(theme.header_fg));
+        // Fill row
+        for x in 0..area.width { buf[(x, row)].set_style(style); buf[(x, row)].set_char(' '); }
+        let x_pos = if row_num_width > 0 { row_num_width + 1 } else { 0 };
+        for (col_idx, col_name) in df.get_column_names().iter().enumerate() {
+            let x = xs.get(col_idx).copied().unwrap_or(0);
+            let next_x = xs.get(col_idx + 1).copied().unwrap_or(x);
+            if next_x <= 0 { continue; }
+            if x >= screen_width { break; }
+            let col_width = state.col_widths.get(col_idx).copied().unwrap_or(10) as usize;
+            let start_x = x.max(0) as u16 + x_pos;
+            let display = format!("{:width$}", col_name.as_str(), width = col_width);
+            for (i, ch) in display.chars().take(col_width).enumerate() {
+                let px = start_x + i as u16;
+                if px >= area.width { break; }
+                buf[(px, row)].set_char(ch);
+            }
+        }
     }
 
     /// Render status bar

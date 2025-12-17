@@ -22,6 +22,7 @@ pub struct Theme {
     pub info_key_fg: Color,
     pub status_bg: Color,
     pub status_fg: Color,
+    pub tab_bg: Color,
 }
 
 impl Default for Theme {
@@ -41,6 +42,7 @@ impl Default for Theme {
             info_key_fg: Color::Yellow,
             status_bg: Color::DarkGrey,
             status_fg: Color::White,
+            tab_bg: Color::Rgb { r: 48, g: 48, b: 64 },
         }
     }
 }
@@ -102,6 +104,7 @@ fn load_themes(path: &Path) -> HashMap<String, Theme> {
             info_key_fg: get("info_key_fg", Color::Yellow),
             status_bg: get("status_bg", Color::DarkGrey),
             status_fg: get("status_fg", Color::White),
+            tab_bg: get("tab_bg", Color::Rgb { r: 48, g: 48, b: 64 }),
         };
         (name, theme)
     }).collect()

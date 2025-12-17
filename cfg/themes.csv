@@ -13,6 +13,7 @@ default,info_border_fg,#00ffff
 default,info_key_fg,#ffff00
 default,status_bg,#444444
 default,status_fg,#ffffff
+default,tab_bg,#303040
 light,header_bg,#e0e0e8
 light,header_fg,#000000
 light,cursor_bg,#0066cc
@@ -27,3 +28,4 @@ light,info_border_fg,#006699
 light,info_key_fg,#996600
 light,status_bg,#d0d0d8
 light,status_fg,#000000
+light,tab_bg,#c8c8d0

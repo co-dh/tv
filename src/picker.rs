@@ -22,14 +22,9 @@ pub fn fzf_multi_header(items: Vec<String>, prompt: &str, header: Option<&str>) 
     terminal::disable_raw_mode()?;
     execute!(std::io::stdout(), cursor::Show)?;
 
-    let mut args = vec!["--prompt", prompt, "--layout=reverse", "--height=50%", "--no-sort", "--print-query", "--multi"];
-    let header_owned: String;
-    if let Some(h) = header {
-        header_owned = h.to_string();
-        args.extend(["--header", &header_owned]);
-    }
+    let _ = header;  // reserved for future use
     let mut child = Command::new("fzf")
-        .args(&args)
+        .args(["--prompt", prompt, "--layout=reverse", "--height=50%", "--no-sort", "--print-query", "--multi"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()?;
