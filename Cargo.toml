@@ -9,7 +9,7 @@ edition = "2024"
 # codegen-units = 1
 
 [dependencies]
-polars = { version = "0.52", default-features = false, features = ["lazy", "csv", "parquet", "sql", "new_streaming", "pivot", "dtype-struct", "temporal", "rows"] }
+polars = { version = "0.52", default-features = false, features = ["lazy", "csv", "parquet", "sql", "new_streaming", "pivot", "dtype-struct", "dtype-array", "dtype-i8", "dtype-i16", "dtype-u8", "dtype-u16", "temporal", "rows"] }
 polars-ops = { version = "0.52", features = ["cov"] }
 ratatui = "0.30.0-beta.0"
 anyhow = "1.0"
