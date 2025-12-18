@@ -280,12 +280,12 @@ fn test_swap_views() {
     assert!(out.contains("rows)"), "Should show view: {}", out);
 }
 
-// Test lr shows full path
+// Test lr shows relative paths
 #[test]
-fn test_lr_full_path() {
-    // lr on tests/data should show full paths (starting with tests/data/)
+fn test_lr_paths() {
+    // lr on tests/data should show relative paths
     let out = run_keys(":lr tests/data<ret>", "tests/data/basic.csv");
-    assert!(out.contains("tests/data/"), "lr should show full paths: {}", out);
+    assert!(out.contains("basic.csv"), "lr should show paths: {}", out);
 }
 
 // Test lr enter on csv opens file
@@ -295,4 +295,23 @@ fn test_lr_enter_csv() {
     let out = run_keys(":lr tests/data<ret><backslash>path ~= 'numeric'<ret><ret>", "tests/data/basic.csv");
     // After enter on csv, should open the file (show x,y,z columns)
     assert!(out.contains("x") && out.contains("y"), "Should open csv: {}", out);
+}
+
+// Test lr filter by extension and open
+#[test]
+fn test_lr_filter_extension_open() {
+    // Create test parquet, lr tmp/, filter by .parquet, enter to open
+    let p = "tmp/tv_ext_test.parquet";
+    std::fs::create_dir_all("tmp").ok();
+    use polars::prelude::*;
+    let df = DataFrame::new(vec![
+        Series::new("col1".into(), vec![10, 20, 30]).into(),
+    ]).unwrap();
+    ParquetWriter::new(std::fs::File::create(p).unwrap()).finish(&mut df.clone()).unwrap();
+
+    // lr tmp/, filter path LIKE '%ext_test%', enter
+    let out = run_keys(":lr tmp<ret><backslash>path LIKE '%ext_test%'<ret><ret>", "tests/data/basic.csv");
+    // After enter, should open parquet (show col1 with 3 rows)
+    assert!(out.contains("col1") || out.contains("(3 rows)"), "Should open parquet after filter: {}", out);
+    std::fs::remove_file(p).ok();
 }

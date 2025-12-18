@@ -368,10 +368,12 @@ impl Renderer {
 
     /// Calculate column width
     fn col_width(df: &DataFrame, col_idx: usize, state: &TableState, decimals: usize) -> u16 {
-        const MAX_WIDTH: usize = 30;
         const MIN_WIDTH: usize = 3;
+        // Path columns get more width (for lr view)
+        let col_name = df.get_column_names()[col_idx];
+        let max_width_limit = if col_name == "path" { 80 } else { 30 };
 
-        let mut max_width = df.get_column_names()[col_idx].len();
+        let mut max_width = col_name.len();
         let sample_size = ((state.viewport.0.saturating_sub(2) as usize) * 3).max(100);
         let start_row = state.cr.saturating_sub(sample_size / 2);
         let end_row = (start_row + sample_size).min(df.height());
@@ -379,10 +381,10 @@ impl Renderer {
         for row_idx in start_row..end_row {
             let value = Self::format_value(df, col_idx, row_idx, decimals);
             max_width = max_width.max(value.len());
-            if max_width >= MAX_WIDTH { break; }
+            if max_width >= max_width_limit { break; }
         }
 
-        max_width.max(MIN_WIDTH).min(MAX_WIDTH) as u16
+        max_width.max(MIN_WIDTH).min(max_width_limit) as u16
     }
 
     /// Format number with commas (handles negatives)

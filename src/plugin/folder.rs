@@ -33,8 +33,10 @@ impl Plugin for FolderPlugin {
     fn handle(&self, cmd: &str, app: &mut AppContext) -> Option<Box<dyn Command>> {
         let v = app.view()?;
         let df = &v.dataframe;
-        // Extract parent dir from view name (ls:path or ls -r:path)
-        let dir = v.name.split(':').nth(1).map(|s| PathBuf::from(s)).unwrap_or_else(|| PathBuf::from("."));
+        // Extract parent dir from view name (ls:path or ls -r:path [& filter])
+        let dir = v.name.split(':').nth(1)
+            .map(|s| s.split(" & ").next().unwrap_or(s))  // strip filter part
+            .map(|s| PathBuf::from(s)).unwrap_or_else(|| PathBuf::from("."));
 
         // For delete: get all selected paths (or current row)
         if cmd == "delete" {
@@ -50,12 +52,16 @@ impl Plugin for FolderPlugin {
         }
 
         // For enter: get current row info
-        let path = df.column("path").ok()?.get(v.state.cr).ok()
+        let rel_path = df.column("path").ok()?.get(v.state.cr).ok()
             .map(|v| unquote(&v.to_string()))?;
         let is_dir = df.column("dir").ok()
             .and_then(|c| c.get(v.state.cr).ok())
             .map(|v| unquote(&v.to_string()) == "x")
             .unwrap_or(false);
+        // For lr (recursive), join base dir with relative path
+        let path = if v.name.starts_with("ls -r:") {
+            dir.join(&rel_path).to_string_lossy().to_string()
+        } else { rel_path };
 
         match cmd {
             "enter" => {

@@ -163,7 +163,7 @@ pub fn lr(dir: &Path) -> Result<DataFrame> {
     for p in files {
         let full = dir.join(p);
         if let Ok(m) = full.metadata() {
-            paths.push(full.to_string_lossy().to_string());  // full path
+            paths.push(p.to_string());  // relative path
             sizes.push(m.size());
             modified.push(m.mtime() * 1_000_000);
         }

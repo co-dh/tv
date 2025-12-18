@@ -368,7 +368,7 @@ fn wait_bg_meta(app: &mut AppContext) {
     }
 }
 
-/// Fetch visible rows for lazy parquet view (simulates render)
+/// Fetch visible rows for lazy parquet view
 fn fetch_lazy(view: &mut state::ViewState) {
     if let Some(ref path) = view.parquet_path {
         let offset = view.state.r0;

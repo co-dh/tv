@@ -36,21 +36,20 @@ impl Command for Filter {
         let id = app.next_id();
         let v = app.req()?;
         let path = v.path().to_string();
-        // Lazy filtered view for parquet: keep parquet_path + filter_clause
+        // Chain filters with AND
+        let combined = match &v.filter_clause {
+            Some(prev) => format!("({}) AND ({})", prev, self.expr),
+            None => self.expr.clone(),
+        };
+        let name = format!("{} & {}", v.name, self.expr);
+        // Lazy for parquet (disk), materialized for in-memory
         if v.parquet_path.is_some() {
-            // Chain filters with AND
-            let combined = match &v.filter_clause {
-                Some(prev) => format!("({}) AND ({})", prev, self.expr),
-                None => self.expr.clone(),
-            };
             let count = v.backend().count_where(&path, &combined)?;
             let cols = v.col_names.clone();
-            let name = format!("{} & {}", v.name, self.expr);
             app.stack.push(crate::state::ViewState::new_filtered(id, name, path, cols, combined, count));
         } else {
-            let filtered = v.backend().filter(&path, &self.expr, FILTER_LIMIT)?;
-            let filename = v.filename.clone();
-            app.stack.push(crate::state::ViewState::new(id, self.expr.clone(), filtered, filename));
+            let filtered = v.backend().filter(&path, &combined, FILTER_LIMIT)?;
+            app.stack.push(crate::state::ViewState::new(id, name, filtered, v.filename.clone()));
         }
         Ok(())
     }
