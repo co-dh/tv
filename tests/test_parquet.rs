@@ -219,3 +219,21 @@ fn test_parquet_page_down() {
     let r2 = get_row(&with_pgdn);
     assert_ne!(r1, r2, "Page down should scroll: before={:?} after={:?}", r1, r2);
 }
+
+#[test]
+fn test_hive_glob_pattern() {
+    // Load hive-partitioned parquet with glob pattern
+    let out = run_keys("", "tests/data/hive/date=*/data.parquet");
+    assert!(out.contains("500 rows"), "Should load 500 rows (5 days * 100): {}", out);
+    assert!(out.contains("date"), "Should have date column from hive partition: {}", out);
+}
+
+#[test]
+fn test_hive_freq_on_date() {
+    // Freq on date column (from hive partition)
+    // Navigate to date column (id, value, name, date = 3 right moves)
+    let out = run_keys("<right><right><right>F", "tests/data/hive/date=*/data.parquet");
+    assert!(out.contains("Freq:date"), "Should show freq on date: {}", out);
+    // Should have 5 unique dates
+    assert!(out.contains("(5 rows)"), "Should have 5 unique dates: {}", out);
+}
