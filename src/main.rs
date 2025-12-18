@@ -591,6 +591,8 @@ fn handle_cmd(app: &mut AppContext, cmd: &str) -> Result<bool> {
     if let Some(cmd_str) = keyhandler::to_cmd(app, cmd) {
         if let Some(c) = parse(&cmd_str, app) {
             run(app, c);
+            // Clear selection after xkey (Xkey auto-selects key cols, would toggle off on next !)
+            if cmd == "xkey" { if let Some(v) = app.view_mut() { v.selected_cols.clear(); } }
             return Ok(true);
         }
     }

@@ -7,8 +7,18 @@ use crate::app::AppContext;
 /// Returns None for interactive commands (need prompts) or navigation
 pub fn to_cmd(app: &AppContext, cmd: &str) -> Option<String> {
     match cmd {
-        // Column-based commands - resolve current column
-        "freq" => cur_col(app).map(|c| format!("freq {}", c)),
+        // Freq: use key columns if set, else current column
+        "freq" => {
+            let v = app.view()?;
+            let sep = v.col_separator.unwrap_or(0);
+            if sep > 0 {
+                // Use key columns for grouping
+                let cols = if v.col_names.is_empty() { crate::backend::df_cols(&v.dataframe) } else { v.col_names.clone() };
+                Some(format!("freq {}", cols[..sep].join(",")))
+            } else {
+                cur_col(app).map(|c| format!("freq {}", c))
+            }
+        }
         "sort" => cur_col(app).map(|c| format!("sort {}", c)),
         "sort-" => cur_col(app).map(|c| format!("sort -{}", c)),
         "derive" => cur_col(app).map(|c| format!("derive {}", c)),
@@ -74,21 +84,29 @@ fn cur_col(app: &AppContext) -> Option<String> {
     app.view().and_then(|v| v.col_name(v.state.cc))
 }
 
-/// Toggle current column as key, return xkey command with all keys
+/// Toggle selected columns (or current column) as keys, return xkey command
 fn toggle_key(app: &AppContext) -> Option<String> {
     let v = app.view()?;
-    let col = v.col_name(v.state.cc)?;
     let sep = v.col_separator.unwrap_or(0);
     let cols = if v.col_names.is_empty() { crate::backend::df_cols(&v.dataframe) } else { v.col_names.clone() };
+
+    // Get columns to toggle: selected cols or current col
+    let to_toggle: Vec<String> = if v.selected_cols.is_empty() {
+        vec![v.col_name(v.state.cc)?]
+    } else {
+        v.selected_cols.iter().filter_map(|&i| v.col_name(i)).collect()
+    };
 
     // Get current keys
     let mut keys: Vec<String> = cols[..sep].to_vec();
 
-    // Toggle: remove if exists, add if not
-    if let Some(pos) = keys.iter().position(|k| k == &col) {
-        keys.remove(pos);
-    } else {
-        keys.push(col);
+    // Toggle each column: remove if exists, add if not
+    for col in to_toggle {
+        if let Some(pos) = keys.iter().position(|k| k == &col) {
+            keys.remove(pos);
+        } else {
+            keys.push(col);
+        }
     }
 
     // Return xkey command (empty xkey clears all keys)

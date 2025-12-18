@@ -65,10 +65,11 @@ impl Backend for Gz<'_> {
         let r = sql(self.lf("")?, &format!("SELECT COUNT(*) as cnt FROM df WHERE {}", w))?;
         Ok(r.column("cnt")?.get(0)?.try_extract::<u32>().unwrap_or(0) as usize)
     }
-    /// Freq where - blocked if partial
-    fn freq_where(&self, _: &str, col: &str, w: &str) -> Result<DataFrame> {
+    /// Freq where - blocked if partial, supports multiple GROUP BY columns
+    fn freq_where(&self, _: &str, grp_cols: &[String], w: &str) -> Result<DataFrame> {
         self.require_complete()?;
-        sql(self.lf("")?, &format!("SELECT \"{}\", COUNT(*) as Cnt FROM df WHERE {} GROUP BY \"{}\" ORDER BY Cnt DESC", col, w, col))
+        let grp_sel = grp_cols.iter().map(|c| format!("\"{}\"", c)).collect::<Vec<_>>().join(", ");
+        sql(self.lf("")?, &format!("SELECT {}, COUNT(*) as Cnt FROM df WHERE {} GROUP BY {} ORDER BY Cnt DESC", grp_sel, w, grp_sel))
     }
 }
 

@@ -43,7 +43,10 @@ impl Plugin for FreqPlugin {
 
     fn parse(&self, cmd: &str, arg: &str) -> Option<Box<dyn Command>> {
         match cmd {
-            "freq" | "frequency" if !arg.is_empty() => Some(Box::new(Frequency { col_name: arg.to_string() })),
+            "freq" | "frequency" if !arg.is_empty() => {
+                let cols: Vec<String> = arg.split(',').map(|s| s.trim().to_string()).collect();
+                Some(Box::new(Frequency { col_names: cols }))
+            }
             "freq_enter" | "filter_parent" => Some(Box::new(FreqEnterCmd)),
             _ => None,
         }
@@ -52,9 +55,9 @@ impl Plugin for FreqPlugin {
 
 // === Commands ===
 
-/// Frequency table command - shows value counts for a column
+/// Frequency table command - shows value counts grouped by columns
 pub struct Frequency {
-    pub col_name: String,
+    pub col_names: Vec<String>,  // GROUP BY columns (key cols or current col)
 }
 
 impl Command for Frequency {
@@ -65,18 +68,23 @@ impl Command for Frequency {
         // Extract all data from view first (release borrow before mutations)
         let (parent_id, parent_rows, parent_name, path, key_cols, filter, sel_cols, freq_df, is_parquet, df_clone) = {
             let view = app.req()?;
-            let sel: Vec<String> = view.selected_cols.iter()
-                .filter_map(|&i| view.col_name(i))
-                .filter(|c| c != &self.col_name)
-                .collect();
+            // Selected cols for aggregation: explicit selection or current column
+            let sel: Vec<String> = if view.selected_cols.is_empty() {
+                view.col_name(view.state.cc).into_iter().filter(|c| !self.col_names.contains(c)).collect()
+            } else {
+                view.selected_cols.iter()
+                    .filter_map(|&i| view.col_name(i))
+                    .filter(|c| !self.col_names.contains(c))
+                    .collect()
+            };
             let backend = view.backend();
             let p = view.path().to_string();
             let cols = backend.cols(&p)?;
-            if !cols.contains(&self.col_name) {
-                return Err(anyhow!("Column '{}' not found", self.col_name));
+            for c in &self.col_names {
+                if !cols.contains(c) { return Err(anyhow!("Column '{}' not found", c)); }
             }
             let w = view.filter_clause.as_deref().unwrap_or("TRUE");
-            let df = backend.freq_where(&p, &self.col_name, w)?;
+            let df = backend.freq_where(&p, &self.col_names, w)?;
             let is_pq = view.parquet_path.is_some();
             let df_c = if !sel.is_empty() && !is_pq { Some(view.dataframe.clone()) } else { None };
             (view.id, view.rows(), view.name.clone(), p, view.key_cols(), view.filter_clause.clone(), sel, df, is_pq, df_c)
@@ -84,9 +92,10 @@ impl Command for Frequency {
 
         let result = add_freq_cols(freq_df)?;
         let id = app.next_id();
+        let name = format!("Freq:{}", self.col_names.join(","));
+        let freq_col = self.col_names.first().cloned().unwrap_or_default();
         let mut new_view = ViewState::new_freq(
-            id, format!("Freq:{}", self.col_name), result,
-            parent_id, parent_rows, parent_name, self.col_name.clone(),
+            id, name, result, parent_id, parent_rows, parent_name, freq_col,
         );
         if !key_cols.is_empty() { new_view.col_separator = Some(key_cols.len()); }
         app.stack.push(new_view);
@@ -96,9 +105,9 @@ impl Command for Frequency {
             let w = filter.as_deref().unwrap_or("TRUE");
             use crate::backend::{Backend, Polars, Memory};
             let agg_result = if is_parquet {
-                Polars.freq_agg(&path, &self.col_name, w, &sel_cols)
+                Polars.freq_agg(&path, &self.col_names, w, &sel_cols)
             } else if let Some(ref df) = df_clone {
-                Memory(df).freq_agg(&path, &self.col_name, w, &sel_cols)
+                Memory(df).freq_agg(&path, &self.col_names, w, &sel_cols)
             } else {
                 return Ok(());
             };
@@ -116,7 +125,7 @@ impl Command for Frequency {
         Ok(())
     }
 
-    fn to_str(&self) -> String { format!("freq {}", self.col_name) }
+    fn to_str(&self) -> String { format!("freq {}", self.col_names.join(",")) }
 }
 
 /// Freq Enter: pop freq view and filter parent by selected values

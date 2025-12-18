@@ -187,10 +187,28 @@ fn test_toggle_key_remove() {
 }
 
 #[test]
+fn test_toggle_key_selected_cols() {
+    // Select multiple columns with space, then ! toggles all selected as keys
+    // Start: a,b,c,d - select a and b with space, then ! to add both as keys
+    let out = run_keys("<space><right><space>!<a-p>", "tests/data/xkey.csv");
+    // Should have 2 key columns
+    assert!(out.contains("keys=2"), "should have 2 keys from selection: {}", out);
+}
+
+#[test]
 fn test_freq_after_meta() {
     // View meta, then q to return, then freq on current col
     let out = run_keys("MqF", "tests/data/basic.csv");
     assert!(out.contains("Freq:"), "Should show freq view: {}", out);
+}
+
+#[test]
+fn test_freq_by_key_columns() {
+    // Set key column with !, then press F to freq by key
+    // full.csv: name,city,value,score (cols 0,1,2,3)
+    // Set city as key, then freq should group by city
+    let out = run_keys("<right>!F", "tests/data/full.csv");
+    assert!(out.contains("Freq:city"), "Should freq by key column: {}", out);
 }
 
 #[test]

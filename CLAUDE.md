@@ -93,6 +93,12 @@ KeyEvent → key_str() → keymap.get_command() → keyhandler::to_cmd() → par
 # Known Issues (Fixed)
 - Space key in TUI must map to `<space>` in key_str(), not `" "`. Keymap expects `<space>`.
 
+# Freq Behavior
+- `!` toggles selected columns (or current col) as key columns
+- `F` freq: GROUP BY key columns (if set) or current column
+- Aggregates (min/max/sum) computed for selected columns, or current column if no selection
+- Key columns excluded from aggregation
+
 # Idea
 GPU? cache meta.
 # Todo

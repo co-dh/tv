@@ -145,15 +145,19 @@ pub trait Backend: Send + Sync {
         }
     }
 
-    /// Frequency with WHERE clause
-    fn freq_where(&self, path: &str, col: &str, w: &str) -> Result<DataFrame> {
-        sql(self.lf(path)?, &format!("SELECT \"{}\", COUNT(*) as Cnt FROM df WHERE {} GROUP BY \"{}\" ORDER BY Cnt DESC", col, w, col))
+    /// Frequency with WHERE clause, supports multiple GROUP BY columns
+    fn freq_where(&self, path: &str, grp_cols: &[String], w: &str) -> Result<DataFrame> {
+        let grp_sel = grp_cols.iter().map(|c| format!("\"{}\"", c)).collect::<Vec<_>>().join(", ");
+        let grp_by = grp_sel.clone();
+        sql(self.lf(path)?, &format!("SELECT {}, COUNT(*) as Cnt FROM df WHERE {} GROUP BY {} ORDER BY Cnt DESC", grp_sel, w, grp_by))
     }
 
-    /// Frequency with aggregates (min/max/sum) for selected columns only
-    fn freq_agg(&self, path: &str, grp: &str, w: &str, sel_cols: &[String]) -> Result<DataFrame> {
+    /// Frequency with aggregates (min/max/sum) for selected columns, supports multiple GROUP BY
+    fn freq_agg(&self, path: &str, grp_cols: &[String], w: &str, sel_cols: &[String]) -> Result<DataFrame> {
         let base = if w != "TRUE" { format!("WHERE {}", w) } else { String::new() };
-        let cnt_q = format!("SELECT \"{}\", COUNT(*) as Cnt FROM df {} GROUP BY \"{}\" ORDER BY Cnt DESC", grp, base, grp);
+        let grp_sel = grp_cols.iter().map(|c| format!("\"{}\"", c)).collect::<Vec<_>>().join(", ");
+        let grp_by = grp_sel.clone();
+        let cnt_q = format!("SELECT {}, COUNT(*) as Cnt FROM df {} GROUP BY {} ORDER BY Cnt DESC", grp_sel, base, grp_by);
         let mut result = sql(self.lf(path)?, &cnt_q)?;
 
         // Only aggregate selected columns (filter to numeric)
@@ -162,15 +166,18 @@ pub trait Backend: Send + Sync {
             .filter(|c| schema.get(c.as_str()).map(|dt| is_numeric(dt)).unwrap_or(false))
             .collect();
 
+        // Join columns for multi-column GROUP BY
+        let join_cols: Vec<Expr> = grp_cols.iter().map(|c| col(c)).collect();
+
         // Process each column separately to save memory
         for c in num_cols {
             let agg_q = format!(
-                "SELECT \"{}\", MIN(\"{}\") as {}_min, MAX(\"{}\") as {}_max, SUM(CAST(\"{}\" AS DOUBLE)) as {}_sum FROM df {} GROUP BY \"{}\"",
-                grp, c, c, c, c, c, c, base, grp
+                "SELECT {}, MIN(\"{}\") as {}_min, MAX(\"{}\") as {}_max, SUM(CAST(\"{}\" AS DOUBLE)) as {}_sum FROM df {} GROUP BY {}",
+                grp_sel, c, c, c, c, c, c, base, grp_by
             );
             if let Ok(agg_df) = sql(self.lf(path)?, &agg_q) {
                 result = result.lazy()
-                    .join(agg_df.lazy(), [col(grp)], [col(grp)], JoinArgs::new(JoinType::Left))
+                    .join(agg_df.lazy(), join_cols.clone(), join_cols.clone(), JoinArgs::new(JoinType::Left))
                     .collect()?;
             }
         }

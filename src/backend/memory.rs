@@ -49,7 +49,7 @@ mod tests {
     #[test]
     fn test_memory_freq() {
         let df = test_df!("cat" => vec!["a", "b", "a", "a", "b"]);
-        let freq = Memory(&df).freq_where("", "cat", "TRUE").unwrap();
+        let freq = Memory(&df).freq_where("", &["cat".into()], "TRUE").unwrap();
         assert_eq!(freq.height(), 2);
         assert_eq!(freq.column("Cnt").unwrap().get(0).unwrap().try_extract::<u32>().unwrap(), 3);
     }
