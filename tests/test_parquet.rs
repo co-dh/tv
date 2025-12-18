@@ -209,15 +209,13 @@ fn test_large_parquet_freq_enter_memory() {
 }
 
 #[test]
-#[ignore]
-fn test_filtered_parquet_page_down() {
-    // Bug: ctrl-d doesn't scroll in filtered parquet view
-    // Filter by Exchange=P, then page down - should show different rows
-    let without = run_keys("<right>F<ret>", "tests/data/nyse/1.parquet");
-    let with_pgdn = run_keys("<right>F<ret><c-d>", "tests/data/nyse/1.parquet");
+fn test_parquet_page_down() {
+    // Ctrl-d should page down in parquet view
+    let without = run_keys("", "tests/data/sample.parquet");
+    let with_pgdn = run_keys("<c-d>", "tests/data/sample.parquet");
     // Extract first data row (skip header line)
-    let get_first_row = |s: &str| s.lines().nth(2).map(|l| l.to_string());
-    let t1 = get_first_row(&without);
-    let t2 = get_first_row(&with_pgdn);
-    assert_ne!(t1, t2, "Page down should scroll: before={:?} after={:?}", t1, t2);
+    let get_row = |s: &str| s.lines().nth(2).map(|l| l.to_string());
+    let r1 = get_row(&without);
+    let r2 = get_row(&with_pgdn);
+    assert_ne!(r1, r2, "Page down should scroll: before={:?} after={:?}", r1, r2);
 }

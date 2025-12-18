@@ -66,32 +66,32 @@ fn test_keys_freq_filter() {
 
 #[test]
 fn test_keys_parquet_freq() {
-    let output = run_keys("F", "sample.parquet");
+    let output = run_keys("F", "tests/data/sample.parquet");
     assert!(output.contains("Freq:id"), "F should show freq view: {}", output);
 }
 
 #[test]
 fn test_keys_parquet_freq_enter() {
-    let output = run_keys("F<ret>", "sample.parquet");
+    let output = run_keys("F<ret>", "tests/data/sample.parquet");
     assert!(output.contains("(1 row"), "F<ret> should filter to 1 row: {}", output);
 }
 
 #[test]
 fn test_keys_parquet_sort_asc() {
-    let output = run_keys("<right>[", "sample.parquet");
+    let output = run_keys("<right>[", "tests/data/sample.parquet");
     // First data row should have age=18 (sorted ascending)
     assert!(output.contains(",18,"), "[ on age should sort asc: {}", output);
 }
 
 #[test]
 fn test_keys_parquet_sort_desc() {
-    let output = run_keys("<right>]", "sample.parquet");
-    // First data row should have age=73 (sorted descending)
-    assert!(output.contains(",73,"), "] on age should sort desc: {}", output);
+    let output = run_keys("<right>]", "tests/data/sample.parquet");
+    // First data row should have age=80 (sorted descending, clipped max)
+    assert!(output.contains(",80,"), "] on age should sort desc: {}", output);
 }
 
 #[test]
 fn test_keys_parquet_meta() {
-    let output = run_keys("M", "sample.parquet");
+    let output = run_keys("M", "tests/data/sample.parquet");
     assert!(output.contains("metadata"), "M should show meta: {}", output);
 }
