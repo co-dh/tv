@@ -3,6 +3,7 @@ default,header_bg,#282832
 default,header_fg,#ffffff
 default,cursor_bg,#ffff00
 default,cursor_fg,#000000
+default,select_bg,#003c50
 default,select_fg,#00ffff
 default,row_num_fg,#ff00ff
 default,row_cur_fg,#ffff00
@@ -18,6 +19,7 @@ light,header_bg,#e0e0e8
 light,header_fg,#000000
 light,cursor_bg,#0066cc
 light,cursor_fg,#ffffff
+light,select_bg,#cce6ff
 light,select_fg,#006699
 light,row_num_fg,#666666
 light,row_cur_fg,#0066cc

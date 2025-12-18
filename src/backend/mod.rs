@@ -150,29 +150,25 @@ pub trait Backend: Send + Sync {
         sql(self.lf(path)?, &format!("SELECT \"{}\", COUNT(*) as Cnt FROM df WHERE {} GROUP BY \"{}\" ORDER BY Cnt DESC", col, w, col))
     }
 
-    /// Frequency with aggregates (min/max/sum) - one column at a time to save memory
-    fn freq_agg(&self, path: &str, grp: &str, w: &str) -> Result<DataFrame> {
-        // First: count query
+    /// Frequency with aggregates (min/max/sum) for selected columns only
+    fn freq_agg(&self, path: &str, grp: &str, w: &str, sel_cols: &[String]) -> Result<DataFrame> {
         let base = if w != "TRUE" { format!("WHERE {}", w) } else { String::new() };
         let cnt_q = format!("SELECT \"{}\", COUNT(*) as Cnt FROM df {} GROUP BY \"{}\" ORDER BY Cnt DESC", grp, base, grp);
         let mut result = sql(self.lf(path)?, &cnt_q)?;
 
-        // Get numeric columns
+        // Only aggregate selected columns (filter to numeric)
         let schema = self.lf(path)?.collect_schema()?;
-        let num_cols: Vec<String> = schema.iter()
-            .filter(|(n, dt)| n.as_str() != grp && is_numeric(dt))
-            .map(|(n, _)| n.to_string())
+        let num_cols: Vec<&String> = sel_cols.iter()
+            .filter(|c| schema.get(c.as_str()).map(|dt| is_numeric(dt)).unwrap_or(false))
             .collect();
 
-        // Process each numeric column separately to avoid memory explosion
+        // Process each column separately to save memory
         for c in num_cols {
-            // Cast to DOUBLE for SUM to avoid integer overflow on large datasets
             let agg_q = format!(
                 "SELECT \"{}\", MIN(\"{}\") as {}_min, MAX(\"{}\") as {}_max, SUM(CAST(\"{}\" AS DOUBLE)) as {}_sum FROM df {} GROUP BY \"{}\"",
                 grp, c, c, c, c, c, c, base, grp
             );
             if let Ok(agg_df) = sql(self.lf(path)?, &agg_q) {
-                // Left join on grp column
                 result = result.lazy()
                     .join(agg_df.lazy(), [col(grp)], [col(grp)], JoinArgs::new(JoinType::Left))
                     .collect()?;

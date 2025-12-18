@@ -244,6 +244,7 @@ fn run_keys(keys: &str, file: Option<&str>) -> Result<()> {
         if let Err(e) = CommandExecutor::exec(&mut app, Box::new(From { file_path: path.to_string() })) {
             eprintln!("Error loading {}: {}", path, e);
         }
+        wait_bg(&mut app);  // wait for file load to complete
     }
     app.viewport(50, 120);  // set after load so first view gets viewport
     let mut mode = InputMode::None;
@@ -419,8 +420,11 @@ fn print_status(app: &mut AppContext) {
         let disk = view.disk_rows.map(|n| n.to_string()).unwrap_or("-".into());
         let df = view.dataframe.height();
         let keys = view.col_separator.unwrap_or(0);
-        println!("STATUS: view={} rows={} disk={} df={} col={} col_name={} keys={} mem={}MB",
-            view.name, view.rows(), disk, df, view.state.cc, col_name, keys, mem_mb());
+        let sel = view.selected_cols.len();
+        // Debug: check which cols would show as selected in render
+        let sel_cols: Vec<usize> = view.selected_cols.iter().copied().collect();
+        println!("STATUS: view={} rows={} disk={} df={} col={} col_name={} keys={} sel={} sel_cols={:?} mem={}MB",
+            view.name, view.rows(), disk, df, view.state.cc, col_name, keys, sel, sel_cols, mem_mb());
     }
 }
 
@@ -538,6 +542,7 @@ fn key_str(key: &KeyEvent) -> String {
     match key.code {
         KeyCode::Char(c) if ctrl => format!("<c-{}>", c.to_ascii_lowercase()),
         KeyCode::Char('\\') => "<backslash>".into(),
+        KeyCode::Char(' ') => "<space>".into(),
         KeyCode::Char(c) => c.to_string(),
         KeyCode::Enter => "<ret>".into(),
         KeyCode::Esc => "<esc>".into(),

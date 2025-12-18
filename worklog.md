@@ -1,5 +1,51 @@
 # Worklog
 
+## 2025-12-17: Keyhandler Module & Toggle Key Columns
+
+### New Features
+
+**-c flag for inline commands:**
+```bash
+tv -c "from data.csv filter age > 30 sort name"
+```
+
+**Toggle key columns with `!`:**
+- Press `!` on any column to toggle it as a key column
+- Key columns move to front with visual separator
+- Multiple key columns supported (press `!` on each)
+- Press `!` again on a key column to remove it
+
+### Architecture: Keyhandler Module
+New `src/keyhandler.rs` separates key handling (UI) from command execution (logic):
+
+```
+KeyEvent → keymap.get_command() → keyhandler::to_cmd() → parse() → Command::exec()
+                                         ↑
+                                  resolves context (current column, selection)
+```
+
+**Key functions:**
+- `to_cmd(app, cmd)` - translates keymap command to command string
+- `toggle_key(app)` - computes xkey command with all keys
+
+### Implementation
+- `toggle_key()` in keyhandler computes key list, returns `xkey a,b,c`
+- Fixed `parse()` to filter empty strings in xkey args
+- Fixed `Xkey::exec` to set `col_separator = None` when clearing keys
+- STATUS output now shows `keys=N` for testing
+
+### Tests
+- `test_toggle_key_column` - add multiple key columns
+- `test_toggle_key_remove` - toggle same column off
+
+### Files
+- `src/keyhandler.rs` - NEW: key → command translation (111 lines)
+- `src/main.rs` - -c flag, keyhandler integration, parse fixes
+- `src/command/transform.rs` - Xkey handles empty col_names
+- `tests/test_command.rs` - toggle key tests
+
+---
+
 ## 2025-12-16: DRY Round 2 - get_schema & push_meta
 
 | Metric | Before | After | Change |

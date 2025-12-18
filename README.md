@@ -18,6 +18,9 @@ tv data.csv
 tv data.parquet
 tv large.csv.gz  # streams 1k rows instantly, continues loading in background
 
+# Run inline commands
+tv -c "from data.csv filter age > 30 sort name"
+
 # Run script file
 tv --script commands.txt
 ```

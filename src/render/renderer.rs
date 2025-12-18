@@ -59,8 +59,10 @@ impl Renderer {
 
     /// Render table data
     fn render_table(frame: &mut Frame, view: &mut ViewState, area: Rect, selected_cols: &HashSet<usize>, selected_rows: &HashSet<usize>, decimals: usize, theme: &Theme, show_tabs: bool) {
-        const CACHE_SIZE: usize = 100_000;  // cache 100k rows
-        // For lazy parquet views, fetch visible rows from disk (with cache)
+        // Parquet cache: keeps 10k row window in memory to avoid SQL queries on every render frame.
+        // Without cache: 60fps = 60 SQL queries/sec. Cache reduces to "only when scrolling outside window".
+        // Not used for in-memory CSV (parquet_path is None).
+        const CACHE_SIZE: usize = 10_000;
         let lazy_offset = if let Some(ref path) = view.parquet_path {
             let rows_needed = area.height as usize + 10;
             let (r0, rend) = (view.state.r0, view.state.r0 + rows_needed);
@@ -208,6 +210,7 @@ impl Renderer {
             let style = if is_current {
                 Style::default().bg(to_rcolor(theme.cursor_bg)).fg(to_rcolor(theme.cursor_fg)).add_modifier(Modifier::BOLD)
             } else if is_selected {
+                // Selected column: cyan foreground
                 Style::default().bg(to_rcolor(theme.header_bg)).fg(to_rcolor(theme.select_fg)).add_modifier(Modifier::BOLD)
             } else { header_style };
 
@@ -280,6 +283,7 @@ impl Renderer {
             } else if is_sel_row {
                 Style::default().fg(to_rcolor(theme.row_num_fg))
             } else if is_sel {
+                // Selected column: cyan foreground
                 Style::default().fg(to_rcolor(theme.select_fg))
             } else if let Some(c) = corr_color {
                 Style::default().fg(to_rcolor(c))
@@ -288,7 +292,10 @@ impl Renderer {
             } else { Style::default() };
 
             let start_x = x.max(0) as u16 + x_pos;
-            let display = format!("{:width$}", value, width = col_width);
+            // Right-align numeric columns
+            let is_num = crate::backend::is_numeric(df.get_columns()[col_idx].dtype());
+            let display = if is_num { format!("{:>width$}", value, width = col_width) }
+                         else { format!("{:width$}", value, width = col_width) };
 
             for (i, ch) in display.chars().take(col_width).enumerate() {
                 let px = start_x + i as u16;
@@ -537,14 +544,15 @@ impl Renderer {
         // Show total rows: just disk_rows if set, else dataframe height
         let total_str = commify(&view.rows().to_string());
 
-        let left = if !message.is_empty() { message.to_string() }
+        let sel_info = format!(" [sel={}]", view.selected_cols.len());
+        let left = if !message.is_empty() { format!("{}{}", message, sel_info) }
         else if view.name.starts_with("Freq:") || view.name == "metadata" {
             // Show parent name and row count for Meta/Freq views
             let pn = view.parent_name.as_deref().unwrap_or("");
             let pr = view.parent_rows.map(|n| format!(" ({})", commify(&n.to_string()))).unwrap_or_default();
-            format!("{} <- {}{}", view.name, pn, pr)
+            format!("{} <- {}{}{}", view.name, pn, pr, sel_info)
         }
-        else { view.filename.as_deref().unwrap_or("(no file)").to_string() };
+        else { format!("{}{}", view.filename.as_deref().unwrap_or("(no file)"), sel_info) };
 
         // Use cached stats if column unchanged
         let col_stats = if view.cols() > 0 {

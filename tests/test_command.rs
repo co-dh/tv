@@ -47,6 +47,35 @@ fn test_freq_then_filter() {
 }
 
 #[test]
+fn test_multi_column_select() {
+    // Select multiple columns with space, verify sel count
+    // full.csv: name,city,value,score (cols 0,1,2,3)
+    let out = run_keys("<space><right><space><a-p>", "tests/data/full.csv");
+    assert!(out.contains("sel=2"), "Should have 2 columns selected: {}", out);
+}
+
+#[test]
+fn test_freq_with_selected_cols() {
+    // Select value column, then freq on city - should show aggregates for value
+    // full.csv: name,city,value,score (cols 0,1,2,3)
+    // Navigate to value (col 2), select, go to city (col 1), freq
+    let out = run_keys("<right><right><space><left>F", "tests/data/full.csv");
+    assert!(out.contains("Freq:city"), "Should create freq view: {}", out);
+    assert!(out.contains("value_min"), "Should have value_min: {}", out);
+    assert!(out.contains("value_max"), "Should have value_max: {}", out);
+    assert!(out.contains("value_sum"), "Should have value_sum: {}", out);
+}
+
+#[test]
+fn test_freq_no_selected_cols() {
+    // Freq without selection - should only show Cnt, Pct, Bar (no aggregates)
+    let out = run_keys("<right>F", "tests/data/full.csv");
+    assert!(out.contains("Freq:city"), "Should create freq view: {}", out);
+    assert!(out.contains("Cnt"), "Should have Cnt: {}", out);
+    assert!(!out.contains("value_min"), "Should NOT have aggregates: {}", out);
+}
+
+#[test]
 fn test_select_columns() {
     // s to select, type column names
     let out = run_keys("sname,city<ret>", "tests/data/full.csv");

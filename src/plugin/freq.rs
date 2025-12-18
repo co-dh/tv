@@ -2,7 +2,7 @@
 //! Combines: view detection, command handling, Frequency command
 
 use crate::app::AppContext;
-use crate::backend::{is_numeric, unquote};
+use crate::backend::unquote;
 use crate::command::Command;
 use crate::command::executor::CommandExecutor;
 use crate::command::transform::FilterIn;
@@ -61,26 +61,28 @@ impl Command for Frequency {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         // Block freq while gz is still loading
         if app.is_loading() { return Err(anyhow!("Wait for loading to complete")); }
-        let view = app.req()?;
-        let parent_id = view.id;
-        let parent_rows = view.rows();
-        let parent_name = view.name.clone();
-        let path = view.path().to_string();
-        let key_cols = view.key_cols();
-        let filter = view.filter_clause.clone();
-        let pq_path = view.parquet_path.clone();
-        let df = view.dataframe.clone();
 
-        // Use view's backend (file or memory)
-        let col_names = view.backend().cols(&path)?;
-        if !col_names.contains(&self.col_name) {
-            return Err(anyhow!("Column '{}' not found", self.col_name));
-        }
-        // Fast initial freq (count only)
-        let w = filter.as_deref().unwrap_or("TRUE");
-        let freq_df = view.backend().freq_where(&path, &self.col_name, w)?;
+        // Extract all data from view first (release borrow before mutations)
+        let (parent_id, parent_rows, parent_name, path, key_cols, filter, sel_cols, freq_df, is_parquet, df_clone) = {
+            let view = app.req()?;
+            let sel: Vec<String> = view.selected_cols.iter()
+                .filter_map(|&i| view.col_name(i))
+                .filter(|c| c != &self.col_name)
+                .collect();
+            let backend = view.backend();
+            let p = view.path().to_string();
+            let cols = backend.cols(&p)?;
+            if !cols.contains(&self.col_name) {
+                return Err(anyhow!("Column '{}' not found", self.col_name));
+            }
+            let w = view.filter_clause.as_deref().unwrap_or("TRUE");
+            let df = backend.freq_where(&p, &self.col_name, w)?;
+            let is_pq = view.parquet_path.is_some();
+            let df_c = if !sel.is_empty() && !is_pq { Some(view.dataframe.clone()) } else { None };
+            (view.id, view.rows(), view.name.clone(), p, view.key_cols(), view.filter_clause.clone(), sel, df, is_pq, df_c)
+        };
+
         let result = add_freq_cols(freq_df)?;
-
         let id = app.next_id();
         let mut new_view = ViewState::new_freq(
             id, format!("Freq:{}", self.col_name), result,
@@ -89,19 +91,24 @@ impl Command for Frequency {
         if !key_cols.is_empty() { new_view.col_separator = Some(key_cols.len()); }
         app.stack.push(new_view);
 
-        // Compute aggregates synchronously for now (bg thread has rayon deadlock)
-        let col = self.col_name.clone();
-        let w = filter.unwrap_or_else(|| "TRUE".into());
-        if let Ok(agg_df) = if pq_path.is_some() {
-            freq_agg_path(pq_path.as_ref().unwrap(), &col, &w)
-        } else {
-            freq_agg_df(&df, &col, &w)
-        } {
-            if let Ok(full_df) = add_freq_cols(agg_df) {
-                if let Some(v) = app.stack.cur_mut() {
-                    if v.id == id {
-                        v.dataframe = full_df;
-                        v.state.col_widths.clear();
+        // Compute aggregates for selected columns (uses SQL backend)
+        if !sel_cols.is_empty() {
+            let w = filter.as_deref().unwrap_or("TRUE");
+            use crate::backend::{Backend, Polars, Memory};
+            let agg_result = if is_parquet {
+                Polars.freq_agg(&path, &self.col_name, w, &sel_cols)
+            } else if let Some(ref df) = df_clone {
+                Memory(df).freq_agg(&path, &self.col_name, w, &sel_cols)
+            } else {
+                return Ok(());
+            };
+            if let Ok(agg_df) = agg_result {
+                if let Ok(full_df) = add_freq_cols(agg_df) {
+                    if let Some(v) = app.stack.cur_mut() {
+                        if v.id == id {
+                            v.dataframe = full_df;
+                            v.state.col_widths.clear();
+                        }
                     }
                 }
             }
@@ -172,31 +179,4 @@ fn add_freq_cols(mut df: DataFrame) -> Result<DataFrame> {
     df.with_column(Series::new("Pct".into(), pcts))?;
     df.with_column(Series::new("Bar".into(), bars))?;
     Ok(df)
-}
-
-/// Freq aggregates from parquet path
-fn freq_agg_path(path: &str, col: &str, w: &str) -> Result<DataFrame> {
-    use crate::backend::{Backend, Polars};
-    Polars.freq_agg(path, col, w)
-}
-
-/// Freq aggregates from in-memory DataFrame
-fn freq_agg_df(df: &DataFrame, grp: &str, _w: &str) -> Result<DataFrame> {
-    // Build aggregate expressions: COUNT + MIN/MAX/SUM for numeric columns
-    let mut agg_exprs: Vec<Expr> = vec![len().alias("Cnt")];
-    for (name, dt) in df.schema().iter() {
-        let n = name.to_string();
-        if n == grp { continue; }
-        if is_numeric(dt) {
-            agg_exprs.push(col(&n).min().alias(&format!("{}_min", n)));
-            agg_exprs.push(col(&n).max().alias(&format!("{}_max", n)));
-            agg_exprs.push(col(&n).sum().alias(&format!("{}_sum", n)));
-        }
-    }
-    df.clone().lazy()
-        .group_by([col(grp)])
-        .agg(agg_exprs)
-        .sort(["Cnt"], SortMultipleOptions::default().with_order_descending(true))
-        .collect()
-        .map_err(|e| anyhow!("{}", e))
 }

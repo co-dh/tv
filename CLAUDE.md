@@ -90,6 +90,9 @@ KeyEvent → key_str() → keymap.get_command() → keyhandler::to_cmd() → par
 - If result is N items from hints → `col IN ('a', 'b', ...)`
 - Otherwise (not in hints) → raw SQL WHERE clause
 
+# Known Issues (Fixed)
+- Space key in TUI must map to `<space>` in key_str(), not `" "`. Keymap expects `<space>`.
+
 # Idea
 GPU? cache meta.
 # Todo

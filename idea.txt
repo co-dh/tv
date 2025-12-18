@@ -20,8 +20,10 @@ each table is a type, with it's own render, it can reuse common function, but no
 # prql interface and keyword.
 [ ] add display command, implement, add in cfg/key.csv, do not record them in executor.
 [X] remove flicker like htop 
-[ ] ingest huge csv.gz , show header,  ingest in background after
+[X] ingest huge csv.gz , show header,  ingest in background after
 [ ] scriptable.  define function, bind key , implement core commands, and implement Freq, Meta use core .
-[ ] key columns, group by key, 
 [ ] joins 
-[ ] tab display of stack.
+[X] tab display of stack.
+[ ] key columns, group by key, 
+[ ] plotting, histo, bar, daily price, candle 
+[ ] 1+, add 1 to all numberic columns . 1- , - 1 ( not -1)

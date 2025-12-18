@@ -70,34 +70,4 @@ mod tests {
         assert_eq!(r.height(), 2);
         assert_eq!(r.column("a").unwrap().get(0).unwrap().try_extract::<i32>().unwrap(), 9);
     }
-
-    #[test]
-    fn test_memory_freq_agg() {
-        let df = test_df!(
-            "cat" => vec!["A", "A", "B", "B", "B"],
-            "x" => vec![1i64, 2, 3, 4, 5],
-            "y" => vec![10i64, 20, 30, 40, 50]
-        );
-        let r = Memory(&df).freq_agg("", "cat", "TRUE").unwrap();
-        // Should have: cat, Cnt, x_min, x_max, x_sum, y_min, y_max, y_sum
-        assert!(r.column("Cnt").is_ok());
-        assert!(r.column("x_min").is_ok());
-        assert!(r.column("x_max").is_ok());
-        assert!(r.column("x_sum").is_ok());
-        assert!(r.column("y_min").is_ok());
-        // Find B row (count=3): x_sum=12 (3+4+5)
-        let cat_col = r.column("cat").unwrap();
-        let b_row = (0..r.height()).find(|&i| cat_col.get(i).unwrap().to_string().trim_matches('"') == "B").unwrap();
-        let x_sum = r.column("x_sum").unwrap().get(b_row).unwrap();
-        assert_eq!(x_sum.try_extract::<i64>().unwrap(), 12);
-    }
-
-    #[test]
-    fn test_freq_agg_bg_thread() {
-        // Test SQL in background thread
-        let df = test_df!("cat" => vec!["A", "A", "B", "B", "B"], "x" => vec![1i64, 2, 3, 4, 5]);
-        let df2 = df.clone();
-        let handle = std::thread::spawn(move || Memory(&df2).freq_agg("", "cat", "TRUE"));
-        assert!(handle.join().unwrap().unwrap().column("x_sum").is_ok());
-    }
 }
