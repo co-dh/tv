@@ -194,7 +194,7 @@ impl Command for Xkey {
         for i in 0..self.col_names.len() { v.selected_cols.insert(i); }
         v.state.cc = 0;
         v.state.col_widths.clear();
-        v.col_separator = Some(self.col_names.len());
+        v.col_separator = if self.col_names.is_empty() { None } else { Some(self.col_names.len()) };
         Ok(())
     }
     fn to_str(&self) -> String { format!("xkey {}", self.col_names.join(",")) }

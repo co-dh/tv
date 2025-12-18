@@ -9,11 +9,12 @@
 - use sql if possible, instead of polars api. freq e.g. unify
 - unify similar funciton like freq and freq_where, the former is just empyt where condition.
 
-# Architecture (5600 lines Rust)
+# Architecture
 
 ```
 src/
-├── main.rs (991)      # Entry, event loop, key handling, command picker
+├── main.rs (1079)     # Entry, event loop, key handling, command picker, -c flag
+├── keyhandler.rs (111)# Key → command translation (resolves context)
 ├── app.rs (199)       # AppContext: global state, view stack, plugins
 ├── state.rs (282)     # ViewState, ViewStack, cursor/viewport state
 ├── keymap.rs (301)    # Kakoune-style keybindings (tab → key → cmd)
@@ -49,6 +50,19 @@ src/
     ├── terminal.rs(27)#   Terminal init/restore
     └── renderer.rs(624)# TUI rendering (ratatui), table layout
 ```
+
+## Command Flow
+```
+KeyEvent → key_str() → keymap.get_command() → keyhandler::to_cmd() → parse() → exec()
+                                                    ↓ (None for interactive)
+                                              handle_cmd() with prompts
+```
+
+## CLI Modes
+- TUI: `tv file.parquet` - interactive table viewer
+- Script: `tv --script script.tv` - run commands from file
+- Inline: `tv -c "from data.csv filter x > 5"` - run commands directly
+- Keys: `tv --keys "F<ret>" file` - replay key sequence (testing)
 
 ## Key Patterns
 

@@ -1,6 +1,7 @@
 mod app;
 mod backend;
 mod command;
+mod keyhandler;
 mod keymap;
 mod picker;
 mod plugin;
@@ -17,7 +18,6 @@ use command::nav::{Goto, GotoCol, ToggleInfo, Decimals, ToggleSel, ClearSel, Sel
 use command::transform::{Agg, Cast, DelCol, Derive, Filter, RenameCol, Select, Sort, Take, ToTime, Xkey};
 use command::view::{Dup, Pop, Swap};
 use plugin::corr::Correlation;
-use plugin::freq::Frequency;
 use plugin::meta::Metadata;
 use plugin::folder::Ls;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
@@ -50,6 +50,16 @@ fn main() -> Result<()> {
         }
         let file = args.get(idx + 2).map(|s| s.as_str());
         return run_keys(&args[idx + 1], file);
+    }
+
+    // Check for -c argument (inline commands)
+    if let Some(idx) = args.iter().position(|a| a == "-c") {
+        if args.len() <= idx + 1 {
+            eprintln!("Usage: tv -c 'from data.csv filter x > 5'");
+            std::process::exit(1);
+        }
+        let file = args.get(idx + 2).map(|s| s.as_str());
+        return run_cmds(&args[idx + 1], file);
     }
 
     // Initialize ratatui terminal
@@ -149,6 +159,58 @@ fn run_batch<I: Iterator<Item = String>>(lines: I) -> Result<()> {
 /// Run script file (--script path)
 fn run_script(script_path: &str) -> Result<()> {
     run_batch(fs::read_to_string(script_path)?.lines().map(String::from))
+}
+
+/// Run inline commands (-c "cmd1 cmd2")
+fn run_cmds(cmds: &str, file: Option<&str>) -> Result<()> {
+    let mut app = AppContext::new();
+    if let Some(path) = file {
+        if let Err(e) = CommandExecutor::exec(&mut app, Box::new(From { file_path: path.to_string() })) {
+            eprintln!("Error loading {}: {}", path, e);
+        }
+    }
+    app.viewport(50, 120);
+    // Split by newline or space (respecting quoted strings)
+    for cmd_str in split_cmds(cmds) {
+        if cmd_str.is_empty() || cmd_str.starts_with('#') { continue; }
+        if cmd_str == "quit" { break; }
+        if let Some(cmd) = parse(&cmd_str, &mut app) {
+            if let Err(e) = CommandExecutor::exec(&mut app, cmd) {
+                eprintln!("Error: {}", e);
+            }
+        } else {
+            eprintln!("Unknown: {}", cmd_str);
+        }
+    }
+    wait_bg_save(&mut app);
+    wait_bg_meta(&mut app);
+    print(&mut app);
+    Ok(())
+}
+
+/// Split command string by newline or space, respecting quoted args
+fn split_cmds(s: &str) -> Vec<String> {
+    let mut cmds = Vec::new();
+    let mut cur = String::new();
+    let mut in_quote = false;
+    let mut quote_char = ' ';
+    for c in s.chars() {
+        if in_quote {
+            cur.push(c);
+            if c == quote_char { in_quote = false; }
+        } else if c == '\'' || c == '"' {
+            cur.push(c);
+            in_quote = true;
+            quote_char = c;
+        } else if c == '\n' {
+            if !cur.trim().is_empty() { cmds.push(cur.trim().to_string()); }
+            cur.clear();
+        } else {
+            cur.push(c);
+        }
+    }
+    if !cur.trim().is_empty() { cmds.push(cur.trim().to_string()); }
+    cmds
 }
 
 /// Parse Kakoune-style key sequence: "F<ret><down>" → ["F", "<ret>", "<down>"]
@@ -356,8 +418,9 @@ fn print_status(app: &mut AppContext) {
         let col_name = view.col_name(view.state.cc).unwrap_or_default();
         let disk = view.disk_rows.map(|n| n.to_string()).unwrap_or("-".into());
         let df = view.dataframe.height();
-        println!("STATUS: view={} rows={} disk={} df={} col={} col_name={} mem={}MB",
-            view.name, view.rows(), disk, df, view.state.cc, col_name, mem_mb());
+        let keys = view.col_separator.unwrap_or(0);
+        println!("STATUS: view={} rows={} disk={} df={} col={} col_name={} keys={} mem={}MB",
+            view.name, view.rows(), disk, df, view.state.cc, col_name, keys, mem_mb());
     }
 }
 
@@ -397,7 +460,11 @@ fn parse(line: &str, app: &mut AppContext) -> Option<Box<dyn command::Command>> 
         "sort_desc" | "sortdesc" => return Some(Box::new(Sort { col_name: arg.to_string(), descending: true })),
         "take" => return arg.parse().ok().map(|n| Box::new(Take { n }) as Box<dyn command::Command>),
         "to_time" => return Some(Box::new(ToTime { col_name: arg.to_string() })),
-        "xkey" => return Some(Box::new(Xkey { col_names: arg.split(',').map(|s| s.trim().to_string()).collect() })),
+        "derive" => return Some(Box::new(Derive { col_name: arg.to_string() })),
+        "xkey" => {
+            let cols: Vec<String> = arg.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+            return Some(Box::new(Xkey { col_names: cols }));
+        }
         "rename" => {
             let rename_parts: Vec<&str> = arg.splitn(2, ' ').collect();
             if rename_parts.len() == 2 {
@@ -417,6 +484,10 @@ fn parse(line: &str, app: &mut AppContext) -> Option<Box<dyn command::Command>> 
         "sel_all" => return Some(Box::new(SelAll)),
         "sel_rows" => return Some(Box::new(SelRows { expr: arg.to_string() })),
         "pop" => return Some(Box::new(Pop)),
+        "swap" => return Some(Box::new(Swap)),
+        "dup" => return Some(Box::new(Dup)),
+        "ls" => return Some(Box::new(Ls { dir: std::env::current_dir().unwrap_or_default(), recursive: false })),
+        "lr" => return Some(Box::new(Ls { dir: std::env::current_dir().unwrap_or_default(), recursive: true })),
         _ => {}
     }
 
@@ -431,13 +502,6 @@ fn parse(line: &str, app: &mut AppContext) -> Option<Box<dyn command::Command>> 
         if result.is_some() { return result; }
     }
     None
-}
-
-/// Execute command on current column
-fn on_col<F>(app: &mut AppContext, f: F) where F: FnOnce(String) -> Box<dyn command::Command> {
-    if let Some(col) = app.view().and_then(|v| v.col_name(v.state.cc)) {
-        if let Err(e) = CommandExecutor::exec(app, f(col)) { app.err(e); }
-    }
 }
 
 /// Dispatch action to view-specific plugin handler
@@ -518,6 +582,14 @@ fn on_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
 
 /// Handle keymap command, return false to quit
 fn handle_cmd(app: &mut AppContext, cmd: &str) -> Result<bool> {
+    // Try keyhandler for commands it can resolve (with context)
+    if let Some(cmd_str) = keyhandler::to_cmd(app, cmd) {
+        if let Some(c) = parse(&cmd_str, app) {
+            run(app, c);
+            return Ok(true);
+        }
+    }
+    // Handle commands that need special logic or prompts
     match cmd {
         // Exit commands
         "quit" => {
@@ -526,23 +598,9 @@ fn handle_cmd(app: &mut AppContext, cmd: &str) -> Result<bool> {
         }
         "force_quit" => return Ok(false),
         "print_status" => { print_status(app); return Ok(false); }
-        // Navigation
-        "up" => run(app, Box::new(Goto { arg: "-1".into() })),
-        "down" => run(app, Box::new(Goto { arg: "+1".into() })),
-        "left" => run(app, Box::new(GotoCol { arg: "-1".into() })),
-        "right" => run(app, Box::new(GotoCol { arg: "+1".into() })),
+        // Page navigation (needs app.page())
         "page_down" => run(app, Box::new(Goto { arg: app.page().to_string() })),
         "page_up" => run(app, Box::new(Goto { arg: (-app.page()).to_string() })),
-        "top" => run(app, Box::new(Goto { arg: "0".into() })),
-        "bottom" => run(app, Box::new(Goto { arg: "max".into() })),
-        // Display
-        "toggle_info" => run(app, Box::new(ToggleInfo)),
-        "decimals_inc" => run(app, Box::new(Decimals { delta: 1 })),
-        "decimals_dec" => run(app, Box::new(Decimals { delta: -1 })),
-        // Selection
-        "toggle_sel" => run(app, Box::new(ToggleSel)),
-        "clear_sel" => run(app, Box::new(ClearSel)),
-        "sel_all" => run(app, Box::new(SelAll)),
         "select_cols" => {
             if !app.has_view() { app.no_table(); }
             else if let Some(cols) = prompt(app, "Select columns: ")? {
@@ -593,8 +651,7 @@ fn handle_cmd(app: &mut AppContext, cmd: &str) -> Result<bool> {
                 }
             }
         }
-        // Column operations
-        "freq" => on_col(app, |c| Box::new(Frequency { col_name: c })),
+        // Column operations (freq, sort, derive handled by keyhandler)
         "meta" => if app.has_view() { run(app, Box::new(Metadata)); },
         "corr" => {
             if app.has_view() {
@@ -605,8 +662,6 @@ fn handle_cmd(app: &mut AppContext, cmd: &str) -> Result<bool> {
             }
         }
         "pivot" => if app.has_view() { run(app, Box::new(crate::plugin::pivot::PivotPick)); },
-        "sort" => on_col(app, |c| Box::new(Sort { col_name: c, descending: false })),
-        "sort-" => on_col(app, |c| Box::new(Sort { col_name: c, descending: true })),
         "rename" => {
             if let Some(old_name) = app.view().and_then(|v| v.col_name(v.state.cc)) {
                 if let Some(new_name) = prompt(app, &format!("Rename '{}' to: ", old_name))? {
@@ -614,7 +669,6 @@ fn handle_cmd(app: &mut AppContext, cmd: &str) -> Result<bool> {
                 }
             }
         }
-        "derive" => on_col(app, |col| Box::new(Derive { col_name: col })),
         "convert" => do_convert(app)?,
         "aggregate" => {
             if let Some(col) = app.view().and_then(|v| v.col_name(v.state.cc)) {
@@ -656,11 +710,8 @@ fn handle_cmd(app: &mut AppContext, cmd: &str) -> Result<bool> {
                 if let Some(v) = app.view_mut() { v.selected_cols.clear(); }
             }
         }
-        // View management
+        // View management (ls, lr, swap handled by keyhandler)
         "dup" => if app.has_view() { run(app, Box::new(Dup)); },
-        "swap" => run(app, Box::new(Swap)),
-        "ls" => run(app, Box::new(Ls { dir: std::env::current_dir().unwrap_or_default(), recursive: false })),
-        "lr" => run(app, Box::new(Ls { dir: std::env::current_dir().unwrap_or_default(), recursive: true })),
         // UI
         "command" => do_command_picker(app)?,
         "goto_col" | "goto_col_name" => do_goto_col(app)?,
@@ -689,9 +740,7 @@ fn handle_cmd(app: &mut AppContext, cmd: &str) -> Result<bool> {
         }
         // Plugin dispatch (Enter, etc.)
         "enter" | "filter_parent" | "delete_sel" => { dispatch(app, cmd); }
-        // Meta view: select null/single-value columns
-        "sel_null" => { run(app, Box::new(SelRows { expr: "`null%` == '100.0'".into() })); }
-        "sel_single" => { run(app, Box::new(SelRows { expr: "distinct == '1'".into() })); }
+        // sel_null, sel_single handled by keyhandler
         _ => {}
     }
     Ok(true)

@@ -138,6 +138,26 @@ fn test_xkey_moves_to_front() {
 }
 
 #[test]
+fn test_toggle_key_column() {
+    // ! toggles current column as key (adds to keys, not replaces)
+    // Start: a,b,c,d - press ! to add a as key, l to move to b, ! to add b as key
+    // Expected: a,b are both keys (col 0 and 1), cursor stays on b
+    let out = run_keys("!l!<a-p>", "tests/data/xkey.csv");
+    // Should have 2 key columns
+    assert!(out.contains("keys=2"), "should have 2 keys: {}", out);
+    assert!(out.contains("a,b,c,d"), "order should be a,b,c,d: {}", out);
+}
+
+#[test]
+fn test_toggle_key_remove() {
+    // Toggle key on, then toggle same column off
+    // Start: a,b,c,d - press ! to add a as key, then ! again to remove a
+    let out = run_keys("!!<a-p>", "tests/data/xkey.csv");
+    // After removing key, no keys left
+    assert!(out.contains("keys=0"), "should have 0 keys after toggle off: {}", out);
+}
+
+#[test]
 fn test_freq_after_meta() {
     // View meta, then q to return, then freq on current col
     let out = run_keys("MqF", "tests/data/basic.csv");
