@@ -490,8 +490,14 @@ fn parse(line: &str, app: &mut AppContext) -> Option<Box<dyn command::Command>> 
         "pop" => return Some(Box::new(Pop)),
         "swap" => return Some(Box::new(Swap)),
         "dup" => return Some(Box::new(Dup)),
-        "ls" => return Some(Box::new(Ls { dir: std::env::current_dir().unwrap_or_default(), recursive: false })),
-        "lr" => return Some(Box::new(Ls { dir: std::env::current_dir().unwrap_or_default(), recursive: true })),
+        "ls" => {
+            let dir = if arg.is_empty() { std::env::current_dir().unwrap_or_default() } else { std::path::PathBuf::from(arg) };
+            return Some(Box::new(Ls { dir, recursive: false }));
+        }
+        "lr" => {
+            let dir = if arg.is_empty() { std::env::current_dir().unwrap_or_default() } else { std::path::PathBuf::from(arg) };
+            return Some(Box::new(Ls { dir, recursive: true }));
+        }
         _ => {}
     }
 

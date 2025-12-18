@@ -279,3 +279,20 @@ fn test_swap_views() {
     // After swap, should be back to filtered view position
     assert!(out.contains("rows)"), "Should show view: {}", out);
 }
+
+// Test lr shows full path
+#[test]
+fn test_lr_full_path() {
+    // lr on tests/data should show full paths (starting with tests/data/)
+    let out = run_keys(":lr tests/data<ret>", "tests/data/basic.csv");
+    assert!(out.contains("tests/data/"), "lr should show full paths: {}", out);
+}
+
+// Test lr enter on csv opens file
+#[test]
+fn test_lr_enter_csv() {
+    // lr tests/data, filter to numeric.csv, enter should open it
+    let out = run_keys(":lr tests/data<ret><backslash>path ~= 'numeric'<ret><ret>", "tests/data/basic.csv");
+    // After enter on csv, should open the file (show x,y,z columns)
+    assert!(out.contains("x") && out.contains("y"), "Should open csv: {}", out);
+}
