@@ -24,7 +24,7 @@ pub fn fzf_multi_header(items: Vec<String>, prompt: &str, header: Option<&str>) 
 
     let _ = header;  // reserved for future use
     let mut child = Command::new("fzf")
-        .args(["--prompt", prompt, "--layout=reverse", "--height=50%", "--no-sort", "--print-query", "--multi"])
+        .args(["--prompt", prompt, "--layout=reverse", "--height=50%", "--no-sort", "--print-query", "--multi", "-e"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()?;
