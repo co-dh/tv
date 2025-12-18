@@ -28,7 +28,7 @@ impl TableState {
     pub fn down(&mut self, n: usize, max: usize) {
         if max == 0 { return; }
         self.cr = (self.cr + n).min(max - 1);
-        let vis = (self.viewport.0 as usize).saturating_sub(2);
+        let vis = (self.viewport.0 as usize).saturating_sub(3);  // header + footer_header + status
         if self.cr >= self.r0 + vis { self.r0 = self.cr.saturating_sub(vis - 1); }
     }
 
@@ -50,14 +50,14 @@ impl TableState {
 
     /// Ensure cursor is visible in viewport
     pub fn visible(&mut self) {
-        let vis = (self.viewport.0 as usize).saturating_sub(2);
+        let vis = (self.viewport.0 as usize).saturating_sub(3);
         if self.cr < self.r0 { self.r0 = self.cr; }
         else if self.cr >= self.r0 + vis { self.r0 = self.cr.saturating_sub(vis.saturating_sub(1)); }
     }
 
     /// Center cursor on screen only if not already visible
     pub fn center_if_needed(&mut self) {
-        let vis = (self.viewport.0 as usize).saturating_sub(2);
+        let vis = (self.viewport.0 as usize).saturating_sub(3);
         // Only center if cursor is outside visible area
         if self.cr < self.r0 || self.cr >= self.r0 + vis {
             let half = vis / 2;
@@ -233,35 +233,35 @@ mod tests {
     fn test_center_if_needed_above_visible_centers() {
         // If cursor is above visible area, center it
         let mut state = TableState::new();
-        state.viewport = (20, 80);  // 18 visible rows
+        state.viewport = (20, 80);  // 17 visible rows (20 - 3 reserved)
         state.r0 = 100;
-        state.cr = 50;  // row 50 is above visible area (100-117)
+        state.cr = 50;  // row 50 is above visible area (100-116)
 
         state.center_if_needed();
-        // Should center: r0 = cr - half = 50 - 9 = 41
-        assert_eq!(state.r0, 41, "r0 should center cursor when above visible area");
+        // Should center: r0 = cr - half = 50 - 8 = 42
+        assert_eq!(state.r0, 42, "r0 should center cursor when above visible area");
     }
 
     #[test]
     fn test_center_if_needed_below_visible_centers() {
         // If cursor is below visible area, center it
         let mut state = TableState::new();
-        state.viewport = (20, 80);  // 18 visible rows
+        state.viewport = (20, 80);  // 17 visible rows (20 - 3 reserved)
         state.r0 = 0;
-        state.cr = 50;  // row 50 is below visible area (0-17)
+        state.cr = 50;  // row 50 is below visible area (0-16)
 
         state.center_if_needed();
-        // Should center: r0 = cr - half = 50 - 9 = 41
-        assert_eq!(state.r0, 41, "r0 should center cursor when below visible area");
+        // Should center: r0 = cr - half = 50 - 8 = 42
+        assert_eq!(state.r0, 42, "r0 should center cursor when below visible area");
     }
 
     #[test]
     fn test_center_if_needed_at_boundary() {
         // Cursor at exact boundary of visible area
         let mut state = TableState::new();
-        state.viewport = (20, 80);  // 18 visible rows
+        state.viewport = (20, 80);  // 17 visible rows (20 - 3 reserved)
         state.r0 = 0;
-        state.cr = 17;  // last visible row (0-17)
+        state.cr = 16;  // last visible row (0-16)
 
         state.center_if_needed();
         assert_eq!(state.r0, 0, "r0 should not change when cursor is at last visible row");

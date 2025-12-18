@@ -95,3 +95,15 @@ fn test_keys_parquet_meta() {
     let output = run_keys("M", "tests/data/sample.parquet");
     assert!(output.contains("metadata"), "M should show meta: {}", output);
 }
+
+#[test]
+fn test_page_down_scrolls() {
+    // After page down, view should scroll (not show row 1)
+    let without = run_keys("", "tests/data/sample.parquet");
+    let with_pgdn = run_keys("<c-d>", "tests/data/sample.parquet");
+    // First data row should be different after page down
+    let first_row = |s: &str| s.lines().nth(2).map(|l| l.to_string());
+    let r1 = first_row(&without);
+    let r2 = first_row(&with_pgdn);
+    assert_ne!(r1, r2, "Page down should scroll view: before={:?} after={:?}", r1, r2);
+}

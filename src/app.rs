@@ -214,8 +214,8 @@ impl AppContext {
         }
     }
 
-    /// Get page size for page up/down (viewport height - 2)
+    /// Get page size for page up/down (viewport - header - footer_header - status)
     pub fn page(&self) -> isize {
-        self.view().map(|v| (v.state.viewport.0 as isize).saturating_sub(2)).unwrap_or(10)
+        self.view().map(|v| (v.state.viewport.0 as isize).saturating_sub(3)).unwrap_or(10)
     }
 }

@@ -1,12 +1,5 @@
 /target
 commands.txt
-*.csv
-!cfg/config.csv
-!cfg/themes.csv
-!cfg/plugins.csv
-!tests/data/*.csv
-*.parquet
-!tests/data/*.parquet
-*.gz
 tmp/
 nouse/
+.venv

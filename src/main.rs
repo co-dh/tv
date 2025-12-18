@@ -323,12 +323,12 @@ fn print(app: &mut AppContext) {
     if let Some(view) = app.view_mut() {
         println!("=== {} ({} rows) ===", view.name, view.rows());
         fetch_lazy(view);
-        // Print columns
         let cols = df_cols(&view.dataframe);
         println!("{}", cols.join(","));
-        // Print first few rows
-        let n = view.dataframe.height().min(10);
-        for r in 0..n {
+        // Print visible rows from r0 (scroll position)
+        let r0 = view.state.r0;
+        let n = view.dataframe.height().min(r0 + 10);
+        for r in r0..n {
             let row: Vec<String> = (0..cols.len()).map(|c| {
                 view.dataframe.get_columns()[c].get(r).map(|v| v.to_string()).unwrap_or_default()
             }).collect();
