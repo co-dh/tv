@@ -3,3 +3,5 @@ commands.txt
 tmp/
 nouse/
 .venv
+tests/data/EQY_US_ALL_NBBO_20250701.gz
+tests/data/nyse/1.parquet
