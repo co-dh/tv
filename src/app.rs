@@ -140,56 +140,50 @@ impl AppContext {
 
     // ── Elm Architecture: run/draw/handle_events ─────────────────────────────
 
-    /// Main event loop (Elm Architecture)
+    /// Main event loop - only redraws when state changes
     pub fn run(&mut self, tui: &mut DefaultTerminal, on_key: impl Fn(&mut Self, KeyEvent) -> Result<bool>) -> Result<()> {
         let size = tui.size()?;
         self.viewport(size.height, size.width);
+        self.needs_redraw = true;  // initial draw
 
         loop {
-            // Update: check background tasks
+            // Update: check background tasks (may set needs_redraw)
             self.update();
 
-            // Handle redraw/center flags
-            if self.needs_redraw {
-                tui.clear()?;
-                let size = tui.size()?;
-                self.viewport(size.height, size.width);
+            // Only draw when needed
+            if self.needs_redraw || self.needs_center {
+                if self.needs_center {
+                    if let Some(v) = self.view_mut() { v.state.center_if_needed(); }
+                    self.needs_center = false;
+                }
+                tui.draw(|frame| Renderer::render(frame, self))?;
                 self.needs_redraw = false;
             }
-            if self.needs_center {
-                if let Some(v) = self.view_mut() { v.state.center_if_needed(); }
-                self.needs_center = false;
-            }
 
-            // Draw
-            self.draw(tui)?;
-
-            // Handle events (poll with timeout for background tasks)
-            if !self.handle_events(&on_key)? {
-                break;
+            // Poll for events
+            if event::poll(std::time::Duration::from_millis(100))? {
+                match event::read()? {
+                    Event::Key(key) => {
+                        if !on_key(self, key)? { break; }
+                        self.needs_redraw = true;
+                    }
+                    Event::Resize(w, h) => {
+                        self.viewport(h, w);
+                        self.needs_redraw = true;
+                    }
+                    _ => {}
+                }
             }
         }
         Ok(())
-    }
-
-    /// Draw current state to terminal
-    fn draw(&mut self, tui: &mut DefaultTerminal) -> Result<()> {
-        tui.draw(|frame| Renderer::render(frame, self))?;
-        Ok(())
-    }
-
-    /// Poll and handle events, return false to quit
-    fn handle_events(&mut self, on_key: &impl Fn(&mut Self, KeyEvent) -> Result<bool>) -> Result<bool> {
-        if event::poll(std::time::Duration::from_millis(100))? {
-            if let Event::Key(key) = event::read()? {
-                return on_key(self, key);
-            }
-        }
-        Ok(true)
     }
 
     /// Update: process background tasks
     fn update(&mut self) {
+        let had_msg = !self.message.is_empty();
         self.check_bg_saver();
+        if !self.message.is_empty() && self.message != "No table loaded" && !had_msg {
+            self.needs_redraw = true;  // new message from background task
+        }
     }
 }
