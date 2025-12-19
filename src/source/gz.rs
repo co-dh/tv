@@ -4,6 +4,7 @@ use super::{Source, LoadResult, sql};
 use crate::utils::commify;
 use crate::command::io::convert::{convert_epoch_cols, apply_schema, convert_types};
 use crate::state::ViewState;
+use crate::table::df_to_table;
 use super::polars::{detect_sep, parse_csv_buf};
 use anyhow::{anyhow, Result};
 use polars::prelude::*;
@@ -135,7 +136,7 @@ pub fn load(path: &str, id: usize) -> Result<LoadResult> {
     if df.height() == 0 { return Err(anyhow!("File is empty")); }
     let partial = bg_rx.is_some();
     Ok(LoadResult {
-        view: ViewState::new_gz(id, path, df, Some(path.into()), path, partial),
+        view: ViewState::new_gz(id, path, df_to_table(df), Some(path.into()), path, partial),
         bg_loader: bg_rx,
     })
 }

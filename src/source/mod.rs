@@ -11,7 +11,6 @@ pub mod gz;
 
 pub use polars::Polars;
 pub use memory::Memory;
-pub use gz::Gz;
 
 use crate::state::ViewState;
 use crate::utils::is_numeric;

@@ -1,9 +1,62 @@
-use crate::source::{Source, Gz, Memory, Polars};
-use polars::prelude::*;
+use crate::source::{Source, Polars};
+use crate::table::{BoxTable, ColStats, SimpleTable, Cell};
 use std::collections::HashSet;
 
 /// Reserved rows in viewport (header + footer_header + status)
 pub const RESERVED_ROWS: usize = 3;
+
+// ── Grouped structs to reduce ViewState field count ─────────────────────────
+
+/// Data source: where the view's data comes from
+#[derive(Clone, Debug)]
+pub enum ViewSource {
+    Memory,                                         // CSV loaded in memory
+    Gz { path: String, partial: bool },             // gzipped CSV (may be partial)
+    Parquet { path: String, rows: usize, cols: Vec<String> },  // lazy parquet on disk
+}
+
+impl Default for ViewSource {
+    fn default() -> Self { Self::Memory }
+}
+
+impl ViewSource {
+    /// Get path for display (gz or parquet path)
+    pub fn path(&self) -> Option<&str> {
+        match self {
+            Self::Memory => None,
+            Self::Gz { path, .. } | Self::Parquet { path, .. } => Some(path),
+        }
+    }
+    /// Is this a parquet source?
+    pub fn is_parquet(&self) -> bool { matches!(self, Self::Parquet { .. }) }
+    /// Is this a gz source?
+    pub fn is_gz(&self) -> bool { matches!(self, Self::Gz { .. }) }
+    /// Get parquet col names
+    pub fn cols(&self) -> &[String] {
+        match self { Self::Parquet { cols, .. } => cols, _ => &[] }
+    }
+    /// Get disk row count (parquet only)
+    pub fn disk_rows(&self) -> Option<usize> {
+        match self { Self::Parquet { rows, .. } => Some(*rows), _ => None }
+    }
+}
+
+/// Parent view info (for derived views like meta/freq)
+#[derive(Clone, Debug, Default)]
+pub struct ParentInfo {
+    pub id: usize,
+    pub rows: usize,
+    pub name: String,
+    pub freq_col: Option<String>,  // only for freq views
+}
+
+/// Cached data to avoid recomputation
+#[derive(Clone, Debug, Default)]
+pub struct ViewCache {
+    pub stats: Option<(usize, String)>,   // (col_idx, stats string)
+    pub meta: Option<SimpleTable>,         // metadata stats for this view
+    pub fetch: Option<(usize, usize)>,     // (start, end) row range in data
+}
 
 // ── Newtypes for type safety ────────────────────────────────────────────────
 
@@ -134,160 +187,230 @@ impl TableState {
     }
 }
 
-/// View state
-#[derive(Clone)]
+/// View state (28 fields → 16 via grouping)
 pub struct ViewState {
     pub id: usize,
     pub name: String,
     pub kind: ViewKind,              // view type for dispatch
     pub prql: String,                // PRQL query that produces this view
-    pub dataframe: DataFrame,
+    pub data: BoxTable,              // table data (SimpleTable for system, PluginTable for files)
     pub state: TableState,
     pub history: Vec<String>,
-    pub filename: Option<String>,
+    pub filename: Option<String>,    // display filename
     pub show_row_numbers: bool,
-    pub parent_id: Option<usize>,    // for freq tables
-    pub parent_rows: Option<usize>,  // parent table row count (for meta/freq status)
-    pub parent_name: Option<String>, // parent table name (for meta/freq status)
-    pub freq_col: Option<String>,    // freq column name
+    pub source: ViewSource,          // data source (memory/gz/parquet)
+    pub parent: Option<ParentInfo>,  // parent view info (meta/freq)
+    pub cache: ViewCache,            // cached computations
     pub selected_cols: HashSet<usize>,
     pub selected_rows: HashSet<usize>,
-    pub gz_source: Option<String>,  // original .csv.gz path for streaming save
-    pub stats_cache: Option<(usize, String)>,  // (col_idx, stats) cache
-    pub col_separator: Option<usize>,  // draw separator bar after this column index
-    pub meta_cache: Option<DataFrame>, // cached metadata stats for this view
-    pub partial: bool,  // gz file not fully loaded (hit memory limit)
-    pub disk_rows: Option<usize>,  // total rows on disk (for large parquet files)
-    pub parquet_path: Option<String>,  // lazy parquet source (no in-memory df)
-    pub col_names: Vec<String>,  // cached column names (for parquet views)
-    pub sort_col: Option<String>,  // sort column for lazy parquet
-    pub sort_desc: bool,  // sort descending
-    pub filter_clause: Option<String>,  // SQL WHERE clause for filtered parquet views
-    pub fetch_cache: Option<(usize, usize)>,  // (start, end) row range cached in dataframe
+    pub col_separator: Option<usize>,  // draw separator bar after key columns
+    pub filter: Option<String>,      // SQL WHERE clause
+    pub sort_col: Option<String>,    // sort column
+    pub sort_desc: bool,             // sort descending
+    pub cols: Vec<String>,           // current column list (for parquet views after select/xkey)
+}
+
+/// Manual Clone - copies BoxTable into new SimpleTable
+impl Clone for ViewState {
+    fn clone(&self) -> Self {
+        let t = self.data.as_ref();
+        let data: BoxTable = Box::new(SimpleTable::new(
+            t.col_names(),
+            (0..t.cols()).map(|c| t.col_type(c)).collect(),
+            (0..t.rows()).map(|r| (0..t.cols()).map(|c| t.cell(r, c)).collect()).collect()
+        ));
+        Self {
+            id: self.id, name: self.name.clone(), kind: self.kind, prql: self.prql.clone(), data,
+            state: self.state.clone(), history: self.history.clone(), filename: self.filename.clone(),
+            show_row_numbers: self.show_row_numbers, source: self.source.clone(), parent: self.parent.clone(),
+            cache: self.cache.clone(), selected_cols: self.selected_cols.clone(), selected_rows: self.selected_rows.clone(),
+            col_separator: self.col_separator, filter: self.filter.clone(), sort_col: self.sort_col.clone(),
+            sort_desc: self.sort_desc, cols: self.cols.clone(),
+        }
+    }
 }
 
 impl ViewState {
-    /// Get source for this view (Polars for parquet, Gz for gzip, Memory for in-memory)
-    pub fn source(&self) -> Box<dyn Source + '_> {
-        if self.parquet_path.is_some() {
-            Box::new(Polars)
-        } else if self.gz_source.is_some() {
-            Box::new(Gz { df: &self.dataframe, partial: self.partial })
-        } else {
-            Box::new(Memory(&self.dataframe))
-        }
+    /// Get backend source for this view (only for parquet/lazy sources)
+    pub fn backend(&self) -> Box<dyn Source + '_> {
+        Box::new(Polars)  // all disk ops go through Polars source
     }
 
-    /// Get data path (parquet file or empty for in-memory)
+    /// Get data path (parquet/gz file or empty for in-memory)
     #[must_use]
-    pub fn path(&self) -> &str {
-        self.parquet_path.as_deref().unwrap_or("")
-    }
+    pub fn path(&self) -> &str { self.source.path().unwrap_or("") }
 
     /// Get key columns (columns before separator)
     #[must_use]
     pub fn key_cols(&self) -> Vec<String> {
-        self.col_separator.map(|sep| {
-            self.dataframe.get_column_names()[..sep].iter()
-                .map(|s| s.to_string()).collect()
-        }).unwrap_or_default()
+        let Some(sep) = self.col_separator else { return vec![] };
+        let names = self.col_names();
+        names.into_iter().take(sep).collect()
     }
 
-    /// Base view with default values (all Options None, all flags false)
-    fn base(id: usize, name: impl Into<String>, kind: ViewKind, prql: impl Into<String>, df: DataFrame) -> Self {
-        let name = name.into();
+    /// Get column names (from cols field, source, or data)
+    #[must_use]
+    pub fn col_names(&self) -> Vec<String> {
+        if !self.cols.is_empty() { return self.cols.clone(); }
+        let src = self.source.cols();
+        if !src.is_empty() { src.to_vec() }
+        else { self.data.col_names() }
+    }
+
+    /// Base view with default values
+    fn base(id: usize, name: impl Into<String>, kind: ViewKind, prql: impl Into<String>, data: BoxTable) -> Self {
         Self {
-            id, name, kind, prql: prql.into(), dataframe: df, state: TableState::default(), history: Vec::new(),
-            filename: None, show_row_numbers: false, parent_id: None, parent_rows: None, parent_name: None, freq_col: None,
-            selected_cols: HashSet::new(), selected_rows: HashSet::new(), gz_source: None,
-            stats_cache: None, col_separator: None, meta_cache: None, partial: false, disk_rows: None, parquet_path: None, col_names: Vec::new(),
-            sort_col: None, sort_desc: false, filter_clause: None, fetch_cache: None,
+            id, name: name.into(), kind, prql: prql.into(), data,
+            state: TableState::default(), history: Vec::new(), filename: None, show_row_numbers: false,
+            source: ViewSource::Memory, parent: None, cache: ViewCache::default(),
+            selected_cols: HashSet::new(), selected_rows: HashSet::new(), col_separator: None,
+            filter: None, sort_col: None, sort_desc: false, cols: Vec::new(),
         }
     }
 
+    /// Create empty table
+    fn empty_table() -> BoxTable { Box::new(SimpleTable::empty()) }
+
     /// Create standard in-memory view (CSV, filtered results, etc.)
-    pub fn new(id: usize, name: impl Into<String>, df: DataFrame, filename: Option<String>) -> Self {
+    pub fn new(id: usize, name: impl Into<String>, data: BoxTable, filename: Option<String>) -> Self {
         let prql = filename.as_ref().map(|f| format!("from \"{}\"", f)).unwrap_or_default();
-        Self { filename, ..Self::base(id, name, ViewKind::Table, prql, df) }
+        Self { filename, ..Self::base(id, name, ViewKind::Table, prql, data) }
     }
 
-    /// Create lazy parquet view (no in-memory dataframe, all ops go to disk)
-    pub fn new_parquet(id: usize, name: impl Into<String>, path: impl Into<String>, rows: usize, cols: Vec<String>) -> Self {
-        let path = path.into();
-        let prql = format!("from \"{}\"", path);
-        Self { filename: Some(path.clone()), disk_rows: Some(rows), parquet_path: Some(path), col_names: cols, ..Self::base(id, name, ViewKind::Table, prql, DataFrame::empty()) }
+    /// Create lazy parquet view (no in-memory data, all ops go to disk)
+    pub fn new_parquet(id: usize, name: impl Into<String>, path: impl Into<String>, rows: usize, c: Vec<String>) -> Self {
+        let p = path.into();
+        let prql = format!("from \"{}\"", p);
+        let src = ViewSource::Parquet { path: p.clone(), rows, cols: c.clone() };
+        Self { filename: Some(p), source: src, cols: c, ..Self::base(id, name, ViewKind::Table, prql, Self::empty_table()) }
     }
 
     /// Create gzipped CSV view (may be partial if memory limit hit)
-    pub fn new_gz(id: usize, name: impl Into<String>, df: DataFrame, filename: Option<String>, gz: impl Into<String>, partial: bool) -> Self {
-        let gz_path = gz.into();
-        let prql = format!("from \"{}\"", gz_path);
-        Self { filename, gz_source: Some(gz_path), partial, ..Self::base(id, name, ViewKind::Table, prql, df) }
+    pub fn new_gz(id: usize, name: impl Into<String>, data: BoxTable, filename: Option<String>, gz: impl Into<String>, partial: bool) -> Self {
+        let p = gz.into();
+        let prql = format!("from \"{}\"", p);
+        let src = ViewSource::Gz { path: p, partial };
+        Self { filename, source: src, ..Self::base(id, name, ViewKind::Table, prql, data) }
     }
 
-    /// Create metadata view with parent info and PRQL
-    pub fn new_meta(id: usize, df: DataFrame, pid: usize, prows: usize, pname: impl Into<String>, parent_prql: &str) -> Self {
+    /// Create metadata view with parent info
+    pub fn new_meta(id: usize, data: BoxTable, pid: usize, prows: usize, pname: impl Into<String>, parent_prql: &str) -> Self {
         let prql = format!("{} | meta", parent_prql);
-        Self { parent_id: Some(pid), parent_rows: Some(prows), parent_name: Some(pname.into()), ..Self::base(id, "metadata", ViewKind::Meta, prql, df) }
+        let parent = ParentInfo { id: pid, rows: prows, name: pname.into(), freq_col: None };
+        Self { parent: Some(parent), ..Self::base(id, "metadata", ViewKind::Meta, prql, data) }
     }
 
-    /// Create freq view with parent info and PRQL
-    pub fn new_freq(id: usize, name: impl Into<String>, df: DataFrame, pid: usize, prows: usize, pname: impl Into<String>, col: impl Into<String>, parent_prql: &str, grp_cols: &[String]) -> Self {
+    /// Create freq view with parent info
+    pub fn new_freq(id: usize, name: impl Into<String>, data: BoxTable, pid: usize, prows: usize, pname: impl Into<String>, col: impl Into<String>, parent_prql: &str, grp_cols: &[String]) -> Self {
         let grp = grp_cols.iter().map(|c| format!("`{}`", c)).collect::<Vec<_>>().join(", ");
         let prql = format!("{} | group {{{}}} (aggregate {{Cnt = count this}})", parent_prql, grp);
-        Self { parent_id: Some(pid), parent_rows: Some(prows), parent_name: Some(pname.into()), freq_col: Some(col.into()), ..Self::base(id, name, ViewKind::Freq, prql, df) }
+        let parent = ParentInfo { id: pid, rows: prows, name: pname.into(), freq_col: Some(col.into()) };
+        Self { parent: Some(parent), ..Self::base(id, name, ViewKind::Freq, prql, data) }
     }
 
     /// Create pivot view with parent info
-    pub fn new_pivot(id: usize, name: impl Into<String>, df: DataFrame, pid: usize, pname: impl Into<String>, parent_prql: &str) -> Self {
+    pub fn new_pivot(id: usize, name: impl Into<String>, data: BoxTable, pid: usize, pname: impl Into<String>, parent_prql: &str) -> Self {
         let prql = format!("{} | pivot", parent_prql);
-        Self { parent_id: Some(pid), parent_name: Some(pname.into()), ..Self::base(id, name, ViewKind::Pivot, prql, df) }
+        let parent = ParentInfo { id: pid, rows: 0, name: pname.into(), freq_col: None };
+        Self { parent: Some(parent), ..Self::base(id, name, ViewKind::Pivot, prql, data) }
     }
 
     /// Create correlation view
-    pub fn new_corr(id: usize, df: DataFrame, parent_prql: &str) -> Self {
+    pub fn new_corr(id: usize, data: BoxTable, parent_prql: &str) -> Self {
         let prql = format!("{} | corr", parent_prql);
-        Self::base(id, "correlation", ViewKind::Corr, prql, df)
+        Self::base(id, "correlation", ViewKind::Corr, prql, data)
     }
 
     /// Create folder view (ls/lr)
-    pub fn new_folder(id: usize, name: impl Into<String>, df: DataFrame) -> Self {
+    pub fn new_folder(id: usize, name: impl Into<String>, data: BoxTable) -> Self {
         let n = name.into();
         let prql = format!("from sys.{}", n);
-        Self::base(id, n, ViewKind::Folder, prql, df)
+        Self::base(id, n, ViewKind::Folder, prql, data)
     }
 
     /// Create filtered parquet view (lazy - all ops go to disk with WHERE)
-    pub fn new_filtered(id: usize, name: impl Into<String>, path: impl Into<String>, cols: Vec<String>, filter: impl Into<String>, count: usize, parent_prql: &str, filter_expr: &str) -> Self {
-        let path = path.into();
+    pub fn new_filtered(id: usize, name: impl Into<String>, path: impl Into<String>, c: Vec<String>, flt: impl Into<String>, count: usize, parent_prql: &str, filter_expr: &str) -> Self {
+        let p = path.into();
         let prql = format!("{} | filter {}", parent_prql, filter_expr);
-        Self { filename: Some(path.clone()), disk_rows: Some(count), parquet_path: Some(path), col_names: cols, filter_clause: Some(filter.into()), ..Self::base(id, name, ViewKind::Table, prql, DataFrame::empty()) }
+        let src = ViewSource::Parquet { path: p.clone(), rows: count, cols: c.clone() };
+        Self { filename: Some(p), source: src, filter: Some(flt.into()), cols: c, ..Self::base(id, name, ViewKind::Table, prql, Self::empty_table()) }
     }
 
     /// Add command to history
     pub fn add_hist(&mut self, cmd: impl Into<String>) { self.history.push(cmd.into()); }
 
-    /// Row count: disk_rows for parquet, else dataframe height
+    /// Row count: disk_rows for parquet, else data height
     #[inline]
     #[must_use]
-    pub fn rows(&self) -> usize { self.disk_rows.unwrap_or_else(|| self.dataframe.height()) }
+    pub fn rows(&self) -> usize { self.source.disk_rows().unwrap_or_else(|| self.data.rows()) }
 
-    /// Column count: from col_names for parquet, else dataframe width
+    /// Column count
     #[inline]
     #[must_use]
-    pub fn cols(&self) -> usize { if self.col_names.is_empty() { self.dataframe.width() } else { self.col_names.len() } }
+    pub fn cols(&self) -> usize {
+        if !self.cols.is_empty() { return self.cols.len(); }
+        let src = self.source.cols();
+        if src.is_empty() { self.data.cols() } else { src.len() }
+    }
 
-    /// Get column name by index (works for both parquet and in-memory views)
+    /// Get column name by index
     #[must_use]
     pub fn col_name(&self, idx: usize) -> Option<String> {
-        if !self.col_names.is_empty() { self.col_names.get(idx).cloned() }
-        else { self.dataframe.get_column_names().get(idx).map(|s| s.to_string()) }
+        if !self.cols.is_empty() { return self.cols.get(idx).cloned(); }
+        let src = self.source.cols();
+        if !src.is_empty() { src.get(idx).cloned() }
+        else { self.data.col_name(idx) }
     }
 
     /// Check if view uses row selection (meta/freq) vs column selection (table)
     #[inline]
     #[must_use]
     pub fn is_row_sel(&self) -> bool { matches!(self.kind, ViewKind::Meta | ViewKind::Freq) }
+
+    /// Get cell value
+    #[must_use]
+    pub fn cell(&self, row: usize, col: usize) -> Cell { self.data.cell(row, col) }
+
+    /// Get column statistics (for status bar) - computes on demand
+    #[must_use]
+    pub fn col_stats(&self, col_idx: usize) -> ColStats {
+        let n = self.data.rows();
+        if n == 0 { return ColStats::default(); }
+        let name = self.data.col_name(col_idx).unwrap_or_default();
+        let typ = self.data.col_type(col_idx);
+        // Compute basic stats from data
+        let mut nulls = 0usize;
+        let mut vals: Vec<String> = Vec::with_capacity(n.min(1000));
+        let mut nums: Vec<f64> = Vec::new();
+        for r in 0..n.min(1000) {
+            match self.data.cell(r, col_idx) {
+                Cell::Null => nulls += 1,
+                Cell::Int(i) => { nums.push(i as f64); vals.push(i.to_string()); }
+                Cell::Float(f) => { nums.push(f); vals.push(format!("{:.2}", f)); }
+                Cell::Str(s) => vals.push(s),
+                c => vals.push(c.format(2)),
+            }
+        }
+        let null_pct = (nulls as f64 / n as f64) * 100.0;
+        let distinct = {
+            let mut u = vals.clone();
+            u.sort();
+            u.dedup();
+            u.len()
+        };
+        if !nums.is_empty() {
+            nums.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            let min = nums.first().copied().unwrap_or(0.0);
+            let max = nums.last().copied().unwrap_or(0.0);
+            let mean = nums.iter().sum::<f64>() / nums.len() as f64;
+            let var = nums.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / nums.len() as f64;
+            let sigma = var.sqrt();
+            ColStats { name, dtype: format!("{:?}", typ), null_pct, distinct, min: format!("{:.2}", min), max: format!("{:.2}", max), median: format!("{:.2}", mean), sigma: format!("{:.2}", sigma) }
+        } else {
+            let mode = vals.first().cloned().unwrap_or_default();
+            ColStats { name, dtype: format!("{:?}", typ), null_pct, distinct, min: String::new(), max: mode, median: String::new(), sigma: String::new() }
+        }
+    }
 }
 
 impl std::fmt::Display for ViewState {
@@ -358,73 +481,61 @@ impl<'a> IntoIterator for &'a StateStack {
 mod tests {
     use super::*;
 
+    fn empty() -> BoxTable { Box::new(SimpleTable::empty()) }
+
     #[test]
     fn test_center_if_needed_visible_row_unchanged() {
-        // If cursor is already visible, r0 should not change
         let mut state = TableState::default();
-        state.viewport = (20, 80);  // 20 rows, 18 visible (minus 2 for header/status)
+        state.viewport = (20, 80);
         state.r0 = 0;
-        state.cr = 5;  // row 5 is visible (0-17)
-
+        state.cr = 5;
         state.center_if_needed();
         assert_eq!(state.r0, 0, "r0 should not change when cursor is visible");
     }
 
     #[test]
     fn test_center_if_needed_above_visible_centers() {
-        // If cursor is above visible area, center it
         let mut state = TableState::default();
-        state.viewport = (20, 80);  // 17 visible rows (20 - 3 reserved)
+        state.viewport = (20, 80);
         state.r0 = 100;
-        state.cr = 50;  // row 50 is above visible area (100-116)
-
+        state.cr = 50;
         state.center_if_needed();
-        // Should center: r0 = cr - half = 50 - 8 = 42
         assert_eq!(state.r0, 42, "r0 should center cursor when above visible area");
     }
 
     #[test]
     fn test_center_if_needed_below_visible_centers() {
-        // If cursor is below visible area, center it
         let mut state = TableState::default();
-        state.viewport = (20, 80);  // 17 visible rows (20 - 3 reserved)
+        state.viewport = (20, 80);
         state.r0 = 0;
-        state.cr = 50;  // row 50 is below visible area (0-16)
-
+        state.cr = 50;
         state.center_if_needed();
-        // Should center: r0 = cr - half = 50 - 8 = 42
         assert_eq!(state.r0, 42, "r0 should center cursor when below visible area");
     }
 
     #[test]
     fn test_center_if_needed_at_boundary() {
-        // Cursor at exact boundary of visible area
         let mut state = TableState::default();
-        state.viewport = (20, 80);  // 17 visible rows (20 - 3 reserved)
+        state.viewport = (20, 80);
         state.r0 = 0;
-        state.cr = 16;  // last visible row (0-16)
-
+        state.cr = 16;
         state.center_if_needed();
         assert_eq!(state.r0, 0, "r0 should not change when cursor is at last visible row");
     }
 
     #[test]
     fn test_stack_names() {
-        use polars::prelude::*;
-        let df = DataFrame::default();
         let mut stack = StateStack::default();
-        stack.push(ViewState::new(0, "view1", df.clone(), None));
-        stack.push(ViewState::new(1, "view2", df.clone(), None));
-        stack.push(ViewState::new(2, "view3", df, None));
-
+        stack.push(ViewState::new(0, "view1", empty(), None));
+        stack.push(ViewState::new(1, "view2", empty(), None));
+        stack.push(ViewState::new(2, "view3", empty(), None));
         let names = stack.names();
         assert_eq!(names, vec!["view1", "view2", "view3"]);
     }
 
     #[test]
     fn test_prql_from_file() {
-        let df = DataFrame::default();
-        let v = ViewState::new(0, "test", df, Some("data.csv".into()));
+        let v = ViewState::new(0, "test", empty(), Some("data.csv".into()));
         assert_eq!(v.prql, r#"from "data.csv""#);
     }
 
@@ -436,15 +547,13 @@ mod tests {
 
     #[test]
     fn test_prql_meta() {
-        let df = DataFrame::default();
-        let v = ViewState::new_meta(0, df, 1, 100, "parent", r#"from "data.csv""#);
+        let v = ViewState::new_meta(0, empty(), 1, 100, "parent", r#"from "data.csv""#);
         assert_eq!(v.prql, r#"from "data.csv" | meta"#);
     }
 
     #[test]
     fn test_prql_freq() {
-        let df = DataFrame::default();
-        let v = ViewState::new_freq(0, "freq", df, 1, 100, "parent", "col", r#"from "data.csv""#, &["col".into()]);
+        let v = ViewState::new_freq(0, "freq", empty(), 1, 100, "parent", "col", r#"from "data.csv""#, &["col".into()]);
         assert_eq!(v.prql, r#"from "data.csv" | group {`col`} (aggregate {Cnt = count this})"#);
     }
 
@@ -456,8 +565,51 @@ mod tests {
 
     #[test]
     fn test_prql_folder() {
-        let df = DataFrame::default();
-        let v = ViewState::new_folder(0, "ls", df);
+        let v = ViewState::new_folder(0, "ls", empty());
         assert_eq!(v.prql, "from sys.ls");
+    }
+
+    #[test]
+    fn test_prql_chained_filter() {
+        // First filter
+        let v1 = ViewState::new_filtered(0, "f1", "data.parquet", vec![], "x > 5", 10, r#"from "data.parquet""#, "x > 5");
+        assert_eq!(v1.prql, r#"from "data.parquet" | filter x > 5"#);
+        // Second filter on top (chained)
+        let v2 = ViewState::new_filtered(1, "f2", "data.parquet", vec![], "x > 5 AND y < 10", 5, &v1.prql, "y < 10");
+        assert_eq!(v2.prql, r#"from "data.parquet" | filter x > 5 | filter y < 10"#);
+    }
+
+    #[test]
+    fn test_prql_freq_on_filtered() {
+        let v1 = ViewState::new_filtered(0, "f1", "data.parquet", vec![], "x > 5", 10, r#"from "data.parquet""#, "x > 5");
+        let v2 = ViewState::new_freq(1, "freq", empty(), 0, 10, "f1", "col", &v1.prql, &["col".into()]);
+        assert_eq!(v2.prql, r#"from "data.parquet" | filter x > 5 | group {`col`} (aggregate {Cnt = count this})"#);
+    }
+
+    #[test]
+    fn test_prql_meta_on_filtered() {
+        let v1 = ViewState::new_filtered(0, "f1", "data.parquet", vec![], "x > 5", 10, r#"from "data.parquet""#, "x > 5");
+        let v2 = ViewState::new_meta(1, empty(), 0, 10, "f1", &v1.prql);
+        assert_eq!(v2.prql, r#"from "data.parquet" | filter x > 5 | meta"#);
+    }
+
+    #[test]
+    fn test_prql_corr_on_csv() {
+        let v1 = ViewState::new(0, "data", empty(), Some("data.csv".into()));
+        let v2 = ViewState::new_corr(1, empty(), &v1.prql);
+        assert_eq!(v2.prql, r#"from "data.csv" | corr"#);
+    }
+
+    #[test]
+    fn test_prql_pivot() {
+        let v1 = ViewState::new(0, "data", empty(), Some("data.csv".into()));
+        let v2 = ViewState::new_pivot(1, "pivot", empty(), 0, "data", &v1.prql);
+        assert_eq!(v2.prql, r#"from "data.csv" | pivot"#);
+    }
+
+    #[test]
+    fn test_prql_multi_col_freq() {
+        let v = ViewState::new_freq(0, "freq", empty(), 1, 100, "parent", "a", r#"from "data.csv""#, &["a".into(), "b".into()]);
+        assert_eq!(v.prql, r#"from "data.csv" | group {`a`, `b`} (aggregate {Cnt = count this})"#);
     }
 }

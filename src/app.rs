@@ -1,7 +1,8 @@
 use crate::error::TvError;
 use crate::keymap::KeyMap;
 use crate::plugin::Registry;
-use crate::state::{StateStack, ViewKind, ViewState};
+use crate::state::{StateStack, ViewKind, ViewSource, ViewState};
+use crate::table::{df_to_table, SimpleTable};
 use crate::theme::Theme;
 use crate::render::Renderer;
 use anyhow::Result;
@@ -98,16 +99,27 @@ impl AppContext {
 
         if chunks.is_empty() { return; }
 
-        // Merge into current view (vertical stack)
+        // Merge into current view (append rows to SimpleTable)
         if let Some(view) = self.stack.cur_mut() {
-            let old_rows = view.dataframe.height();
+            let old_rows = view.data.rows();
+            // Build combined table from current + chunks
+            let mut combined = SimpleTable::new(
+                view.data.col_names(),
+                (0..view.data.cols()).map(|c| view.data.col_type(c)).collect(),
+                (0..view.data.rows()).map(|r|
+                    (0..view.data.cols()).map(|c| view.data.cell(r, c)).collect()
+                ).collect()
+            );
             for chunk in chunks {
                 match chunk {
-                    Some(df) => { let _ = view.dataframe.vstack_mut(&df); }
-                    None => { view.partial = false; }  // EOF - file fully loaded
+                    Some(df) => { let t = df_to_table(df); combined.append(t.as_ref()); }
+                    None => {  // EOF - mark gz as fully loaded
+                        if let ViewSource::Gz { partial, .. } = &mut view.source { *partial = false; }
+                    }
                 }
             }
-            let new_rows = view.dataframe.height();
+            view.data = Box::new(combined);
+            let new_rows = view.data.rows();
             if new_rows > old_rows { view.state.col_widths.clear(); }
         }
     }
@@ -131,16 +143,23 @@ impl AppContext {
         let Some((parent_id, ref rx)) = self.bg_meta else { return };
         match rx.try_recv() {
             Ok(meta_df) => {
+                let t = df_to_table(meta_df);
+                // Convert to SimpleTable (cache needs concrete type)
+                let st = SimpleTable::new(
+                    t.col_names(),
+                    (0..t.cols()).map(|c| t.col_type(c)).collect(),
+                    (0..t.rows()).map(|r| (0..t.cols()).map(|c| t.cell(r, c)).collect()).collect()
+                );
                 // Update current meta view if it's the one we're computing for
                 if let Some(view) = self.stack.cur_mut() {
-                    if view.kind == ViewKind::Meta && view.parent_id == Some(parent_id) {
-                        view.dataframe = meta_df.clone();
+                    if view.kind == ViewKind::Meta && view.parent.as_ref().map(|p| p.id) == Some(parent_id) {
+                        view.data = Box::new(st.clone());
                         view.state.col_widths.clear();
                     }
                 }
                 // Cache in parent
                 if let Some(parent) = self.stack.find_mut(parent_id) {
-                    parent.meta_cache = Some(meta_df);
+                    parent.cache.meta = Some(st);
                 }
                 self.bg_meta = None;
             }
@@ -158,7 +177,7 @@ impl AppContext {
                 // Update freq view if it's the one we're computing for
                 if let Some(view) = self.stack.cur_mut() {
                     if view.id == freq_id {
-                        view.dataframe = freq_df;
+                        view.data = df_to_table(freq_df);
                         view.state.col_widths.clear();
                     }
                 }

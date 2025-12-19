@@ -1,4 +1,6 @@
 mod app;
+mod backend;
+mod dynload;
 mod error;
 mod source;
 mod command;
@@ -8,13 +10,16 @@ mod picker;
 mod plugin;
 mod pure;
 mod render;
+mod sqlite;
 mod state;
+mod table;
 mod theme;
 mod utils;
 
 use anyhow::Result;
 use app::AppContext;
-use source::{Source, df_cols};
+use source::Source;
+use table::{df_to_table, table_to_df};
 use command::executor::CommandExecutor;
 use command::io::{From, Save};
 use command::nav::{Goto, GotoCol, ToggleInfo, Decimals, ToggleSel, ClearSel, SelAll, SelRows};
@@ -28,9 +33,34 @@ use ratatui::crossterm::{cursor, execute, style::Print, terminal};
 use std::fs;
 use std::io::{self, Write};
 
+/// Try to load polars plugin from standard locations
+fn load_plugin() {
+    let exe = std::env::current_exe().ok();
+    let exe_dir = exe.as_ref().and_then(|p| p.parent());
+
+    // Search paths: next to binary, plugins/, ~/.local/lib/tv/
+    let paths = [
+        exe_dir.map(|d| d.join("libtv_polars.so")),
+        exe_dir.map(|d| d.join("plugins/libtv_polars.so")),
+        dirs::home_dir().map(|h| h.join(".local/lib/tv/libtv_polars.so")),
+    ];
+
+    for p in paths.into_iter().flatten() {
+        if p.exists() {
+            if let Err(e) = dynload::load(p.to_str().unwrap_or("")) {
+                eprintln!("Warning: failed to load plugin: {}", e);
+            }
+            return;
+        }
+    }
+}
+
 /// Entry point: parse args, run TUI or batch mode
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
+
+    // Try to load polars plugin (optional - falls back to built-in)
+    load_plugin();
 
     // Parse flags first (before early returns)
     let raw_save = args.iter().any(|a| a == "--raw");
@@ -277,8 +307,7 @@ fn exec_input(app: &mut AppContext, mode: &InputMode, text: &str) {
             let expr = if is_plain_value(text) {
                 if let Some(v) = app.view() {
                     let col = v.col_name(v.state.cc).unwrap_or_default();
-                    let is_str = v.dataframe.column(&col).ok()
-                        .map(|c| matches!(c.dtype(), polars::prelude::DataType::String)).unwrap_or(true);
+                    let is_str = v.data.col_type(v.state.cc) == table::ColType::Str;
                     if is_str { format!("\"{}\" = '{}'", col, text) } else { format!("\"{}\" = {}", col, text) }
                 } else { text.to_string() }
             } else { text.to_string() };
@@ -327,7 +356,7 @@ fn wait_bg_meta(app: &mut AppContext) {
     if let Some((pid, rx)) = app.bg_meta.take() {
         if let Ok(df) = rx.recv() {
             if let Some(v) = app.view_mut() {
-                if v.kind == state::ViewKind::Meta && v.parent_id == Some(pid) { v.dataframe = df; }
+                if v.kind == state::ViewKind::Meta && v.parent.as_ref().map(|p| p.id) == Some(pid) { v.data = df_to_table(df); }
             }
         }
     }
@@ -335,14 +364,14 @@ fn wait_bg_meta(app: &mut AppContext) {
 
 /// Fetch visible rows for lazy parquet view
 fn fetch_lazy(view: &mut state::ViewState) {
-    if let Some(ref path) = view.parquet_path {
+    if let state::ViewSource::Parquet { ref path, .. } = view.source {
         let offset = view.state.r0;
-        let df = if let Some(ref w) = view.filter_clause {
+        let df = if let Some(ref w) = view.filter {
             source::Polars.fetch_where(path, w, offset, 50)
         } else {
             source::Polars.fetch_rows(path, offset, 50)
         };
-        if let Ok(df) = df { view.dataframe = df; }
+        if let Ok(df) = df { view.data = df_to_table(df); }
     }
 }
 
@@ -351,14 +380,14 @@ fn print(app: &mut AppContext) {
     if let Some(view) = app.view_mut() {
         println!("=== {} ({} rows) ===", view.name, view.rows());
         fetch_lazy(view);
-        let cols = df_cols(&view.dataframe);
+        let cols = view.data.col_names();
         println!("{}", cols.join(","));
         // Print visible rows from r0 (scroll position)
         let r0 = view.state.r0;
-        let n = view.dataframe.height().min(r0 + 10);
+        let n = view.data.rows().min(r0 + 10);
         for r in r0..n {
             let row: Vec<String> = (0..cols.len()).map(|c| {
-                view.dataframe.get_columns()[c].get(r).map(|v| v.to_string()).unwrap_or_default()
+                view.data.cell(r, c).format(10)
             }).collect();
             println!("{}", row.join(","));
         }
@@ -382,14 +411,14 @@ fn print_status(app: &mut AppContext) {
     if let Some(view) = app.view_mut() {
         fetch_lazy(view);  // simulate render fetch
         let col_name = view.col_name(view.state.cc).unwrap_or_default();
-        let disk = view.disk_rows.map(|n| n.to_string()).unwrap_or("-".into());
-        let df = view.dataframe.height();
+        let disk = view.source.disk_rows().map(|n| n.to_string()).unwrap_or("-".into());
+        let df_rows = view.data.rows();
         let keys = view.col_separator.unwrap_or(0);
         let sel = view.selected_cols.len();
         // Debug: check which cols would show as selected in render
         let sel_cols: Vec<usize> = view.selected_cols.iter().copied().collect();
         println!("STATUS: view={} rows={} disk={} df={} col={} col_name={} keys={} sel={} sel_cols={:?} mem={}MB",
-            view.name, view.rows(), disk, df, view.state.cc, col_name, keys, sel, sel_cols, mem_mb());
+            view.name, view.rows(), disk, df_rows, view.state.cc, col_name, keys, sel, sel_cols, mem_mb());
     }
 }
 
@@ -491,7 +520,8 @@ fn run(app: &mut AppContext, cmd: Box<dyn command::Command>) {
 fn find_match(app: &mut AppContext, forward: bool) {
     if let Some(expr) = app.search.value.clone() {
         if let Some(view) = app.view_mut() {
-            let m = find(&view.dataframe, &expr);
+            let df = table_to_df(view.data.as_ref());
+            let m = find(&df, &expr);
             let cur = view.state.cr;
             let pos = if forward { m.iter().find(|&&i| i > cur) } else { m.iter().rev().find(|&&i| i < cur) };
             if let Some(&p) = pos { view.state.cr = p; view.state.visible(); }
@@ -610,10 +640,9 @@ fn handle_cmd(app: &mut AppContext, cmd: &str) -> Result<bool> {
         "search_cell" => {
             if let Some(expr) = app.view().and_then(|v| {
                 let col_name = v.col_name(v.state.cc)?;
-                let col = v.dataframe.get_columns().get(v.state.cc)?;
-                let value = col.get(v.state.cr).ok()?;
-                let is_str = matches!(col.dtype(), polars::prelude::DataType::String);
-                let val = unquote(&value.to_string());
+                let cell = v.data.cell(v.state.cr, v.state.cc);
+                let is_str = v.data.col_type(v.state.cc) == table::ColType::Str;
+                let val = unquote(&cell.format(10));
                 Some(if is_str { format!("{} = '{}'", col_name, val) } else { format!("{} = {}", col_name, val) })
             }) {
                 app.search.col_name = None;
@@ -721,7 +750,8 @@ fn do_search(app: &mut AppContext) -> Result<()> {
     let info = app.view().and_then(|v| {
         let col_name = v.col_name(v.state.cc)?;
         let file = v.filename.as_deref();
-        Some((hints(&v.dataframe, &col_name, v.state.cr, file), col_name, v.name.starts_with("ls")))
+        let df = table_to_df(v.data.as_ref());
+        Some((hints(&df, &col_name, v.state.cr, file), col_name, v.name.starts_with("ls")))
     });
     if let Some((hint_list, col_name, is_folder)) = info {
         let expr_opt = picker::fzf(hint_list, "Search> ");
@@ -731,7 +761,10 @@ fn do_search(app: &mut AppContext) -> Result<()> {
             let expr = if !prql_mode && is_plain_value(&expr) {
                 format!("{} LIKE '%{}%'", col_name, expr)
             } else { expr.to_string() };
-            let matches = app.view().map(|v| find(&v.dataframe, &expr)).unwrap_or_default();
+            let matches = app.view().map(|v| {
+                let df = table_to_df(v.data.as_ref());
+                find(&df, &expr)
+            }).unwrap_or_default();
             app.search.col_name = None;
             app.search.value = Some(expr.clone());
             let found = if let Some(view) = app.view_mut() {
@@ -751,11 +784,11 @@ fn do_search(app: &mut AppContext) -> Result<()> {
 fn do_filter(app: &mut AppContext) -> Result<()> {
     let info = app.view().and_then(|v| {
         let col_name = v.col_name(v.state.cc)?;
-        let is_str = v.dataframe.column(&col_name).ok()
-            .map(|c| matches!(c.dtype(), polars::prelude::DataType::String)).unwrap_or(false);
+        let is_str = v.data.col_type(v.state.cc) == table::ColType::Str;
         let file = v.filename.as_deref();
-        let header = source::df_cols(&v.dataframe).join(" | ");
-        Some((hints(&v.dataframe, &col_name, v.state.cr, file), col_name, is_str, header))
+        let header = v.data.col_names().join(" | ");
+        let df = table_to_df(v.data.as_ref());
+        Some((hints(&df, &col_name, v.state.cr, file), col_name, is_str, header))
     });
     if let Some((hint_list, col_name, is_str, header)) = info {
         let expr_opt = picker::fzf_filter(hint_list, "WHERE> ", &col_name, is_str, Some(&header));
@@ -804,7 +837,7 @@ fn do_command_picker(app: &mut AppContext) -> Result<()> {
 /// Jump to column by name (@)
 fn do_goto_col(app: &mut AppContext) -> Result<()> {
     if let Some(view) = app.view() {
-        let col_names = df_cols(&view.dataframe);
+        let col_names = view.data.col_names();
         let result = picker::fzf(col_names.clone(), "Column: ");
         app.needs_redraw = true;
         if let Ok(Some(selected)) = result {

@@ -2,6 +2,7 @@
 
 use crate::app::AppContext;
 use crate::source::df_cols;
+use crate::table::{df_to_table, table_to_df};
 use crate::utils::{is_numeric, unquote};
 use crate::command::Command;
 use crate::plugin::Plugin;
@@ -21,8 +22,9 @@ impl Plugin for CorrPlugin {
         if cmd != "enter" { return None; }
         // Get column name from current row (first column is row label)
         let col_name = app.view().and_then(|v| {
-            v.dataframe.column("column").ok()?.get(v.state.cr).ok()
-                .map(|v| unquote(&v.to_string()))
+            let col_idx = v.data.col_names().iter().position(|c| c == "column")?;
+            let s = v.data.cell(v.state.cr, col_idx).format(10);
+            if s.is_empty() || s == "null" { None } else { Some(unquote(&s)) }
         })?;
         Some(Box::new(CorrEnter { col_name }))
     }
@@ -45,8 +47,8 @@ pub struct Correlation {
 impl Command for Correlation {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         let view = app.req()?;
-        let df = &view.dataframe;
-        let all_col_names = df_cols(df);
+        let df = table_to_df(view.data.as_ref());
+        let all_col_names = df_cols(&df);
 
         // Get columns to correlate: selected columns (if any and numeric) or all numeric
         let numeric_cols: Vec<String> = if self.selected_cols.len() >= 2 {
@@ -85,7 +87,7 @@ impl Command for Correlation {
 
         let id = app.next_id();
         let parent_prql = app.req()?.prql.clone();
-        app.stack.push(ViewState::new_corr(id, corr_df, &parent_prql));
+        app.stack.push(ViewState::new_corr(id, df_to_table(corr_df), &parent_prql));
         Ok(())
     }
     fn to_str(&self) -> String { "corr".into() }
@@ -99,8 +101,8 @@ impl Command for CorrEnter {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         app.stack.pop();
         if let Some(view) = app.view_mut() {
-            let idx = view.dataframe.get_column_names().iter()
-                .position(|n| n.as_str() == self.col_name);
+            let idx = view.data.col_names().iter()
+                .position(|n| n == &self.col_name);
             if let Some(i) = idx {
                 view.state.cc = i;
                 view.state.visible();
@@ -125,10 +127,10 @@ mod tests {
         }.unwrap();
 
         let id = app.next_id();
-        app.stack.push(ViewState::new(id, "test", df, None));
+        app.stack.push(ViewState::new(id, "test", df_to_table(df), None));
         Correlation { selected_cols: vec![] }.exec(&mut app).unwrap();
         let corr = app.view().unwrap();
         assert_eq!(corr.name, "correlation");
-        assert_eq!(corr.dataframe.width(), 3);  // column + a + b (c is not numeric)
+        assert_eq!(corr.data.cols(), 3);  // column + a + b (c is not numeric)
     }
 }

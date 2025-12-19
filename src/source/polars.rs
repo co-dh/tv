@@ -2,6 +2,7 @@
 //! All parquet operations (load, save, fetch, freq, filter, distinct, etc.)
 use super::{Source, LoadResult};
 use crate::state::ViewState;
+use crate::table::df_to_table;
 use anyhow::{anyhow, Result};
 use polars::prelude::*;
 use std::path::Path;
@@ -22,7 +23,7 @@ impl Source for Polars {
         if path.contains('*') || path.contains('?') {
             let df = load_glob(path, MAX_PREVIEW)?;
             if df.height() == 0 { return Err(anyhow!("No data found")); }
-            return Ok(LoadResult { view: ViewState::new(id, path, df, None), bg_loader: None });
+            return Ok(LoadResult { view: ViewState::new(id, path, df_to_table(df), None), bg_loader: None });
         }
         let p = Path::new(path);
         if !p.exists() { return Err(anyhow!("File not found: {}", path)); }
@@ -30,7 +31,7 @@ impl Source for Polars {
             Some("csv") => {
                 let df = load_csv(p)?;
                 if df.height() == 0 { return Err(anyhow!("File is empty")); }
-                Ok(LoadResult { view: ViewState::new(id, path, df, Some(path.into())), bg_loader: None })
+                Ok(LoadResult { view: ViewState::new(id, path, df_to_table(df), Some(path.into())), bg_loader: None })
             }
             Some("parquet") => {
                 let (rows, cols) = self.metadata(path)?;

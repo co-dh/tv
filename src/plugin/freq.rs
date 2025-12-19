@@ -2,6 +2,7 @@
 //! Combines: view detection, command handling, Frequency command
 
 use crate::app::AppContext;
+use crate::table::{df_to_table, table_to_df};
 use crate::utils::unquote;
 use crate::command::Command;
 use crate::command::executor::CommandExecutor;
@@ -27,11 +28,13 @@ impl Plugin for FreqPlugin {
             "enter" | "filter_parent" => {
                 // Extract column name and selected values from freq view
                 let info = app.view().and_then(|v| {
-                    let col = v.freq_col.clone()?;
+                    let col = v.parent.as_ref().and_then(|p| p.freq_col.clone())?;
                     let rows: Vec<usize> = if v.selected_rows.is_empty() { vec![v.state.cr] }
                         else { v.selected_rows.iter().copied().collect() };
                     let vals: Vec<String> = rows.iter()
-                        .filter_map(|&r| v.dataframe.get_columns()[0].get(r).ok().map(|x| unquote(&x.to_string())))
+                        .map(|&r| v.data.cell(r, 0).format(10))
+                        .filter(|s| !s.is_empty() && s != "null")
+                        .map(|s| unquote(&s))
                         .collect();
                     Some((col, vals))
                 });
@@ -77,17 +80,28 @@ impl Command for Frequency {
                     .filter(|c| !self.col_names.contains(c))
                     .collect()
             };
-            let src = view.source();
+            let is_pq = view.source.is_parquet();
             let p = view.path().to_string();
-            let cols = src.cols(&p)?;
+            let w = view.filter.as_deref().unwrap_or("TRUE");
+            // Use Memory source for in-memory tables, Polars for parquet
+            let (cols, df, df_c) = if is_pq {
+                let src = view.backend();
+                let c = src.cols(&p)?;
+                let d = src.freq_where(&p, &self.col_names, w)?;
+                (c, d, None)
+            } else {
+                let mem_df = table_to_df(view.data.as_ref());
+                use crate::source::{Source, Memory};
+                let src = Memory(&mem_df);
+                let c = view.data.col_names();
+                let d = src.freq_where("", &self.col_names, w)?;
+                let df_c = if !sel.is_empty() { Some(mem_df) } else { None };
+                (c, d, df_c)
+            };
             for c in &self.col_names {
                 if !cols.contains(c) { return Err(anyhow!("Column '{}' not found", c)); }
             }
-            let w = view.filter_clause.as_deref().unwrap_or("TRUE");
-            let df = src.freq_where(&p, &self.col_names, w)?;
-            let is_pq = view.parquet_path.is_some();
-            let df_c = if !sel.is_empty() && !is_pq { Some(view.dataframe.clone()) } else { None };
-            (view.id, view.rows(), view.name.clone(), p, view.key_cols(), view.filter_clause.clone(), sel, df, is_pq, df_c)
+            (view.id, view.rows(), view.name.clone(), p, view.key_cols(), view.filter.clone(), sel, df, is_pq, df_c)
         };
 
         let result = add_freq_cols(freq_df)?;
@@ -97,7 +111,7 @@ impl Command for Frequency {
         // Get parent prql before pushing
         let parent_prql = app.req()?.prql.clone();
         let mut new_view = ViewState::new_freq(
-            id, name, result, parent_id, parent_rows, parent_name, freq_col, &parent_prql, &self.col_names,
+            id, name, df_to_table(result), parent_id, parent_rows, parent_name, freq_col, &parent_prql, &self.col_names,
         );
         if !key_cols.is_empty() { new_view.col_separator = Some(key_cols.len()); }
         app.stack.push(new_view);
@@ -117,7 +131,7 @@ impl Command for Frequency {
                 if let Ok(full_df) = add_freq_cols(agg_df) {
                     if let Some(v) = app.stack.cur_mut() {
                         if v.id == id {
-                            v.dataframe = full_df;
+                            v.data = df_to_table(full_df);
                             v.state.col_widths.clear();
                         }
                     }
@@ -140,7 +154,7 @@ impl Command for FreqEnter {
             let _ = CommandExecutor::exec(app, Box::new(FilterIn { col: self.col.clone(), values: self.values.clone() }));
             // Move cursor to filter column
             if let Some(v) = app.view_mut() {
-                if let Some(i) = v.dataframe.get_column_names().iter().position(|c| c.as_str() == self.col) { v.state.cc = i; }
+                if let Some(i) = v.data.col_names().iter().position(|c| c == &self.col) { v.state.cc = i; }
             }
         }
         Ok(())
@@ -156,11 +170,13 @@ impl Command for FreqEnterCmd {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         // Extract col and values from current freq view
         let (col, values) = app.view().and_then(|v| {
-            let col = v.freq_col.clone()?;
+            let col = v.parent.as_ref().and_then(|p| p.freq_col.clone())?;
             let rows: Vec<usize> = if v.selected_rows.is_empty() { vec![v.state.cr] }
                 else { v.selected_rows.iter().copied().collect() };
             let vals: Vec<String> = rows.iter()
-                .filter_map(|&r| v.dataframe.get_columns()[0].get(r).ok().map(|x| unquote(&x.to_string())))
+                .map(|&r| v.data.cell(r, 0).format(10))
+                .filter(|s| !s.is_empty() && s != "null")
+                .map(|s| unquote(&s))
                 .collect();
             Some((col, vals))
         }).ok_or_else(|| anyhow!("Not a freq view"))?;

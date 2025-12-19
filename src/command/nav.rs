@@ -121,11 +121,12 @@ pub struct SelRows { pub expr: String }
 impl Command for SelRows {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         use polars::prelude::*;
+        use crate::table::table_to_df;
         let view = app.req()?;
-        let df = &view.dataframe;
+        let df = table_to_df(view.data.as_ref());
         // Find matching row indices
         let mut ctx = polars::sql::SQLContext::new();
-        let with_idx = df.clone().lazy().with_row_index("__idx__", None);
+        let with_idx = df.lazy().with_row_index("__idx__", None);
         ctx.register("df", with_idx);
         let matches: Vec<usize> = ctx.execute(&format!("SELECT __idx__ FROM df WHERE {}", self.expr))
             .and_then(|lf| lf.collect())

@@ -3,6 +3,8 @@ pub mod convert;
 
 use crate::app::AppContext;
 use crate::source::{gz, Source, Polars};
+use crate::state::ViewSource;
+use crate::table::table_to_df;
 use crate::command::Command;
 use anyhow::Result;
 use convert::convert_epoch_cols;
@@ -37,23 +39,34 @@ pub struct Save {
 }
 
 impl Command for Save {
-    /// Save view to file: dispatch to source.save or streaming gz
+    /// Save view to file: dispatch to backend.save or streaming gz
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
-        let view = app.req()?;
         let path = Path::new(&self.file_path);
         let is_parquet = !matches!(path.extension().and_then(|s| s.to_str()), Some("csv"));
 
+        // Extract what we need from view before mutable operations
+        let (gz_source, df_clone, is_pq) = {
+            let view = app.req()?;
+            let gz = if let ViewSource::Gz { path: ref p, .. } = view.source { Some(p.clone()) } else { None };
+            let df = table_to_df(view.data.as_ref());
+            let df = if is_parquet { convert_epoch_cols(df) } else { df };
+            let pq = view.source.is_parquet();
+            (gz, df, pq)
+        };
+
         // Streaming save for gz source -> parquet (re-reads from disk)
-        if let Some(gz) = view.gz_source.clone().filter(|_| is_parquet) {
-            let raw = app.raw_save;
-            app.msg(format!("Streaming {} to parquet{}...", gz, if raw { " (raw)" } else { "" }));
-            app.bg_saver = Some(gz::stream_to_parquet(&gz, path, raw));
-            return Ok(());
+        if let Some(ref gz_path) = gz_source {
+            if is_parquet {
+                let raw = app.raw_save;
+                app.msg(format!("Streaming {} to parquet{}...", gz_path, if raw { " (raw)" } else { "" }));
+                app.bg_saver = Some(gz::stream_to_parquet(gz_path, path, raw));
+                return Ok(());
+            }
         }
 
-        // Normal save via source
-        let df = if is_parquet { convert_epoch_cols(view.dataframe.clone()) } else { view.dataframe.clone() };
-        view.source().save(&df, path)
+        // Normal save via backend
+        if is_pq { Polars.save(&df_clone, path) }
+        else { crate::source::Memory(&df_clone).save(&df_clone, path) }
     }
 
     fn to_str(&self) -> String { format!("save {}", self.file_path) }

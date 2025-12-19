@@ -6,6 +6,7 @@ use crate::command::Command;
 use crate::command::io::From;
 use crate::plugin::Plugin;
 use crate::state::ViewState;
+use crate::table::Table;
 use anyhow::{anyhow, Result};
 use std::path::{Path, PathBuf};
 
@@ -32,19 +33,25 @@ impl Plugin for FolderPlugin {
 
     fn handle(&self, cmd: &str, app: &mut AppContext) -> Option<Box<dyn Command>> {
         let v = app.view()?;
-        let df = &v.dataframe;
         // Extract parent dir from view name (ls:path or ls -r:path [& filter])
         let dir = v.name.split(':').nth(1)
             .map(|s| s.split(" & ").next().unwrap_or(s))  // strip filter part
             .map(|s| PathBuf::from(s)).unwrap_or_else(|| PathBuf::from("."));
 
+        // Find column indices
+        let cols = v.data.col_names();
+        let path_col = cols.iter().position(|c| c == "path")?;
+        let dir_col = cols.iter().position(|c| c == "dir");
+
         // For delete: get all selected paths (or current row)
         if cmd == "delete" {
             let rows: Vec<usize> = if v.selected_rows.is_empty() { vec![v.state.cr] }
                 else { v.selected_rows.iter().copied().collect() };
-            let paths: Vec<String> = rows.iter().filter_map(|&r| {
-                df.column("path").ok()?.get(r).ok().map(|v| unquote(&v.to_string()))
-            }).collect();
+            let paths: Vec<String> = rows.iter()
+                .map(|&r| v.data.cell(r, path_col).format(10))
+                .filter(|s| !s.is_empty() && s != "null")
+                .map(|s| unquote(&s))
+                .collect();
             if !paths.is_empty() {
                 return Some(Box::new(DelFiles { paths, dir }));
             }
@@ -52,11 +59,9 @@ impl Plugin for FolderPlugin {
         }
 
         // For enter: get current row info
-        let rel_path = df.column("path").ok()?.get(v.state.cr).ok()
-            .map(|v| unquote(&v.to_string()))?;
-        let is_dir = df.column("dir").ok()
-            .and_then(|c| c.get(v.state.cr).ok())
-            .map(|v| unquote(&v.to_string()) == "x")
+        let rel_path = unquote(&v.data.cell(v.state.cr, path_col).format(10));
+        if rel_path.is_empty() || rel_path == "null" { return None; }
+        let is_dir = dir_col.map(|c| unquote(&v.data.cell(v.state.cr, c).format(10)) == "x")
             .unwrap_or(false);
         // For lr (recursive), join base dir with relative path
         let path = if v.name.starts_with("ls -r:") {
@@ -93,10 +98,10 @@ pub struct Ls { pub dir: PathBuf, pub recursive: bool }
 
 impl Command for Ls {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
-        let df = if self.recursive { super::system::lr(&self.dir)? } else { super::system::ls(&self.dir)? };
+        let t = if self.recursive { super::system::lr(&self.dir)? } else { super::system::ls(&self.dir)? };
         let id = app.next_id();
         let name = if self.recursive { format!("ls -r:{}", self.dir.display()) } else { format!("ls:{}", self.dir.display()) };
-        app.stack.push(ViewState::new_folder(id, name, df));
+        app.stack.push(ViewState::new_folder(id, name, Box::new(t)));
         Ok(())
     }
     fn to_str(&self) -> String {
@@ -125,13 +130,12 @@ impl Command for DelFiles {
                 }
                 app.msg(format!("Deleted {} file(s)", deleted));
                 // Refresh by re-running ls on parent dir
-                let df = super::system::ls(&self.dir)?;
+                let t = super::system::ls(&self.dir)?;
                 if let Some(view) = app.view_mut() {
-                    view.dataframe = df;
+                    let rows = t.rows();
+                    view.data = Box::new(t);
                     view.selected_rows.clear();
-                    if view.state.cr >= view.dataframe.height() {
-                        view.state.cr = view.dataframe.height().saturating_sub(1);
-                    }
+                    if view.state.cr >= rows { view.state.cr = rows.saturating_sub(1); }
                 }
             }
             _ => app.msg("Cancelled"),

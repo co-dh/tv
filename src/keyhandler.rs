@@ -12,7 +12,7 @@ pub fn to_cmd(app: &AppContext, cmd: &str) -> Option<String> {
         "freq" => {
             let v = app.view()?;
             let sep = v.col_separator.unwrap_or(0);
-            let cols = if v.col_names.is_empty() { crate::source::df_cols(&v.dataframe) } else { v.col_names.clone() };
+            let cols = if v.cols.is_empty() { v.data.col_names() } else { v.cols.clone() };
             // Pure: build freq command
             pure::freq_cmd(&cols, sep, cur_col(app).as_deref())
         }
@@ -85,7 +85,7 @@ fn cur_col(app: &AppContext) -> Option<String> {
 fn toggle_key(app: &AppContext) -> Option<String> {
     let v = app.view()?;
     let sep = v.col_separator.unwrap_or(0);
-    let cols = if v.col_names.is_empty() { crate::source::df_cols(&v.dataframe) } else { v.col_names.clone() };
+    let cols = if v.cols.is_empty() { v.data.col_names() } else { v.cols.clone() };
 
     // Get columns to toggle: selected cols or current col
     let to_toggle: Vec<String> = if v.selected_cols.is_empty() {

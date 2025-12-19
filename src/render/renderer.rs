@@ -1,9 +1,9 @@
 use crate::app::AppContext;
 use crate::source::{Source, Polars};
-use crate::utils::{commify, is_numeric};
-use crate::state::{TableState, ViewKind, ViewState};
+use crate::table::{Cell, Table, df_to_table};
+use crate::utils::commify;
+use crate::state::{TableState, ViewKind, ViewSource, ViewState};
 use crate::theme::Theme;
-use polars::prelude::*;
 use ratatui::prelude::*;
 use ratatui::style::{Color as RColor, Modifier, Style};
 use ratatui::widgets::Tabs;
@@ -62,36 +62,38 @@ impl Renderer {
     fn render_table(frame: &mut Frame, view: &mut ViewState, area: Rect, selected_cols: &HashSet<usize>, selected_rows: &HashSet<usize>, decimals: usize, theme: &Theme, show_tabs: bool) {
         // Parquet cache: keeps 10k row window in memory to avoid SQL queries on every render frame.
         // Without cache: 60fps = 60 SQL queries/sec. Cache reduces to "only when scrolling outside window".
-        // Not used for in-memory CSV (parquet_path is None).
+        // Not used for in-memory CSV.
         const CACHE_SIZE: usize = 10_000;
-        let lazy_offset = if let Some(ref path) = view.parquet_path {
+        let lazy_offset = if let ViewSource::Parquet { ref path, .. } = view.source {
             let rows_needed = area.height as usize + 10;
             let (r0, rend) = (view.state.r0, view.state.r0 + rows_needed);
             // Check if visible range is within cache
-            let in_cache = view.fetch_cache.map(|(s, e)| r0 >= s && rend <= e).unwrap_or(false);
+            let in_cache = view.cache.fetch.map(|(s, e)| r0 >= s && rend <= e).unwrap_or(false);
             if !in_cache {
                 // Fetch 100k rows centered around current position
                 let start = r0.saturating_sub(CACHE_SIZE / 4);  // 25k before
-                dbg_log(&format!("fetch parquet start={} rows={} filter={:?}", start, CACHE_SIZE, view.filter_clause));
-                let w = view.filter_clause.as_deref().unwrap_or("TRUE");
-                let df = Polars.fetch_sel(path, &view.col_names, w, start, CACHE_SIZE);
+                dbg_log(&format!("fetch parquet start={} rows={} filter={:?}", start, CACHE_SIZE, view.filter));
+                let w = view.filter.as_deref().unwrap_or("TRUE");
+                let df = Polars.fetch_sel(path, &view.cols, w, start, CACHE_SIZE);
                 if let Ok(df) = df {
                     let fetched = df.height();
-                    view.dataframe = df;
-                    view.fetch_cache = Some((start, start + fetched));
+                    view.data = df_to_table(df);
+                    view.cache.fetch = Some((start, start + fetched));
                 }
             }
             // Return offset: df row 0 = cache start
-            view.fetch_cache.map(|(s, _)| s).unwrap_or(0)
+            view.cache.fetch.map(|(s, _)| s).unwrap_or(0)
         } else { 0 };
-        let df = &view.dataframe;
+
+        // Use Table trait for polars-free rendering
+        let table = view.data.as_ref();
         let total_rows = view.rows();  // use disk_rows for parquet
         let is_correlation = view.kind == ViewKind::Corr;
 
         // Calculate column widths if needed (based on content, don't extend last col)
         if view.state.need_widths() {
-            let widths: Vec<u16> = (0..df.width())
-                .map(|col_idx| Self::col_width(df, col_idx, &view.state, decimals))
+            let widths: Vec<u16> = (0..table.cols())
+                .map(|col_idx| Self::col_width(table, col_idx, &view.state, decimals))
                 .collect();
             view.state.col_widths = widths;
             view.state.widths_row = view.state.cr;
@@ -99,7 +101,7 @@ impl Renderer {
 
         let state = &view.state;
 
-        if df.height() == 0 || df.width() == 0 {
+        if table.rows() == 0 || table.cols() == 0 {
             let buf = frame.buffer_mut();
             buf.set_string(0, 0, "(empty table)", Style::default());
             return;
@@ -112,9 +114,9 @@ impl Renderer {
         let screen_width = area.width.saturating_sub(if row_num_width > 0 { row_num_width + 1 } else { 0 }) as i32;
 
         // Calculate xs - x position for each column (qtv style)
-        let mut xs: Vec<i32> = Vec::with_capacity(df.width() + 1);
+        let mut xs: Vec<i32> = Vec::with_capacity(table.cols() + 1);
         xs.push(0);
-        for col_idx in 0..df.width() {
+        for col_idx in 0..table.cols() {
             let col_width = state.col_widths.get(col_idx).copied().unwrap_or(10) as i32;
             xs.push(*xs.last().unwrap() + col_width + 1);
         }
@@ -132,19 +134,19 @@ impl Renderer {
         let col_sep = view.col_separator;
 
         // Render headers
-        Self::render_headers_xs(frame, df, state, &xs, screen_width, row_num_width, selected_cols, col_sep, theme, area);
+        Self::render_headers_xs(frame, table, state, &xs, screen_width, row_num_width, selected_cols, col_sep, theme, area);
 
         // Render data rows (for lazy parquet, df_idx = row_idx - lazy_offset)
         for row_idx in state.r0..end_row {
             let df_idx = row_idx - lazy_offset;
-            if df_idx >= df.height() { break; }  // fetched window exhausted
+            if df_idx >= table.rows() { break; }  // fetched window exhausted
             let screen_row = (row_idx - state.r0 + 1) as u16;
-            Self::render_row_xs(frame, df, df_idx, row_idx, state, &xs, screen_width, row_num_width, is_correlation, selected_cols, selected_rows, col_sep, decimals, theme, area, screen_row);
+            Self::render_row_xs(frame, table, df_idx, row_idx, state, &xs, screen_width, row_num_width, is_correlation, selected_cols, selected_rows, col_sep, decimals, theme, area, screen_row);
         }
 
         // Draw separator bar if set (stop before tabs/status)
         if let Some(sep_col) = col_sep {
-            if sep_col < df.width() {
+            if sep_col < table.cols() {
                 let sep_x = xs.get(sep_col).copied().unwrap_or(0);
                 if sep_x > 0 && sep_x < screen_width {
                     let px = (sep_x - 1) as u16 + row_num_width + if row_num_width > 0 { 1 } else { 0 };
@@ -168,11 +170,11 @@ impl Renderer {
         }
 
         // Footer header (aligned with table)
-        Self::render_header_footer(frame, df, state, &xs, screen_width, row_num_width, theme, area, show_tabs);
+        Self::render_header_footer(frame, table, state, &xs, screen_width, row_num_width, theme, area, show_tabs);
     }
 
     /// Render column headers
-    fn render_headers_xs(frame: &mut Frame, df: &DataFrame, state: &TableState, xs: &[i32], screen_width: i32, row_num_width: u16, selected_cols: &HashSet<usize>, _col_sep: Option<usize>, theme: &Theme, area: Rect) {
+    fn render_headers_xs(frame: &mut Frame, table: &dyn Table, state: &TableState, xs: &[i32], screen_width: i32, row_num_width: u16, selected_cols: &HashSet<usize>, _col_sep: Option<usize>, theme: &Theme, area: Rect) {
         let buf = frame.buffer_mut();
         let header_style = Style::default().bg(to_rcolor(theme.header_bg)).fg(to_rcolor(theme.header_fg)).add_modifier(Modifier::BOLD);
 
@@ -191,7 +193,8 @@ impl Renderer {
             x_pos += row_num_width + 1;
         }
 
-        for (col_idx, col_name) in df.get_column_names().iter().enumerate() {
+        for col_idx in 0..table.cols() {
+            let col_name = table.col_name(col_idx).unwrap_or_default();
             let x = xs[col_idx];
             let next_x = xs.get(col_idx + 1).copied().unwrap_or(x);
             if next_x <= 0 { continue; }
@@ -227,7 +230,7 @@ impl Renderer {
 
     /// Render a single data row
     // df_idx: index into dataframe, row_idx: actual row number in file (for display/cursor)
-    fn render_row_xs(frame: &mut Frame, df: &DataFrame, df_idx: usize, row_idx: usize, state: &TableState, xs: &[i32], screen_width: i32, row_num_width: u16, is_correlation: bool, selected_cols: &HashSet<usize>, selected_rows: &HashSet<usize>, _col_sep: Option<usize>, decimals: usize, theme: &Theme, area: Rect, screen_row: u16) {
+    fn render_row_xs(frame: &mut Frame, table: &dyn Table, df_idx: usize, row_idx: usize, state: &TableState, xs: &[i32], screen_width: i32, row_num_width: u16, is_correlation: bool, selected_cols: &HashSet<usize>, selected_rows: &HashSet<usize>, _col_sep: Option<usize>, decimals: usize, theme: &Theme, area: Rect, screen_row: u16) {
         let buf = frame.buffer_mut();
         let is_cur_row = row_idx == state.cr;
         let is_sel_row = selected_rows.contains(&row_idx);
@@ -250,7 +253,7 @@ impl Renderer {
             x_pos += row_num_width + 1;
         }
 
-        for col_idx in 0..df.width() {
+        for col_idx in 0..table.cols() {
             let x = xs[col_idx];
             let next_x = xs.get(col_idx + 1).copied().unwrap_or(x);
             if next_x <= 0 { continue; }
@@ -261,7 +264,7 @@ impl Renderer {
             let is_sel = selected_cols.contains(&col_idx);
 
             let col_width = state.col_widths.get(col_idx).copied().unwrap_or(10) as usize;
-            let value = Self::format_value(df, col_idx, df_idx, decimals);
+            let value = Self::format_cell(table, col_idx, df_idx, decimals);
 
             // Correlation color
             let corr_color = if is_correlation && col_idx > 0 { Self::correlation_color(&value) } else { None };
@@ -287,7 +290,7 @@ impl Renderer {
 
             let start_x = x.max(0) as u16 + x_pos;
             // Right-align numeric columns
-            let is_num = is_numeric(df.get_columns()[col_idx].dtype());
+            let is_num = table.col_type(col_idx).is_numeric();
             let display = if is_num { format!("{:>width$}", value, width = col_width) }
                          else { format!("{:width$}", value, width = col_width) };
 
@@ -319,61 +322,32 @@ impl Renderer {
         Some(Color::Rgb { r, g, b })
     }
 
-    /// Format a single cell value
-    fn format_value(df: &DataFrame, col_idx: usize, row_idx: usize, decimals: usize) -> String {
-        let col = df.get_columns()[col_idx].as_materialized_series();
-        match col.dtype() {
-            DataType::String => col.str().ok().and_then(|s| s.get(row_idx)).unwrap_or("null").to_string(),
-            DataType::Int8 | DataType::Int16 | DataType::Int32 | DataType::Int64 |
-            DataType::UInt8 | DataType::UInt16 | DataType::UInt32 | DataType::UInt64 => {
-                col.get(row_idx).map(|v| match v {
-                    AnyValue::Null => "null".to_string(),
-                    _ => Self::commify_str(&v.to_string()),
-                }).unwrap_or_else(|_| "null".to_string())
-            }
-            DataType::Float32 | DataType::Float64 => {
-                col.get(row_idx).map(|v| match v {
-                    AnyValue::Null => "null".to_string(),
-                    AnyValue::Float32(f) => Self::commify_float(&format!("{:.prec$}", f, prec = decimals)),
-                    AnyValue::Float64(f) => Self::commify_float(&format!("{:.prec$}", f, prec = decimals)),
-                    _ => v.to_string(),
-                }).unwrap_or_else(|_| "null".to_string())
-            }
-            DataType::Datetime(_, _) => {
-                col.get(row_idx).map(|v| {
-                    let s = v.to_string();
-                    if s.len() >= 16 { s[..16].to_string() } else { s }
-                }).unwrap_or_else(|_| "null".to_string())
-            }
-            DataType::Time => {
-                // Format Time as HH:MM:SS.mmm
-                col.get(row_idx).map(|v| match v {
-                    AnyValue::Time(ns) => {
-                        let secs = ns / 1_000_000_000;
-                        let ms = (ns % 1_000_000_000) / 1_000_000;
-                        format!("{:02}:{:02}:{:02}.{:03}", secs / 3600, (secs % 3600) / 60, secs % 60, ms)
-                    }
-                    _ => v.to_string(),
-                }).unwrap_or_else(|_| "null".to_string())
-            }
-            _ => col.get(row_idx).map(|v| v.to_string()).unwrap_or_else(|_| "null".to_string()),
+    /// Format a single cell value using Table trait (polars-free)
+    fn format_cell(table: &dyn Table, col_idx: usize, row_idx: usize, decimals: usize) -> String {
+        let cell = table.cell(row_idx, col_idx);
+        match cell {
+            Cell::Null => "null".to_string(),
+            Cell::Int(n) => Self::commify_str(&n.to_string()),
+            Cell::Float(f) => Self::commify_float(&format!("{:.prec$}", f, prec = decimals)),
+            Cell::DateTime(s) => if s.len() >= 16 { s[..16].to_string() } else { s },
+            _ => cell.format(decimals),
         }
     }
 
-    /// Calculate column width
-    fn col_width(df: &DataFrame, col_idx: usize, state: &TableState, decimals: usize) -> u16 {
+    /// Calculate column width using Table trait (polars-free)
+    fn col_width(table: &dyn Table, col_idx: usize, state: &TableState, decimals: usize) -> u16 {
         const MIN_WIDTH: usize = 3;
         // Path columns get more width (for lr view)
-        let col_name = df.get_column_names()[col_idx];
+        let col_name = table.col_name(col_idx).unwrap_or_default();
         let max_width_limit = if col_name == "path" { 80 } else { 30 };
 
         let mut max_width = col_name.len();
         let sample_size = ((state.viewport.0.saturating_sub(2) as usize) * 3).max(100);
         let start_row = state.cr.saturating_sub(sample_size / 2);
-        let end_row = (start_row + sample_size).min(df.height());
+        let end_row = (start_row + sample_size).min(table.rows());
 
         for row_idx in start_row..end_row {
-            let value = Self::format_value(df, col_idx, row_idx, decimals);
+            let value = Self::format_cell(table, col_idx, row_idx, decimals);
             max_width = max_width.max(value.len());
             if max_width >= max_width_limit { break; }
         }
@@ -391,53 +365,6 @@ impl Renderer {
         if let Some(dot) = s.find('.') {
             format!("{}{}", Self::commify_str(&s[..dot]), &s[dot..])
         } else { Self::commify_str(s) }
-    }
-
-    /// Calculate column statistics
-    fn column_stats(df: &DataFrame, col_idx: usize) -> String {
-        let col = df.get_columns()[col_idx].as_materialized_series();
-        let len = col.len();
-        if len == 0 { return String::new(); }
-
-        let null_count = if col.dtype() == &DataType::String {
-            col.str().unwrap().into_iter()
-                .filter(|v| v.is_none() || v.map(|s| s.is_empty()).unwrap_or(false))
-                .count()
-        } else { col.null_count() };
-        let null_pct = 100.0 * null_count as f64 / len as f64;
-
-        match col.dtype() {
-            DataType::Int8 | DataType::Int16 | DataType::Int32 | DataType::Int64
-            | DataType::UInt8 | DataType::UInt16 | DataType::UInt32 | DataType::UInt64
-            | DataType::Float32 | DataType::Float64 => {
-                let col_f64 = col.cast(&DataType::Float64).ok();
-                if let Some(c) = col_f64 {
-                    let min = c.min::<f64>().ok().flatten().unwrap_or(f64::NAN);
-                    let max = c.max::<f64>().ok().flatten().unwrap_or(f64::NAN);
-                    let mean = c.mean().unwrap_or(f64::NAN);
-                    let std = c.std(1).unwrap_or(f64::NAN);
-                    if null_pct > 0.0 {
-                        format!("null:{:.0}% [{:.2},{:.2},{:.2}] σ{:.2}", null_pct, min, mean, max, std)
-                    } else {
-                        format!("[{:.2},{:.2},{:.2}] σ{:.2}", min, mean, max, std)
-                    }
-                } else { String::new() }
-            }
-            _ => {
-                let n_unique = col.n_unique().unwrap_or(0);
-                let mode = col.value_counts(true, false, "cnt".into(), false)
-                    .ok()
-                    .and_then(|vc| vc.column(col.name().as_str()).ok().cloned())
-                    .and_then(|c| c.get(0).ok().map(|v| v.to_string()))
-                    .unwrap_or_default();
-                let mode_str = if mode.len() > 10 { &mode[..10] } else { &mode };
-                if null_pct > 0.0 {
-                    format!("null:{:.0}% #{}'{}'", null_pct, n_unique, mode_str)
-                } else {
-                    format!("#{}'{}'", n_unique, mode_str)
-                }
-            }
-        }
     }
 
     /// Render info box using ratatui widgets
@@ -504,7 +431,7 @@ impl Renderer {
     }
 
     /// Render column header above tabs/status (footer header) - aligned with table
-    fn render_header_footer(frame: &mut Frame, df: &DataFrame, state: &TableState, xs: &[i32], screen_width: i32, row_num_width: u16, theme: &Theme, area: Rect, show_tabs: bool) {
+    fn render_header_footer(frame: &mut Frame, table: &dyn Table, state: &TableState, xs: &[i32], screen_width: i32, row_num_width: u16, theme: &Theme, area: Rect, show_tabs: bool) {
         let row = area.height.saturating_sub(if show_tabs { 3 } else { 2 });
         if row == 0 { return; }
         let buf = frame.buffer_mut();
@@ -512,14 +439,15 @@ impl Renderer {
         // Fill row
         for x in 0..area.width { buf[(x, row)].set_style(style); buf[(x, row)].set_char(' '); }
         let x_pos = if row_num_width > 0 { row_num_width + 1 } else { 0 };
-        for (col_idx, col_name) in df.get_column_names().iter().enumerate() {
+        for col_idx in 0..table.cols() {
+            let col_name = table.col_name(col_idx).unwrap_or_default();
             let x = xs.get(col_idx).copied().unwrap_or(0);
             let next_x = xs.get(col_idx + 1).copied().unwrap_or(x);
             if next_x <= 0 { continue; }
             if x >= screen_width { break; }
             let col_width = state.col_widths.get(col_idx).copied().unwrap_or(10) as usize;
             let start_x = x.max(0) as u16 + x_pos;
-            let display = format!("{:width$}", col_name.as_str(), width = col_width);
+            let display = format!("{:width$}", col_name, width = col_width);
             for (i, ch) in display.chars().take(col_width).enumerate() {
                 let px = start_x + i as u16;
                 if px >= area.width { break; }
@@ -544,32 +472,33 @@ impl Renderer {
         let left = if !message.is_empty() { format!("{}{}", message, sel_info) }
         else if matches!(view.kind, ViewKind::Freq | ViewKind::Meta) {
             // Show parent name and row count for Meta/Freq views
-            let pn = view.parent_name.as_deref().unwrap_or("");
-            let pr = view.parent_rows.map(|n| format!(" ({})", commify(&n.to_string()))).unwrap_or_default();
+            let pn = view.parent.as_ref().map(|p| p.name.as_str()).unwrap_or("");
+            let pr = view.parent.as_ref().map(|p| format!(" ({})", commify(&p.rows.to_string()))).unwrap_or_default();
             format!("{} <- {}{}{}", view.name, pn, pr, sel_info)
         }
         else { format!("{}{}", view.filename.as_deref().unwrap_or("(no file)"), sel_info) };
 
         // Use cached stats if column unchanged
-        let col_stats = if view.cols() > 0 {
+        let col_stats_str = if view.cols() > 0 {
             let cc = view.state.cc;
-            if let Some((cached_cc, ref s)) = view.stats_cache {
+            if let Some((cached_cc, ref s)) = view.cache.stats {
                 if cached_cc == cc { s.clone() }
                 else {
-                    let s = Self::column_stats(&view.dataframe, cc);
-                    view.stats_cache = Some((cc, s.clone()));
+                    let s = view.col_stats(cc).format();
+                    view.cache.stats = Some((cc, s.clone()));
                     s
                 }
             } else {
-                let s = Self::column_stats(&view.dataframe, cc);
-                view.stats_cache = Some((cc, s.clone()));
+                let s = view.col_stats(cc).format();
+                view.cache.stats = Some((cc, s.clone()));
                 s
             }
         } else { String::new() };
 
-        let partial = if is_loading || view.partial { " Partial" } else { "" };
-        let right = if col_stats.is_empty() { format!("{}/{}{}", view.state.cr, total_str, partial) }
-        else { format!("{} {}/{}{}", col_stats, view.state.cr, total_str, partial) };
+        let is_partial = matches!(view.source, ViewSource::Gz { partial: true, .. });
+        let partial = if is_loading || is_partial { " Partial" } else { "" };
+        let right = if col_stats_str.is_empty() { format!("{}/{}{}", view.state.cr, total_str, partial) }
+        else { format!("{} {}/{}{}", col_stats_str, view.state.cr, total_str, partial) };
 
         let padding = (area.width as usize).saturating_sub(left.len() + right.len()).max(1);
         let status = format!("{}{:width$}{}", left, "", right, width = padding);
@@ -591,13 +520,13 @@ impl Renderer {
     }
 
     #[cfg(test)]
-    pub fn test_format_value(df: &DataFrame, col_idx: usize, row_idx: usize, decimals: usize) -> String {
-        Self::format_value(df, col_idx, row_idx, decimals)
+    pub fn test_format_cell(table: &dyn Table, col_idx: usize, row_idx: usize, decimals: usize) -> String {
+        Self::format_cell(table, col_idx, row_idx, decimals)
     }
 
     #[cfg(test)]
-    pub fn test_col_width(df: &DataFrame, col_idx: usize, state: &TableState, decimals: usize) -> u16 {
-        Self::col_width(df, col_idx, state, decimals)
+    pub fn test_col_width(table: &dyn Table, col_idx: usize, state: &TableState, decimals: usize) -> u16 {
+        Self::col_width(table, col_idx, state, decimals)
     }
 }
 
@@ -630,7 +559,9 @@ fn to_rcolor(c: ratatui::crossterm::style::Color) -> RColor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backend::PolarsTable;
     use crate::state::TableState;
+    use polars::prelude::*;
 
     #[test]
     fn test_null_not_commified() {
@@ -638,17 +569,18 @@ mod tests {
             "int_col" => &[Some(1000000i64), None, Some(2000000i64)],
             "float_col" => &[Some(1234.567f64), None, Some(9876.543f64)],
         }.unwrap();
+        let table = PolarsTable::new(df);
 
-        let int_null = Renderer::test_format_value(&df, 0, 1, 3);
+        let int_null = Renderer::test_format_cell(&table, 0, 1, 3);
         assert_eq!(int_null, "null", "Integer null should be 'null', not 'n,ull'");
 
-        let float_null = Renderer::test_format_value(&df, 1, 1, 3);
+        let float_null = Renderer::test_format_cell(&table, 1, 1, 3);
         assert_eq!(float_null, "null", "Float null should be 'null', not 'n,ull'");
 
-        let int_val = Renderer::test_format_value(&df, 0, 0, 3);
+        let int_val = Renderer::test_format_cell(&table, 0, 0, 3);
         assert_eq!(int_val, "1,000,000", "Integer should be commified");
 
-        let float_val = Renderer::test_format_value(&df, 1, 0, 3);
+        let float_val = Renderer::test_format_cell(&table, 1, 0, 3);
         assert_eq!(float_val, "1,234.567", "Float should be commified");
     }
 
@@ -659,11 +591,12 @@ mod tests {
             "name" => &["apple", "banana"],
             "price" => &[100i64, 200i64],
         }.unwrap();
-        let mut state = TableState { viewport: (25, 120), ..Default::default() };
+        let table = PolarsTable::new(df);
+        let state = TableState { viewport: (25, 120), ..Default::default() };
 
         // Get natural widths for both columns
-        let name_w = Renderer::test_col_width(&df, 0, &state, 3);
-        let price_w = Renderer::test_col_width(&df, 1, &state, 3);
+        let name_w = Renderer::test_col_width(&table, 0, &state, 3);
+        let price_w = Renderer::test_col_width(&table, 1, &state, 3);
 
         // name col: max("name".len(), "banana".len()) = 6
         assert!(name_w >= 6 && name_w <= 10, "name width {} should be ~6", name_w);

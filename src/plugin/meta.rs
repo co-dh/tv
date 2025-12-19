@@ -1,7 +1,7 @@
 //! Meta view plugin - data profile/metadata statistics
 
 use crate::app::AppContext;
-use crate::source::df_cols;
+use crate::table::{df_to_table, table_to_df};
 use crate::utils::{is_numeric, unquote};
 use crate::command::Command;
 use crate::command::executor::CommandExecutor;
@@ -44,8 +44,9 @@ fn sel_cols(app: &AppContext, reverse: bool) -> Option<Vec<String>> {
         };
         if reverse { rows.sort_by(|a, b| b.cmp(a)); } else { rows.sort(); }
         let names: Vec<String> = rows.iter()
-            .filter_map(|&r| v.dataframe.get_columns()[0].get(r).ok()
-                .map(|v| unquote(&v.to_string())))
+            .map(|&r| v.data.cell(r, 0).format(10))
+            .filter(|s| !s.is_empty() && s != "null")
+            .map(|s| unquote(&s))
             .collect();
         if names.is_empty() { None } else { Some(names) }
     })
@@ -56,7 +57,7 @@ fn sel_cols(app: &AppContext, reverse: bool) -> Option<Vec<String>> {
 /// Push meta view onto stack
 fn push_meta(app: &mut AppContext, df: DataFrame, pid: usize, prows: usize, pname: String, pcol: usize, sep: Option<usize>, parent_prql: &str) {
     let id = app.next_id();
-    let mut v = ViewState::new_meta(id, df, pid, prows, pname, parent_prql);
+    let mut v = ViewState::new_meta(id, df_to_table(df), pid, prows, pname, parent_prql);
     v.state.cr = pcol;
     if let Some(s) = sep { v.col_separator = Some(s); }
     app.stack.push(v);
@@ -69,20 +70,29 @@ impl Command for Metadata {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         // Block meta while gz is still loading
         if app.is_loading() { return Err(anyhow!("Wait for loading to complete")); }
-        let (parent_id, parent_col, parent_rows, parent_name, parent_prql, cached, df, col_sep, pq_path, col_names, schema) = {
+        let (parent_id, parent_col, parent_rows, parent_name, parent_prql, has_cache, df, col_sep, is_pq, col_names, schema) = {
             let view = app.req()?;
-            let path = view.path().to_string();
-            let cols = view.source().cols(&path)?;
-            let schema = view.source().schema(&path)?;
+            let is_pq = view.source.is_parquet();
+            let df = table_to_df(view.data.as_ref());
+            let (cols, schema) = if is_pq {
+                let path = view.path().to_string();
+                (view.backend().cols(&path)?, view.backend().schema(&path)?)
+            } else {
+                use crate::source::{Source, Memory};
+                let src = Memory(&df);
+                (src.cols("")?, src.schema("")?)
+            };
             (view.id, view.state.cc, view.rows(), view.name.clone(), view.prql.clone(),
-             view.meta_cache.clone(), view.dataframe.clone(), view.col_separator, view.parquet_path.clone(), cols, schema)
+             view.cache.meta.is_some(), df, view.col_separator, is_pq, cols, schema)
         };
         let key_cols: Vec<String> = col_sep.map(|sep| col_names[..sep].to_vec()).unwrap_or_default();
 
         // Check cache (only for non-grouped)
-        if key_cols.is_empty() {
-            if let Some(cached_df) = cached {
-                push_meta(app, cached_df, parent_id, parent_rows, parent_name, parent_col, None, &parent_prql);
+        if key_cols.is_empty() && has_cache {
+            // Use cached table - convert back to df for push_meta
+            let cached_df = app.req()?.cache.meta.as_ref().map(|t| table_to_df(t));
+            if let Some(df) = cached_df {
+                push_meta(app, df, parent_id, parent_rows, parent_name, parent_col, None, &parent_prql);
                 return Ok(());
             }
         }
@@ -103,8 +113,9 @@ impl Command for Metadata {
         let placeholder = placeholder_df(col_names, types)?;
         push_meta(app, placeholder, parent_id, parent_rows, parent_name, parent_col, None, &parent_prql);
         let (tx, rx) = std::sync::mpsc::channel();
-        if let Some(path) = pq_path {
-            std::thread::spawn(move || { if let Ok(r) = lf_stats_path(&path) { let _ = tx.send(r); } });
+        if is_pq {
+            let ppath = app.req()?.path().to_string();
+            std::thread::spawn(move || { if let Ok(r) = lf_stats_path(&ppath) { let _ = tx.send(r); } });
         } else {
             std::thread::spawn(move || { if let Ok(r) = lf_stats(&df) { let _ = tx.send(r); } });
         }
@@ -122,8 +133,8 @@ impl Command for MetaEnter {
         let _ = CommandExecutor::exec(app, Box::new(Pop));  // pop meta view
         if self.col_names.len() == 1 {  // single col: move cursor
             if let Some(v) = app.view_mut() {
-                // Use col_names for parquet, dataframe for memory
-                let cols = if v.col_names.is_empty() { df_cols(&v.dataframe) } else { v.col_names.clone() };
+                // Use cols field if set, else data cols
+                let cols = if v.cols.is_empty() { v.data.col_names() } else { v.cols.clone() };
                 if let Some(idx) = cols.iter().position(|c| c == &self.col_names[0]) {
                     v.state.cc = idx;
                 }
@@ -143,22 +154,24 @@ pub struct MetaDelete { pub col_names: Vec<String> }
 impl Command for MetaDelete {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         let n = self.col_names.len();
-        if let Some(pid) = app.view().and_then(|v| v.parent_id) {
+        if let Some(pid) = app.view().and_then(|v| v.parent.as_ref().map(|p| p.id)) {
             if let Some(parent) = app.stack.find_mut(pid) {
                 // Adjust col_separator if deleting key columns
                 if let Some(sep) = parent.col_separator {
-                    let cols = if parent.col_names.is_empty() { df_cols(&parent.dataframe) } else { parent.col_names.clone() };
+                    let cols = if parent.cols.is_empty() { parent.data.col_names() } else { parent.cols.clone() };
                     let adj = self.col_names.iter().filter(|c| cols.iter().position(|x| x == *c).map(|i| i < sep).unwrap_or(false)).count();
                     parent.col_separator = Some(sep.saturating_sub(adj));
                 }
-                // Init col_names from df if empty, then remove deleted columns
-                if parent.col_names.is_empty() { parent.col_names = df_cols(&parent.dataframe); }
-                parent.col_names.retain(|c| !self.col_names.contains(c));
+                // Init cols from data if empty, then remove deleted columns
+                if parent.cols.is_empty() { parent.cols = parent.data.col_names(); }
+                parent.cols.retain(|c| !self.col_names.contains(c));
                 // Clear cache to force re-fetch with new column list
-                parent.fetch_cache = None;
-                // For in-memory views, also drop from dataframe
-                if parent.parquet_path.is_none() {
-                    for c in &self.col_names { let _ = parent.dataframe.drop_in_place(c); }
+                parent.cache.fetch = None;
+                // For in-memory views, also drop from data
+                if !parent.source.is_parquet() {
+                    let mut df = table_to_df(parent.data.as_ref());
+                    for c in &self.col_names { let _ = df.drop_in_place(c); }
+                    parent.data = df_to_table(df);
                 }
             }
         }
@@ -172,7 +185,7 @@ impl Command for MetaDelete {
 
 // === Stats computation ===
 
-use crate::source::sql;
+use crate::source::{sql, df_cols};
 
 /// Build stats DataFrame from column vectors
 fn stats_df(cols: Vec<String>, types: Vec<String>, nulls: Vec<String>, dists: Vec<String>,

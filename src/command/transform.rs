@@ -1,5 +1,6 @@
 use crate::app::AppContext;
-use crate::source::df_cols;
+use crate::state::ViewSource;
+use crate::table::{df_to_table, table_to_df};
 use crate::command::Command;
 use crate::pure;
 use anyhow::{anyhow, Result};
@@ -15,9 +16,12 @@ impl Command for DelCol {
             let v = app.req_mut()?;
             // Pure: count how many deleted cols are before separator
             let sep_adjust = v.col_separator.map(|sep| {
-                pure::count_before_sep(&df_cols(&v.dataframe), &self.col_names, sep)
+                pure::count_before_sep(&v.data.col_names(), &self.col_names, sep)
             }).unwrap_or(0);
-            for c in &self.col_names { v.dataframe = v.dataframe.drop(c)?; }
+            // Convert to DataFrame, drop columns, convert back
+            let mut df = table_to_df(v.data.as_ref());
+            for c in &self.col_names { df = df.drop(c)?; }
+            v.data = df_to_table(df);
             if let Some(sep) = v.col_separator { v.col_separator = Some(sep.saturating_sub(sep_adjust)); }
             if v.state.cc >= v.cols() && v.cols() > 0 { v.state.cc = v.cols() - 1; }
         }
@@ -38,16 +42,18 @@ impl Command for Filter {
         let path = v.path().to_string();
         let parent_prql = v.prql.clone();
         // Pure: chain filters with AND
-        let combined = pure::combine_filters(v.filter_clause.as_deref(), &self.expr);
+        let combined = pure::combine_filters(v.filter.as_deref(), &self.expr);
         let name = pure::filter_name(&v.name, &self.expr);
         // Lazy for parquet (disk), materialized for in-memory
-        if v.parquet_path.is_some() {
-            let count = v.source().count_where(&path, &combined)?;
-            let cols = v.col_names.clone();
+        if v.source.is_parquet() {
+            let count = v.backend().count_where(&path, &combined)?;
+            let cols = v.cols.clone();
             app.stack.push(crate::state::ViewState::new_filtered(id, name, path, cols, combined, count, &parent_prql, &self.expr));
         } else {
-            let filtered = v.source().filter(&path, &combined, FILTER_LIMIT)?;
-            app.stack.push(crate::state::ViewState::new(id, name, filtered, v.filename.clone()));
+            use crate::source::{Source, Memory};
+            let df = table_to_df(v.data.as_ref());
+            let filtered = Memory(&df).filter("", &combined, FILTER_LIMIT)?;
+            app.stack.push(crate::state::ViewState::new(id, name, df_to_table(filtered), v.filename.clone()));
         }
         Ok(())
     }
@@ -60,9 +66,12 @@ pub struct Select { pub col_names: Vec<String> }
 impl Command for Select {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         let v = app.req_mut()?;
-        v.col_names = self.col_names.clone();
-        v.fetch_cache = None;
-        if v.parquet_path.is_none() { v.dataframe = v.dataframe.select(&self.col_names)?; }
+        v.cols = self.col_names.clone();
+        v.cache.fetch = None;
+        if !v.source.is_parquet() {
+            let df = table_to_df(v.data.as_ref()).select(&self.col_names)?;
+            v.data = df_to_table(df);
+        }
         v.state.cc = 0;
         Ok(())
     }
@@ -80,15 +89,14 @@ impl Command for Sort {
         let sorted = {
             let v = app.req()?;
             let path = v.path().to_string();
-            v.source().sort_head(&path, &self.col_name, self.descending, SORT_LIMIT)?
+            v.backend().sort_head(&path, &self.col_name, self.descending, SORT_LIMIT)?
         };
         let v = app.req_mut()?;
-        v.dataframe = sorted;
+        v.data = df_to_table(sorted);
         v.sort_col = Some(self.col_name.clone());
         v.sort_desc = self.descending;
         // Clear parquet lazy state - now in memory
-        v.disk_rows = None;
-        v.parquet_path = None;
+        v.source = ViewSource::Memory;
         v.state.top();  // reset to top after sort
         Ok(())
     }
@@ -101,7 +109,9 @@ pub struct RenameCol { pub old_name: String, pub new_name: String }
 impl Command for RenameCol {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         let v = app.req_mut()?;
-        v.dataframe.rename(&self.old_name, self.new_name.as_str().into())?;
+        let mut df = table_to_df(v.data.as_ref());
+        df.rename(&self.old_name, self.new_name.as_str().into())?;
+        v.data = df_to_table(df);
         v.state.col_widths.clear(); // force width recalc
         Ok(())
     }
@@ -115,7 +125,8 @@ impl Command for Agg {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         let (agg_df, filename) = {
             let v = app.req()?;
-            let grouped = v.dataframe.clone().lazy().group_by([col(&self.col)]);
+            let df = table_to_df(v.data.as_ref());
+            let grouped = df.lazy().group_by([col(&self.col)]);
             let result = match self.func.as_str() {
                 "count" => grouped.agg([col("*").count().alias("count")]),
                 "sum" => grouped.agg([col("*").sum()]),
@@ -128,7 +139,7 @@ impl Command for Agg {
             (result.collect()?, v.filename.clone())
         };
         let id = app.next_id();
-        app.stack.push(crate::state::ViewState::new(id, format!("{}:{}", self.func, self.col), agg_df, filename));
+        app.stack.push(crate::state::ViewState::new(id, format!("{}:{}", self.func, self.col), df_to_table(agg_df), filename));
         Ok(())
     }
     fn to_str(&self) -> String { format!("agg {} {}", self.col, self.func) }
@@ -144,7 +155,15 @@ impl Command for FilterIn {
         let id = app.next_id();
         let v = app.req()?;
         let path = v.path().to_string();
-        let schema = v.source().schema(&path)?;
+        let is_pq = v.source.is_parquet();
+        // Get schema to check if column is string type
+        let schema = if is_pq {
+            v.backend().schema(&path)?
+        } else {
+            use crate::source::{Source, Memory};
+            let df = table_to_df(v.data.as_ref());
+            Memory(&df).schema("")?
+        };
         // Pure: check if column is string type
         let is_str = schema.iter().find(|(n, _)| n == &self.col)
             .map(|(_, t)| pure::is_string_type(t)).unwrap_or(true);
@@ -152,16 +171,18 @@ impl Command for FilterIn {
         let new_clause = pure::in_clause(&self.col, &self.values, is_str);
         let name = pure::filter_in_name(&self.col, &self.values);
         // Lazy filtered view for parquet: combine with existing filter
-        if v.parquet_path.is_some() {
-            let combined = pure::combine_filters(v.filter_clause.as_deref(), &new_clause);
-            let count = v.source().count_where(&path, &combined)?;
-            let cols = v.col_names.clone();
+        if is_pq {
+            let combined = pure::combine_filters(v.filter.as_deref(), &new_clause);
+            let count = v.backend().count_where(&path, &combined)?;
+            let cols = v.cols.clone();
             let parent_prql = v.prql.clone();
             app.stack.push(crate::state::ViewState::new_filtered(id, name, path, cols, combined, count, &parent_prql, &new_clause));
         } else {
-            let filtered = v.source().filter(&path, &new_clause, FILTER_LIMIT)?;
+            use crate::source::{Source, Memory};
+            let df = table_to_df(v.data.as_ref());
+            let filtered = Memory(&df).filter("", &new_clause, FILTER_LIMIT)?;
             let filename = v.filename.clone();
-            app.stack.push(crate::state::ViewState::new(id, name, filtered, filename));
+            app.stack.push(crate::state::ViewState::new(id, name, df_to_table(filtered), filename));
         }
         Ok(())
     }
@@ -175,15 +196,18 @@ pub struct Xkey { pub col_names: Vec<String> }
 impl Command for Xkey {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         let v = app.req_mut()?;
-        // Use col_names for parquet, dataframe for memory
-        let all = if v.col_names.is_empty() { df_cols(&v.dataframe) } else { v.col_names.clone() };
+        // Use cols field if set, else data cols
+        let all = if v.cols.is_empty() { v.data.col_names() } else { v.cols.clone() };
         // Pure: reorder columns with keys first
         let order = pure::reorder_cols(&all, &self.col_names);
-        // Update col_names with new order, clear cache
-        v.col_names = order.clone();
-        v.fetch_cache = None;
-        // For in-memory, also reorder dataframe
-        if v.parquet_path.is_none() { v.dataframe = v.dataframe.select(&order)?; }
+        // Update cols with new order, clear cache
+        v.cols = order.clone();
+        v.cache.fetch = None;
+        // For in-memory, also reorder data
+        if !v.source.is_parquet() {
+            let df = table_to_df(v.data.as_ref()).select(&order)?;
+            v.data = df_to_table(df);
+        }
         v.selected_cols.clear();
         v.selected_cols.extend(0..self.col_names.len());
         v.state.cc = 0;
@@ -200,7 +224,8 @@ pub struct Take { pub n: usize }
 impl Command for Take {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         let v = app.req_mut()?;
-        v.dataframe = v.dataframe.head(Some(self.n));
+        let df = table_to_df(v.data.as_ref()).head(Some(self.n));
+        v.data = df_to_table(df);
         Ok(())
     }
     fn to_str(&self) -> String { format!("take {}", self.n) }
@@ -213,7 +238,8 @@ impl Command for ToTime {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         use crate::command::io::convert::{is_taq_time, taq_to_ns};
         let v = app.req_mut()?;
-        let c = v.dataframe.column(&self.col_name)?;
+        let mut df = table_to_df(v.data.as_ref());
+        let c = df.column(&self.col_name)?;
         if !c.dtype().is_integer() { return Err(anyhow!("Column must be integer type")); }
         let i64_s = c.cast(&DataType::Int64)?;
         let i64_ca = i64_s.i64()?;
@@ -223,7 +249,8 @@ impl Command for ToTime {
         // Convert to nanoseconds since midnight, then to Time
         let ns: Vec<Option<i64>> = i64_ca.into_iter().map(|v| v.map(taq_to_ns)).collect();
         let time_s = Series::new(self.col_name.as_str().into(), ns).cast(&DataType::Time)?;
-        v.dataframe.replace(&self.col_name, time_s)?;
+        df.replace(&self.col_name, time_s)?;
+        v.data = df_to_table(df);
         v.state.col_widths.clear();
         Ok(())
     }
@@ -243,9 +270,11 @@ impl Command for Cast {
             "Boolean" => DataType::Boolean,
             _ => return Err(anyhow!("Unknown type: {}", self.dtype)),
         };
-        let c = v.dataframe.column(&self.col_name)?;
+        let mut df = table_to_df(v.data.as_ref());
+        let c = df.column(&self.col_name)?;
         let new_col = c.cast(&dt)?;
-        v.dataframe.with_column(new_col)?;
+        df.with_column(new_col)?;
+        v.data = df_to_table(df);
         v.state.col_widths.clear();
         Ok(())
     }
@@ -258,10 +287,12 @@ pub struct Derive { pub col_name: String }
 impl Command for Derive {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         let v = app.req_mut()?;
-        let c = v.dataframe.column(&self.col_name)?.clone();
+        let mut df = table_to_df(v.data.as_ref());
+        let c = df.column(&self.col_name)?.clone();
         let new_name = format!("{}_copy", self.col_name);
         let new_col = c.as_materialized_series().clone().with_name(new_name.into());
-        v.dataframe.with_column(new_col)?;
+        df.with_column(new_col)?;
+        v.data = df_to_table(df);
         v.state.col_widths.clear();
         Ok(())
     }
