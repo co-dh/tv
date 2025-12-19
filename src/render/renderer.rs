@@ -88,18 +88,11 @@ impl Renderer {
         let total_rows = view.rows();  // use disk_rows for parquet
         let is_correlation = view.kind == ViewKind::Corr;
 
-        // Calculate column widths if needed
+        // Calculate column widths if needed (based on content, don't extend last col)
         if view.state.need_widths() {
-            let mut widths: Vec<u16> = (0..df.width())
+            let widths: Vec<u16> = (0..df.width())
                 .map(|col_idx| Self::col_width(df, col_idx, &view.state, decimals))
                 .collect();
-            // Last column gets remaining screen width
-            if !widths.is_empty() {
-                let used: u16 = widths.iter().take(widths.len() - 1).map(|w| w + 1).sum();
-                let avail = area.width.saturating_sub(used + 1);
-                let last = widths.last_mut().unwrap();
-                *last = (*last).max(avail.min(200));  // cap at 200 to avoid huge widths
-            }
             view.state.col_widths = widths;
             view.state.widths_row = view.state.cr;
         }
@@ -601,6 +594,11 @@ impl Renderer {
     pub fn test_format_value(df: &DataFrame, col_idx: usize, row_idx: usize, decimals: usize) -> String {
         Self::format_value(df, col_idx, row_idx, decimals)
     }
+
+    #[cfg(test)]
+    pub fn test_col_width(df: &DataFrame, col_idx: usize, state: &TableState, decimals: usize) -> u16 {
+        Self::col_width(df, col_idx, state, decimals)
+    }
 }
 
 /// Convert crossterm Color to ratatui Color
@@ -632,6 +630,7 @@ fn to_rcolor(c: ratatui::crossterm::style::Color) -> RColor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::state::TableState;
 
     #[test]
     fn test_null_not_commified() {
@@ -651,5 +650,25 @@ mod tests {
 
         let float_val = Renderer::test_format_value(&df, 1, 0, 3);
         assert_eq!(float_val, "1,234.567", "Float should be commified");
+    }
+
+    #[test]
+    fn test_last_col_width_not_extended() {
+        // Last column should NOT fill rest of screen - looks weird for right-aligned numbers
+        let df = df! {
+            "name" => &["apple", "banana"],
+            "price" => &[100i64, 200i64],
+        }.unwrap();
+        let mut state = TableState::new();
+        state.viewport = (25, 120);  // wide screen
+
+        // Get natural widths for both columns
+        let name_w = Renderer::test_col_width(&df, 0, &state, 3);
+        let price_w = Renderer::test_col_width(&df, 1, &state, 3);
+
+        // name col: max("name".len(), "banana".len()) = 6
+        assert!(name_w >= 6 && name_w <= 10, "name width {} should be ~6", name_w);
+        // price col: max("price".len(), "200".len()) = 5
+        assert!(price_w >= 5 && price_w <= 10, "price width {} should be ~5, not extended to fill screen", price_w);
     }
 }
