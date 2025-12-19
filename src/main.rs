@@ -72,7 +72,7 @@ fn main() -> Result<()> {
     // Create app context
     let mut app = if let Some(path) = file_arg {
         // Load file from CLI argument
-        let mut temp_app = AppContext::new();
+        let mut temp_app = AppContext::default();
         temp_app.raw_save = raw_save;
         match CommandExecutor::exec(&mut temp_app, Box::new(From { file_path: path.clone() })) {
             Ok(_) => temp_app,
@@ -83,7 +83,7 @@ fn main() -> Result<()> {
             }
         }
     } else {
-        let mut temp_app = AppContext::new();
+        let mut temp_app = AppContext::default();
         temp_app.raw_save = raw_save;
         temp_app
     };
@@ -97,7 +97,7 @@ fn main() -> Result<()> {
 
 /// Run commands from iterator (pipe/batch mode)
 fn run_batch<I: Iterator<Item = String>>(lines: I) -> Result<()> {
-    let mut app = AppContext::new();
+    let mut app = AppContext::default();
     app.viewport(50, 120);
     'outer: for line in lines {
         let line = line.trim();
@@ -127,7 +127,7 @@ fn run_script(script_path: &str) -> Result<()> {
 
 /// Run inline commands (-c "cmd1 cmd2")
 fn run_cmds(cmds: &str, file: Option<&str>) -> Result<()> {
-    let mut app = AppContext::new();
+    let mut app = AppContext::default();
     if let Some(path) = file {
         if let Err(e) = CommandExecutor::exec(&mut app, Box::new(From { file_path: path.to_string() })) {
             eprintln!("Error loading {}: {}", path, e);
@@ -203,7 +203,7 @@ enum InputMode { None, Search, Filter, Load, Save, Command, Goto, GotoCol, Selec
 
 /// Run key replay mode (--keys "F<ret>" file) - state machine with text input
 fn run_keys(keys: &str, file: Option<&str>) -> Result<()> {
-    let mut app = AppContext::new();
+    let mut app = AppContext::default();
     if let Some(path) = file {
         if let Err(e) = CommandExecutor::exec(&mut app, Box::new(From { file_path: path.to_string() })) {
             eprintln!("Error loading {}: {}", path, e);

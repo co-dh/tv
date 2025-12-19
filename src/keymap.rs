@@ -17,6 +17,19 @@ pub struct KeyMap {
     key_to_cmd: HashMap<String, HashMap<String, String>>,
 }
 
+impl Default for KeyMap {
+    /// Create keymap from defaults + user overrides
+    fn default() -> Self {
+        let mut km = Self::from_defaults();
+        // Try user override: ~/.config/tv/keys.csv
+        if let Some(home) = std::env::var_os("HOME") {
+            let path = Path::new(&home).join(".config/tv/keys.csv");
+            if path.exists() { let _ = km.load_overrides(&path); }
+        }
+        km
+    }
+}
+
 impl KeyMap {
     /// Default key bindings (tab, key, command)
     /// Key names follow Kakoune style: <ret>, <esc>, <space>, <up>, <c-x> etc.
@@ -86,16 +99,6 @@ impl KeyMap {
         ]
     }
 
-    /// Create keymap from defaults, then load user overrides if present
-    pub fn new() -> Self {
-        let mut km = Self::from_defaults();
-        // Try user override: ~/.config/tv/keys.csv
-        if let Some(home) = std::env::var_os("HOME") {
-            let path = Path::new(&home).join(".config/tv/keys.csv");
-            if path.exists() { let _ = km.load_overrides(&path); }
-        }
-        km
-    }
 
     /// Build keymap from default bindings
     fn from_defaults() -> Self {
@@ -249,15 +252,6 @@ impl KeyMap {
 
         // Strip category
         hints.into_iter().map(|(k, h, _)| (k, h)).collect()
-    }
-}
-
-impl Default for KeyMap {
-    fn default() -> Self {
-        Self {
-            bindings: HashMap::new(),
-            key_to_cmd: HashMap::new(),
-        }
     }
 }
 

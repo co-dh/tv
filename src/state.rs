@@ -14,7 +14,7 @@ pub enum ViewKind {
 }
 
 /// Table cursor/viewport state
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct TableState {
     pub r0: usize,              // first visible row
     pub cr: usize,              // cursor row
@@ -25,10 +25,6 @@ pub struct TableState {
 }
 
 impl TableState {
-    /// Create new state with cursor at origin
-    pub fn new() -> Self {
-        Self { r0: 0, cr: 0, cc: 0, viewport: (0, 0), col_widths: Vec::new(), widths_row: 0 }
-    }
 
     /// Need width recalc if moved >1 page
     #[must_use]
@@ -141,7 +137,7 @@ impl ViewState {
     fn base(id: usize, name: impl Into<String>, kind: ViewKind, prql: impl Into<String>, df: DataFrame) -> Self {
         let name = name.into();
         Self {
-            id, name, kind, prql: prql.into(), dataframe: df, state: TableState::new(), history: Vec::new(),
+            id, name, kind, prql: prql.into(), dataframe: df, state: TableState::default(), history: Vec::new(),
             filename: None, show_row_numbers: false, parent_id: None, parent_rows: None, parent_name: None, freq_col: None,
             selected_cols: HashSet::new(), selected_rows: HashSet::new(), gz_source: None,
             stats_cache: None, col_separator: None, meta_cache: None, partial: false, disk_rows: None, parquet_path: None, col_names: Vec::new(),
@@ -228,11 +224,10 @@ impl ViewState {
 }
 
 /// View stack - manages multiple views like browser tabs
+#[derive(Default)]
 pub struct StateStack { stack: Vec<ViewState> }
 
 impl StateStack {
-    /// Empty stack
-    pub fn new() -> Self { Self { stack: Vec::new() } }
     /// Push new view on top (inherits viewport from current view)
     pub fn push(&mut self, mut v: ViewState) {
         if let Some(cur) = self.stack.last() { v.state.viewport = cur.state.viewport; }
@@ -274,7 +269,7 @@ mod tests {
     #[test]
     fn test_center_if_needed_visible_row_unchanged() {
         // If cursor is already visible, r0 should not change
-        let mut state = TableState::new();
+        let mut state = TableState::default();
         state.viewport = (20, 80);  // 20 rows, 18 visible (minus 2 for header/status)
         state.r0 = 0;
         state.cr = 5;  // row 5 is visible (0-17)
@@ -286,7 +281,7 @@ mod tests {
     #[test]
     fn test_center_if_needed_above_visible_centers() {
         // If cursor is above visible area, center it
-        let mut state = TableState::new();
+        let mut state = TableState::default();
         state.viewport = (20, 80);  // 17 visible rows (20 - 3 reserved)
         state.r0 = 100;
         state.cr = 50;  // row 50 is above visible area (100-116)
@@ -299,7 +294,7 @@ mod tests {
     #[test]
     fn test_center_if_needed_below_visible_centers() {
         // If cursor is below visible area, center it
-        let mut state = TableState::new();
+        let mut state = TableState::default();
         state.viewport = (20, 80);  // 17 visible rows (20 - 3 reserved)
         state.r0 = 0;
         state.cr = 50;  // row 50 is below visible area (0-16)
@@ -312,7 +307,7 @@ mod tests {
     #[test]
     fn test_center_if_needed_at_boundary() {
         // Cursor at exact boundary of visible area
-        let mut state = TableState::new();
+        let mut state = TableState::default();
         state.viewport = (20, 80);  // 17 visible rows (20 - 3 reserved)
         state.r0 = 0;
         state.cr = 16;  // last visible row (0-16)
@@ -325,7 +320,7 @@ mod tests {
     fn test_stack_names() {
         use polars::prelude::*;
         let df = DataFrame::default();
-        let mut stack = StateStack::new();
+        let mut stack = StateStack::default();
         stack.push(ViewState::new(0, "view1", df.clone(), None));
         stack.push(ViewState::new(1, "view2", df.clone(), None));
         stack.push(ViewState::new(2, "view3", df, None));

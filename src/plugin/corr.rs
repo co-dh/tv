@@ -117,7 +117,7 @@ mod tests {
 
     #[test]
     fn test_correlation_basic() {
-        let mut app = AppContext::new();
+        let mut app = AppContext::default();
         let df = df! {
             "a" => &[1.0, 2.0, 3.0],
             "b" => &[2.0, 4.0, 6.0],

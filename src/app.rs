@@ -41,19 +41,15 @@ pub struct AppContext {
     pub needs_center: bool,  // center cursor after viewport update (for search)
 }
 
-impl AppContext {
-    /// Create new app context with default settings, keymap, theme, and plugins
-    pub fn new() -> Self {
-        let keymap = KeyMap::new();
-        let theme = Theme::load_active();
-        let plugins = Registry::new(std::path::Path::new("cfg/plugins.csv"));
-        // History file: ~/.tv/history
+impl Default for AppContext {
+    /// Create app context with default settings, keymap, theme, plugins
+    fn default() -> Self {
         let history_file = dirs::home_dir()
             .map(|h| h.join(".tv").join("history"))
             .unwrap_or_else(|| PathBuf::from("history"));
         if let Some(dir) = history_file.parent() { let _ = std::fs::create_dir_all(dir); }
         Self {
-            stack: StateStack::new(),
+            stack: StateStack::default(),
             history_file,
             message: String::new(),
             next_id: 0,
@@ -61,9 +57,9 @@ impl AppContext {
             bookmarks: Vec::new(),
             show_info: true,
             float_decimals: 3,
-            keymap,
-            theme,
-            plugins,
+            keymap: KeyMap::default(),
+            theme: Theme::load_active(),
+            plugins: Registry::new(std::path::Path::new("cfg/plugins.csv")),
             bg_loader: None,
             bg_saver: None,
             raw_save: false,
@@ -73,6 +69,9 @@ impl AppContext {
             needs_center: false,
         }
     }
+}
+
+impl AppContext {
 
     /// Check if background loading is in progress
     pub fn is_loading(&self) -> bool { self.bg_loader.is_some() }

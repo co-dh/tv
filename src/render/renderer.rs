@@ -659,8 +659,7 @@ mod tests {
             "name" => &["apple", "banana"],
             "price" => &[100i64, 200i64],
         }.unwrap();
-        let mut state = TableState::new();
-        state.viewport = (25, 120);  // wide screen
+        let mut state = TableState { viewport: (25, 120), ..Default::default() };
 
         // Get natural widths for both columns
         let name_w = Renderer::test_col_width(&df, 0, &state, 3);
