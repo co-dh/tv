@@ -4,6 +4,31 @@ use std::collections::HashSet;
 /// Reserved rows in viewport (header + footer_header + status)
 pub const RESERVED_ROWS: usize = 3;
 
+/// Convert SQL filter to PRQL filter (= to ==, preserving !=, >=, <=, ~=)
+fn sql_to_prql_filter(sql: &str) -> String {
+    // Replace standalone = with ==, but preserve !=, >=, <=, ~=
+    let mut r = String::with_capacity(sql.len() + 10);
+    let chars: Vec<char> = sql.chars().collect();
+    let n = chars.len();
+    let mut i = 0;
+    while i < n {
+        let c = chars[i];
+        if c == '=' {
+            // Check if preceded by !, <, >, ~
+            let prev = if i > 0 { chars[i - 1] } else { ' ' };
+            if prev == '!' || prev == '<' || prev == '>' || prev == '~' {
+                r.push(c);  // keep as-is (part of !=, <=, >=, ~=)
+            } else {
+                r.push_str("==");  // replace = with ==
+            }
+        } else {
+            r.push(c);
+        }
+        i += 1;
+    }
+    r
+}
+
 // ── Grouped structs to reduce ViewState field count ─────────────────────────
 
 /// Data source: where the view's data comes from
@@ -230,9 +255,13 @@ impl Clone for ViewState {
 }
 
 impl ViewState {
-    /// Get data path (parquet/gz file or empty for in-memory)
+    /// Get data path (source path or filename for in-memory CSV)
     #[must_use]
-    pub fn path(&self) -> &str { self.source.path().unwrap_or("") }
+    pub fn path(&self) -> &str {
+        self.source.path()
+            .or(self.filename.as_deref())
+            .unwrap_or("")
+    }
 
     /// Get key columns (columns before separator)
     #[must_use]
@@ -267,14 +296,14 @@ impl ViewState {
 
     /// Create standard in-memory view (CSV, filtered results, etc.)
     pub fn new(id: usize, name: impl Into<String>, data: BoxTable, filename: Option<String>) -> Self {
-        let prql = filename.as_ref().map(|f| format!("from \"{}\"", f)).unwrap_or_default();
+        let prql = "from df".to_string();  // PRQL uses df, path passed separately
         Self { filename, ..Self::base(id, name, ViewKind::Table, prql, data) }
     }
 
     /// Create lazy parquet view (no in-memory data, all ops go to disk)
     pub fn new_parquet(id: usize, name: impl Into<String>, path: impl Into<String>, rows: usize, c: Vec<String>) -> Self {
         let p = path.into();
-        let prql = format!("from \"{}\"", p);
+        let prql = "from df".to_string();  // PRQL uses df, path passed separately
         let src = ViewSource::Parquet { path: p.clone(), rows, cols: c.clone() };
         Self { filename: Some(p), source: src, cols: c, ..Self::base(id, name, ViewKind::Table, prql, Self::empty_table()) }
     }
@@ -282,7 +311,7 @@ impl ViewState {
     /// Create gzipped CSV view (may be partial if memory limit hit)
     pub fn new_gz(id: usize, name: impl Into<String>, data: BoxTable, filename: Option<String>, gz: impl Into<String>, partial: bool) -> Self {
         let p = gz.into();
-        let prql = format!("from \"{}\"", p);
+        let prql = "from df".to_string();  // PRQL uses df, path passed separately
         let src = ViewSource::Gz { path: p, partial };
         Self { filename, source: src, ..Self::base(id, name, ViewKind::Table, prql, data) }
     }
@@ -325,7 +354,9 @@ impl ViewState {
     /// Create filtered parquet view (lazy - all ops go to disk with WHERE)
     pub fn new_filtered(id: usize, name: impl Into<String>, path: impl Into<String>, c: Vec<String>, flt: impl Into<String>, count: usize, parent_prql: &str, filter_expr: &str) -> Self {
         let p = path.into();
-        let prql = format!("{} | filter {}", parent_prql, filter_expr);
+        // Convert SQL = to PRQL == (but preserve !=, >=, <=)
+        let prql_expr = sql_to_prql_filter(filter_expr);
+        let prql = format!("{} | filter {}", parent_prql, prql_expr);
         let src = ViewSource::Parquet { path: p.clone(), rows: count, cols: c.clone() };
         Self { filename: Some(p), source: src, filter: Some(flt.into()), cols: c, ..Self::base(id, name, ViewKind::Table, prql, Self::empty_table()) }
     }
@@ -530,13 +561,13 @@ mod tests {
     #[test]
     fn test_prql_from_file() {
         let v = ViewState::new(0, "test", empty(), Some("data.csv".into()));
-        assert_eq!(v.prql, r#"from "data.csv""#);
+        assert_eq!(v.prql, "from df"); // df = data frame, path passed separately to plugin
     }
 
     #[test]
     fn test_prql_parquet() {
         let v = ViewState::new_parquet(0, "test", "data.parquet", 100, vec!["a".into(), "b".into()]);
-        assert_eq!(v.prql, r#"from "data.parquet""#);
+        assert_eq!(v.prql, "from df"); // df = data frame, path passed separately
     }
 
     #[test]
@@ -591,14 +622,14 @@ mod tests {
     fn test_prql_corr_on_csv() {
         let v1 = ViewState::new(0, "data", empty(), Some("data.csv".into()));
         let v2 = ViewState::new_corr(1, empty(), &v1.prql);
-        assert_eq!(v2.prql, r#"from "data.csv" | corr"#);
+        assert_eq!(v2.prql, "from df | corr"); // corr inherits parent's from df
     }
 
     #[test]
     fn test_prql_pivot() {
         let v1 = ViewState::new(0, "data", empty(), Some("data.csv".into()));
         let v2 = ViewState::new_pivot(1, "pivot", empty(), 0, "data", &v1.prql);
-        assert_eq!(v2.prql, r#"from "data.csv" | pivot"#);
+        assert_eq!(v2.prql, "from df | pivot"); // pivot inherits parent's from df
     }
 
     #[test]

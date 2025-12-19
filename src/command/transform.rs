@@ -73,15 +73,24 @@ impl Command for Filter {
 }
 
 /// Select columns (lazy - appends to PRQL chain)
+/// Select columns - supports column list or raw PRQL select expression
 pub struct Select { pub col_names: Vec<String> }
 
 impl Command for Select {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         let v = app.req_mut()?;
-        v.cols = self.col_names.clone();
-        // Append select to PRQL chain
-        let sel = v.cols.iter().map(|c| format!("`{}`", c)).collect::<Vec<_>>().join(", ");
-        v.prql = format!("{} | select {{{}}}", v.prql, sel);
+        // Check if first col starts with '{' - raw PRQL select
+        let raw = self.col_names.first().map(|s| s.starts_with('{')).unwrap_or(false);
+        if raw {
+            // Raw PRQL: select {col1, col2, ...}
+            let expr = self.col_names.join(",");  // rejoin in case comma-split
+            v.prql = format!("{} | select {}", v.prql, expr);
+        } else {
+            // Column names: select col1, col2
+            v.cols = self.col_names.clone();
+            let sel = v.cols.iter().map(|c| format!("`{}`", c)).collect::<Vec<_>>().join(", ");
+            v.prql = format!("{} | select {{{}}}", v.prql, sel);
+        }
         v.cache.fetch = None;
         v.state.cc = 0;
         Ok(())
@@ -113,9 +122,11 @@ pub struct RenameCol { pub old_name: String, pub new_name: String }
 impl Command for RenameCol {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         let v = app.req_mut()?;
+        // Initialize cols from data if empty
+        if v.cols.is_empty() { v.cols = v.data.col_names(); }
         // PRQL rename: derive new = old | select (all except old)
         v.prql = format!("{} | derive {{{} = `{}`}}", v.prql, self.new_name, self.old_name);
-        // Update cols list
+        // Update cols list: replace old with new
         if let Some(pos) = v.cols.iter().position(|c| c == &self.old_name) {
             v.cols[pos] = self.new_name.clone();
         }
@@ -239,14 +250,23 @@ impl Command for ToTime {
 }
 
 /// Derive (copy) a column - lazy PRQL
+/// Derive - raw PRQL derive or column copy
+/// If arg starts with '{', treat as raw PRQL derive expression
+/// Otherwise, create a copy of the column
 pub struct Derive { pub col_name: String }
 
 impl Command for Derive {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         let v = app.req_mut()?;
-        let new_name = format!("{}_copy", self.col_name);
-        v.prql = format!("{} | derive {{{} = `{}`}}", v.prql, new_name, self.col_name);
-        v.cols.push(new_name);
+        if self.col_name.starts_with('{') {
+            // Raw PRQL: derive {name = expr, ...}
+            v.prql = format!("{} | derive {}", v.prql, self.col_name);
+        } else {
+            // Column copy: derive col_copy = col
+            let new_name = format!("{}_copy", self.col_name);
+            v.prql = format!("{} | derive {{{} = `{}`}}", v.prql, new_name, self.col_name);
+            v.cols.push(new_name);
+        }
         v.cache.fetch = None;
         v.state.col_widths.clear();
         Ok(())

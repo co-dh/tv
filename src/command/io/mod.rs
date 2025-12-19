@@ -47,14 +47,34 @@ impl Command for From {
     fn to_str(&self) -> String { format!("from {}", self.file_path) }
 }
 
-/// Save file command (Parquet or CSV)
+/// Save file command (CSV only for now)
 pub struct Save { pub file_path: String }
 
 impl Command for Save {
-    /// Save view to file - placeholder
-    fn exec(&mut self, _app: &mut AppContext) -> Result<()> {
-        // TODO: implement via plugin save method
-        Err(anyhow!("Save not yet implemented - use plugin"))
+    /// Save view to CSV file
+    fn exec(&mut self, app: &mut AppContext) -> Result<()> {
+        use std::io::Write;
+        let v = app.req()?;
+        let path = std::path::Path::new(&self.file_path);
+
+        // Only support CSV for now
+        if !self.file_path.ends_with(".csv") {
+            return Err(anyhow!("Only .csv save supported"));
+        }
+
+        let mut f = std::fs::File::create(path)?;
+        // Header
+        let cols = v.data.col_names();
+        writeln!(f, "{}", cols.join(","))?;
+        // Data
+        for r in 0..v.data.rows() {
+            let row: Vec<String> = (0..cols.len()).map(|c| {
+                let cell = v.data.cell(r, c);
+                cell.format(10)  // CSV format
+            }).collect();
+            writeln!(f, "{}", row.join(","))?;
+        }
+        Ok(())
     }
 
     fn to_str(&self) -> String { format!("save {}", self.file_path) }

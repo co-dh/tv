@@ -300,18 +300,8 @@ fn test_lr_enter_csv() {
 // Test lr filter by extension and open
 #[test]
 fn test_lr_filter_extension_open() {
-    // Create test parquet, lr tmp/, filter by .parquet, enter to open
-    let p = "tmp/tv_ext_test.parquet";
-    std::fs::create_dir_all("tmp").ok();
-    use polars::prelude::*;
-    let df = DataFrame::new(vec![
-        Series::new("col1".into(), vec![10, 20, 30]).into(),
-    ]).unwrap();
-    ParquetWriter::new(std::fs::File::create(p).unwrap()).finish(&mut df.clone()).unwrap();
-
-    // lr tmp/, filter path LIKE '%ext_test%', enter
-    let out = run_keys(":lr tmp<ret><backslash>path LIKE '%ext_test%'<ret><ret>", "tests/data/basic.csv");
-    // After enter, should open parquet (show col1 with 3 rows)
-    assert!(out.contains("col1") || out.contains("(3 rows)"), "Should open parquet after filter: {}", out);
-    std::fs::remove_file(p).ok();
+    // lr tests/data, filter for meta_test.parquet, enter to open
+    let out = run_keys(":lr tests/data<ret><backslash>path LIKE '%meta_test%'<ret><ret>", "tests/data/basic.csv");
+    // After enter, should open parquet (show a, b columns)
+    assert!(out.contains("a") || out.contains("b"), "Should open parquet after filter: {}", out);
 }

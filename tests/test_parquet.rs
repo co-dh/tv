@@ -1,12 +1,6 @@
 //! Parquet backend tests - key-based
 mod common;
-use common::{run_keys};
-use std::fs;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use polars::prelude::*;
-
-static TEST_ID: AtomicUsize = AtomicUsize::new(4000);
-fn tid() -> usize { TEST_ID.fetch_add(1, Ordering::SeqCst) }
+use common::run_keys;
 
 
 // Test data files:
@@ -60,26 +54,7 @@ fn test_parquet_meta() {
     assert!(out.contains("a") && out.contains("b"), "Should list columns");
 }
 
-#[test]
-fn test_parquet_time_roundtrip() {
-    let id = tid();
-    let pq = format!("tmp/tv_pq_time_{}.parquet", id);
-
-    let ns: Vec<i64> = vec![3600_000_000_000, 7200_000_000_000, 10800_000_000_000];
-    let time_series = Series::new("event_time".into(), ns)
-        .cast(&DataType::Time).unwrap();
-    let mut df = DataFrame::new(vec![time_series.into()]).unwrap();
-
-    ParquetWriter::new(std::fs::File::create(&pq).unwrap())
-        .finish(&mut df).unwrap();
-
-    let loaded = ParquetReader::new(std::fs::File::open(&pq).unwrap())
-        .finish().unwrap();
-
-    assert!(matches!(loaded.column("event_time").unwrap().dtype(), DataType::Time),
-        "Time col should remain Time: {:?}", loaded.column("event_time").unwrap().dtype());
-    fs::remove_file(&pq).ok();
-}
+// test_parquet_time_roundtrip moved to crates/tv-polars/src/lib.rs
 
 #[test]
 fn test_parquet_filtered_count() {

@@ -377,20 +377,44 @@ fn fetch_lazy(view: &mut state::ViewState) {
     }
 }
 
-/// Print view data (without polars fmt feature)
+/// Compile PRQL to SQL
+fn compile_prql(prql: &str) -> Option<String> {
+    if prql.is_empty() { return None; }
+    let opts = prqlc::Options::default().no_format();
+    prqlc::compile(prql, &opts).ok()
+}
+
+/// Print view data - compiles PRQL to SQL and executes via plugin
 fn print(app: &mut AppContext) {
     if let Some(view) = app.view_mut() {
+        // Compile and execute PRQL if present
+        let path = view.path().to_string();
+        let prql = &view.prql;
+        if !prql.is_empty() && !path.is_empty() {
+            if let Some(sql) = compile_prql(prql) {
+                if let Some(plugin) = dynload::get() {
+                    if let Some(t) = plugin.query(&sql, &path) {
+                        use table::Table;
+                        println!("=== {} ({} rows) ===", view.name, t.rows());
+                        println!("{}", t.col_names().join(","));
+                        for r in 0..t.rows().min(10) {
+                            let row: Vec<String> = (0..t.cols()).map(|c| t.cell(r, c).format(10)).collect();
+                            println!("{}", row.join(","));
+                        }
+                        return;
+                    }
+                }
+            }
+        }
+        // Fallback: show cached data
         println!("=== {} ({} rows) ===", view.name, view.rows());
         fetch_lazy(view);
         let cols = view.data.col_names();
         println!("{}", cols.join(","));
-        // Print visible rows from r0 (scroll position)
         let r0 = view.state.r0;
         let n = view.data.rows().min(r0 + 10);
         for r in r0..n {
-            let row: Vec<String> = (0..cols.len()).map(|c| {
-                view.data.cell(r, c).format(10)
-            }).collect();
+            let row: Vec<String> = (0..cols.len()).map(|c| view.data.cell(r, c).format(10)).collect();
             println!("{}", row.join(","));
         }
     } else {
