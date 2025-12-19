@@ -2,7 +2,7 @@
 
 use crate::app::AppContext;
 use crate::command::Command;
-use crate::dynload;
+use crate::data::dynload;
 use crate::state::ViewState;
 use anyhow::{anyhow, Result};
 use std::path::Path;

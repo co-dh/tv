@@ -2,9 +2,9 @@
 //! All operations are lazy PRQL that get appended to the view's prql chain.
 
 use crate::app::AppContext;
-use crate::table::{Table, ColType};
+use crate::data::table::{Table, ColType};
 use crate::command::Command;
-use crate::pure;
+use crate::util::pure;
 use anyhow::{anyhow, Result};
 
 /// Get schema as (name, type) pairs from Table
@@ -162,7 +162,7 @@ impl Command for Agg {
         // Create new view with aggregation
         let mut new_view = crate::state::ViewState::new(
             id, format!("{}:{}", self.func, self.col),
-            Box::new(crate::table::SimpleTable::empty()),
+            Box::new(crate::data::table::SimpleTable::empty()),
             v.filename.clone()
         );
         new_view.prql = prql;

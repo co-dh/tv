@@ -4,7 +4,7 @@ use crate::app::AppContext;
 use crate::command::Command;
 use crate::plugin::Plugin;
 use crate::state::{ViewKind, ViewState};
-use crate::table::{SimpleTable, Col};
+use crate::data::table::{SimpleTable, Col};
 use anyhow::Result;
 use std::fs;
 use std::os::unix::fs::MetadataExt;

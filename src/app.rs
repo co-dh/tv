@@ -1,10 +1,10 @@
 //! Application context - global state, view stack, background tasks
 
 use crate::error::TvError;
-use crate::keymap::KeyMap;
+use crate::input::keymap::KeyMap;
 use crate::plugin::Registry;
 use crate::state::{StateStack, ViewState};
-use crate::theme::Theme;
+use crate::util::theme::Theme;
 use crate::render::Renderer;
 use anyhow::Result;
 use ratatui::crossterm::event::{self, Event, KeyEvent};

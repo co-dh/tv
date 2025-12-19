@@ -1,17 +1,17 @@
 mod app;
-mod dynload;
-mod error;
 mod command;
-mod keyhandler;
-mod keymap;
-mod picker;
+mod data;
+mod error;
+mod input;
 mod plugin;
-mod pure;
 mod render;
 mod state;
-mod table;
-mod theme;
+mod util;
 mod utils;
+
+use data::dynload;
+use input::keyhandler;
+use util::{picker, pure, theme};
 
 use anyhow::Result;
 use app::AppContext;
@@ -325,7 +325,7 @@ fn exec_input(app: &mut AppContext, mode: &InputMode, text: &str) {
             let expr = if is_plain_value(text) {
                 if let Some(v) = app.view() {
                     let col = v.col_name(v.state.cc).unwrap_or_default();
-                    let is_str = v.data.col_type(v.state.cc) == table::ColType::Str;
+                    let is_str = v.data.col_type(v.state.cc) == data::table::ColType::Str;
                     if is_str { format!("\"{}\" = '{}'", col, text) } else { format!("\"{}\" = {}", col, text) }
                 } else { text.to_string() }
             } else { text.to_string() };
@@ -397,7 +397,7 @@ fn print(app: &mut AppContext) {
             if let Some(sql) = pure::compile_prql(prql) {
                 if let Some(plugin) = dynload::get_for(&path) {
                     if let Some(t) = plugin.query(&sql, &path) {
-                        use table::Table;
+                        use data::table::Table;
                         println!("=== {} ({} rows) ===", view.name, t.rows());
                         println!("{}", t.col_names().join(","));
                         for r in 0..t.rows().min(10) {
@@ -665,7 +665,7 @@ fn handle_cmd(app: &mut AppContext, cmd: &str) -> Result<bool> {
             if let Some(expr) = app.view().and_then(|v| {
                 let col_name = v.col_name(v.state.cc)?;
                 let cell = v.data.cell(v.state.cr, v.state.cc);
-                let is_str = v.data.col_type(v.state.cc) == table::ColType::Str;
+                let is_str = v.data.col_type(v.state.cc) == data::table::ColType::Str;
                 let val = unquote(&cell.format(10));
                 Some(if is_str { format!("{} = '{}'", col_name, val) } else { format!("{} = {}", col_name, val) })
             }) {
@@ -800,7 +800,7 @@ fn do_search(app: &mut AppContext) -> Result<()> {
 fn do_filter(app: &mut AppContext) -> Result<()> {
     let info = app.view().and_then(|v| {
         let col_name = v.col_name(v.state.cc)?;
-        let is_str = v.data.col_type(v.state.cc) == table::ColType::Str;
+        let is_str = v.data.col_type(v.state.cc) == data::table::ColType::Str;
         let file = v.filename.as_deref();
         let header = v.data.col_names().join(" | ");
         Some((hints(v.data.as_ref(), &col_name, v.state.cr, file), col_name, is_str, header))
@@ -869,7 +869,7 @@ fn unquote(s: &str) -> String {
 }
 
 /// Generate filter hints from table data (stub - uses Table trait)
-fn hints(table: &dyn table::Table, col_name: &str, _row: usize, file: Option<&str>) -> Vec<String> {
+fn hints(table: &dyn data::table::Table, col_name: &str, _row: usize, file: Option<&str>) -> Vec<String> {
     let mut items = Vec::new();
 
     // Try to get hints from plugin for parquet files
@@ -909,7 +909,7 @@ fn is_plain_value(expr: &str) -> bool {
 }
 
 /// Find rows matching expression (stub - returns empty for now)
-fn find(_table: &dyn table::Table, _expr: &str) -> Vec<usize> {
+fn find(_table: &dyn data::table::Table, _expr: &str) -> Vec<usize> {
     // TODO: implement via plugin for SQL filtering
     Vec::new()
 }

@@ -6,7 +6,7 @@ use crate::command::Command;
 use crate::command::io::From;
 use crate::plugin::Plugin;
 use crate::state::{ViewKind, ViewState};
-use crate::table::Table;
+use crate::data::table::Table;
 use anyhow::{anyhow, Result};
 use std::path::{Path, PathBuf};
 
@@ -114,7 +114,7 @@ pub struct DelFiles { pub paths: Vec<String>, pub dir: PathBuf }
 
 impl Command for DelFiles {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
-        use crate::picker;
+        use crate::util::picker;
         let n = self.paths.len();
         let prompt = if n == 1 {
             let name = Path::new(&self.paths[0]).file_name().and_then(|s| s.to_str()).unwrap_or(&self.paths[0]);

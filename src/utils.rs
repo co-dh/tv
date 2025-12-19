@@ -1,6 +1,6 @@
 //! Utility functions shared across modules.
 
-use crate::table::ColType;
+use crate::data::table::ColType;
 
 /// Check if ColType is numeric (int/float)
 #[must_use]

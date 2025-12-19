@@ -2,7 +2,8 @@
 //! Shows value distribution grouped by one or more columns.
 
 use crate::app::AppContext;
-use crate::table::{Cell, ColType, SimpleTable, BoxTable};
+use crate::data::table::{Cell, ColType, SimpleTable, BoxTable};
+use crate::data::dynload;
 use crate::utils::unquote;
 use crate::command::Command;
 use crate::command::executor::CommandExecutor;
@@ -10,7 +11,6 @@ use crate::command::transform::FilterIn;
 use crate::command::view::Pop;
 use crate::plugin::Plugin;
 use crate::state::ViewState;
-use crate::dynload;
 use anyhow::{anyhow, Result};
 
 /// Add Pct and Bar columns to freq result

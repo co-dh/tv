@@ -1,4 +1,4 @@
-use crate::table::{BoxTable, ColStats, SimpleTable, Cell};
+use crate::data::table::{BoxTable, ColStats, SimpleTable, Cell};
 use std::collections::HashSet;
 
 /// Reserved rows in viewport (header + footer_header + status)
@@ -324,7 +324,7 @@ impl ViewState {
         let n = name.into();
         let cols = data.col_names();
         // Register with sqlite - render uses filename to find plugin
-        let path = crate::dynload::register_table(id, data.as_ref()).unwrap_or_default();
+        let path = crate::data::dynload::register_table(id, data.as_ref()).unwrap_or_default();
         let mut v = Self::base(id, n, kind, "from df".to_string(), data);
         v.filename = if path.is_empty() { None } else { Some(path) };
         v.cols = cols;

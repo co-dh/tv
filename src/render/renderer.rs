@@ -1,9 +1,9 @@
 use crate::app::AppContext;
-use crate::dynload;
-use crate::table::{Cell, Table};
+use crate::data::dynload;
+use crate::data::table::{Cell, Table};
 use crate::utils::commify;
 use crate::state::{TableState, ViewKind, ViewSource, ViewState};
-use crate::theme::Theme;
+use crate::util::theme::Theme;
 use ratatui::prelude::*;
 use ratatui::style::{Color as RColor, Modifier, Style};
 use ratatui::widgets::Tabs;
@@ -60,7 +60,7 @@ impl Renderer {
             // PRQL: take start..end (1-based, positive range required)
             let (s, e) = (start + 1, start + rows_needed + 1);
             let q = format!("{} | take {}..{}", prql, s, e);
-            let sql = crate::pure::compile_prql(&q)?;
+            let sql = crate::util::pure::compile_prql(&q)?;
             let t = plugin.query(&sql, p)?;
             view.data = dynload::to_box_table(&t);
             Some(start)
@@ -558,7 +558,7 @@ fn to_rcolor(c: ratatui::crossterm::style::Color) -> RColor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::table::{SimpleTable, ColType, Cell as TCell};
+    use crate::data::table::{SimpleTable, ColType, Cell as TCell};
     use crate::state::TableState;
 
     #[test]
@@ -618,7 +618,7 @@ mod tests {
         use crate::theme::Theme;
 
         // Load sqlite plugin for test
-        let _ = crate::dynload::load_sqlite("./target/release/libtv_sqlite.so");
+        let _ = crate::data::dynload::load_sqlite("./target/release/libtv_sqlite.so");
 
         // Create folder data (unsorted)
         let table = SimpleTable::new(
@@ -677,7 +677,7 @@ mod tests {
         use crate::theme::Theme;
 
         // Load sqlite plugin
-        let _ = crate::dynload::load_sqlite("./target/release/libtv_sqlite.so");
+        let _ = crate::data::dynload::load_sqlite("./target/release/libtv_sqlite.so");
 
         // Create folder data (unsorted: b=200, a=100, c=50)
         let table = SimpleTable::new(
@@ -739,7 +739,7 @@ mod tests {
         use crate::theme::Theme;
 
         // Load sqlite plugin
-        let _ = crate::dynload::load_sqlite("./target/release/libtv_sqlite.so");
+        let _ = crate::data::dynload::load_sqlite("./target/release/libtv_sqlite.so");
 
         // Create folder data (unsorted: b=200, a=100, c=50)
         let table = SimpleTable::new(
@@ -801,7 +801,7 @@ mod tests {
         use crate::theme::Theme;
 
         // Load sqlite plugin
-        let _ = crate::dynload::load_sqlite("./target/release/libtv_sqlite.so");
+        let _ = crate::data::dynload::load_sqlite("./target/release/libtv_sqlite.so");
 
         // Create data with string values
         let table = SimpleTable::new(

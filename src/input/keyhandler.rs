@@ -2,7 +2,7 @@
 //! Resolves context (current column, selection) before creating commands
 
 use crate::app::AppContext;
-use crate::pure;
+use crate::util::pure;
 
 /// Translate keymap command + app state into command string
 /// Returns None for interactive commands (need prompts) or navigation

@@ -1,7 +1,7 @@
 //! Plugin loader - loads backend .so and wraps in Rust-friendly API
 //! Supports multiple plugins: polars for files, sqlite for memory tables.
 
-use crate::table::{Cell, ColType, Table, BoxTable};
+use super::table::{Cell, ColType, Table, BoxTable};
 use libloading::{Library, Symbol};
 use std::ffi::{CString, CStr, c_char};
 use std::sync::OnceLock;
@@ -274,7 +274,7 @@ impl Table for PluginTable<'_> {
 
 /// Convert PluginTable to BoxTable (clones data)
 pub fn to_box_table(pt: &PluginTable) -> BoxTable {
-    use crate::table::SimpleTable;
+    use super::table::SimpleTable;
     let names = pt.col_names();
     let types = (0..pt.cols()).map(|i| pt.col_type(i)).collect();
     let data: Vec<Vec<Cell>> = (0..pt.rows())

@@ -7,8 +7,9 @@ use crate::command::executor::CommandExecutor;
 use crate::command::transform::Xkey;
 use crate::command::view::Pop;
 use crate::plugin::Plugin;
-use crate::table::{Cell, ColType, SimpleTable, Table};
-use crate::{dynload, state};
+use crate::data::table::{Cell, ColType, SimpleTable, Table};
+use crate::data::dynload;
+use crate::state;
 use anyhow::{anyhow, Result};
 
 pub struct MetaPlugin;
@@ -73,7 +74,7 @@ impl Command for Metadata {
 }
 
 /// Compute column metadata via SQL - returns BoxTable
-fn compute_meta(plugin: &'static dynload::Plugin, path: &str) -> Result<crate::table::BoxTable> {
+fn compute_meta(plugin: &'static dynload::Plugin, path: &str) -> Result<crate::data::table::BoxTable> {
     // Get column names
     let cols = plugin.schema(path);
     if cols.is_empty() { return Err(anyhow!("empty schema")); }
