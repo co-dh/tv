@@ -496,9 +496,13 @@ fn parse(line: &str, app: &mut AppContext) -> Option<Box<dyn command::Command>> 
         "clear_sel" => return Some(Box::new(ClearSel)),
         "sel_all" => return Some(Box::new(SelAll)),
         "sel_rows" => return Some(Box::new(SelRows { expr: arg.to_string() })),
-        "pop" => return Some(Box::new(Pop)),
+        "pop" | "quit" => return Some(Box::new(Pop)),
         "swap" => return Some(Box::new(Swap)),
         "dup" => return Some(Box::new(Dup)),
+        "meta" => return Some(Box::new(Metadata)),
+        "pivot" => return Some(Box::new(crate::plugin::pivot::Pivot)),
+        "page_down" => return Some(Box::new(Goto { arg: app.page().to_string() })),
+        "page_up" => return Some(Box::new(Goto { arg: (-app.page()).to_string() })),
         "ls" => {
             let dir = if arg.is_empty() { std::env::current_dir().unwrap_or_default() } else { std::path::PathBuf::from(arg) };
             return Some(Box::new(Ls { dir, recursive: false }));
@@ -623,9 +627,6 @@ fn handle_cmd(app: &mut AppContext, cmd: &str) -> Result<bool> {
         }
         "force_quit" => return Ok(false),
         "print_status" => { print_status(app); return Ok(false); }
-        // Page navigation (needs app.page())
-        "page_down" => run(app, Box::new(Goto { arg: app.page().to_string() })),
-        "page_up" => run(app, Box::new(Goto { arg: (-app.page()).to_string() })),
         "select_cols" => {
             if !app.has_view() { app.no_table(); }
             else if let Some(cols) = prompt(app, "Select columns: ")? {
@@ -674,7 +675,6 @@ fn handle_cmd(app: &mut AppContext, cmd: &str) -> Result<bool> {
             }
         }
         // Column operations (freq, sort, derive handled by keyhandler)
-        "meta" => if app.has_view() { run(app, Box::new(Metadata)); },
         "corr" => {
             if app.has_view() {
                 run(app, Box::new(Correlation {
@@ -683,7 +683,6 @@ fn handle_cmd(app: &mut AppContext, cmd: &str) -> Result<bool> {
                 if let Some(v) = app.view_mut() { v.selected_cols.clear(); }
             }
         }
-        "pivot" => if app.has_view() { run(app, Box::new(crate::plugin::pivot::Pivot)); },
         "rename" => {
             if let Some(old_name) = app.view().and_then(|v| v.col_name(v.state.cc)) {
                 if let Some(new_name) = prompt(app, &format!("Rename '{}' to: ", old_name))? {
@@ -732,8 +731,6 @@ fn handle_cmd(app: &mut AppContext, cmd: &str) -> Result<bool> {
                 if let Some(v) = app.view_mut() { v.selected_cols.clear(); }
             }
         }
-        // View management (ls, lr, swap handled by keyhandler)
-        "dup" => if app.has_view() { run(app, Box::new(Dup)); },
         // UI
         "command" => do_command_picker(app)?,
         "goto_col" | "goto_col_name" => do_goto_col(app)?,

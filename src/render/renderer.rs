@@ -631,8 +631,8 @@ mod tests {
             ]
         );
 
-        // Create view with sort by size ascending
-        let mut view = ViewState::new_memory(0, "test", ViewKind::Folder, Box::new(table));
+        // Create view with sort by size ascending (use unique ID to avoid test conflicts)
+        let mut view = ViewState::new_memory(100, "test", ViewKind::Folder, Box::new(table));
         view.prql = "from df | sort {size}".to_string();
 
         // Check plugin is loaded and filename is set
@@ -692,7 +692,7 @@ mod tests {
 
         // Create app with folder view
         let mut app = AppContext::default();
-        app.stack.push(ViewState::new_memory(0, "test", ViewKind::Folder, Box::new(table)));
+        app.stack.push(ViewState::new_memory(200, "test", ViewKind::Folder, Box::new(table)));
 
         // Move cursor to size column
         if let Some(v) = app.view_mut() { v.state.cc = 1; }
@@ -814,7 +814,8 @@ mod tests {
         );
 
         let mut app = AppContext::default();
-        app.stack.push(ViewState::new_memory(0, "test", ViewKind::Table, Box::new(table)));
+        let id = app.next_id();  // unique ID to avoid test conflicts
+        app.stack.push(ViewState::new_memory(id, "test", ViewKind::Table, Box::new(table)));
 
         let backend = TestBackend::new(80, 10);
         let mut terminal = Terminal::new(backend).unwrap();
