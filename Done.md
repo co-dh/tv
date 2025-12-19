@@ -224,3 +224,12 @@
 - prql() executes PRQL on LazyFrame (via SQL)
 - sort_head uses PRQL: `from df | sort {-col} | take N`
 - Note: prqlc 0.13.10 has bugs with `count this`/`count *`, use SQL for counts
+
+## Pure Functions Separation (src/pure.rs)
+- Extract 14 pure functions with #[must_use] and full test coverage
+- Filter helpers: combine_filters, filter_name
+- IN clause: in_clause, filter_in_name, is_string_type
+- Column ops: reorder_cols, count_before_sep
+- Key helpers: toggle_keys, freq_cmd, xkey_cmd
+- Refactored transform.rs: DelCol, Filter, FilterIn, Xkey use pure functions
+- Refactored keyhandler.rs: freq, toggle_key use pure functions
