@@ -1,9 +1,10 @@
+use crate::error::TvError;
 use crate::keymap::KeyMap;
 use crate::plugin::Registry;
 use crate::state::{StateStack, ViewKind, ViewState};
 use crate::theme::Theme;
 use crate::render::Renderer;
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use polars::prelude::DataFrame;
 use ratatui::crossterm::event::{self, Event, KeyEvent};
 use ratatui::DefaultTerminal;
@@ -177,9 +178,9 @@ impl AppContext {
     /// Get mutable current view
     pub fn view_mut(&mut self) -> Option<&mut ViewState> { self.stack.cur_mut() }
     /// Get current view or error if none
-    pub fn req(&self) -> Result<&ViewState> { self.view().ok_or_else(|| anyhow!("No table loaded")) }
+    pub fn req(&self) -> Result<&ViewState> { self.view().ok_or_else(|| TvError::NoTable.into()) }
     /// Get mutable current view or error if none
-    pub fn req_mut(&mut self) -> Result<&mut ViewState> { self.view_mut().ok_or_else(|| anyhow!("No table loaded")) }
+    pub fn req_mut(&mut self) -> Result<&mut ViewState> { self.view_mut().ok_or_else(|| TvError::NoTable.into()) }
 
     /// Append command to history file
     pub fn record(&mut self, cmd: &str) -> Result<()> {

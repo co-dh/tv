@@ -1,4 +1,5 @@
 mod app;
+mod error;
 mod source;
 mod command;
 mod keyhandler;

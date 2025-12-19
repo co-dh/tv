@@ -2,8 +2,12 @@ use crate::source::{Source, Gz, Memory, Polars};
 use polars::prelude::*;
 use std::collections::HashSet;
 
+/// Reserved rows in viewport (header + footer_header + status)
+pub const RESERVED_ROWS: usize = 3;
+
 /// View kind for type-safe dispatch
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ViewKind {
     Table,       // normal data table
     Meta,        // metadata view
@@ -11,6 +15,19 @@ pub enum ViewKind {
     Corr,        // correlation matrix
     Folder,      // file browser (ls/lr)
     Pivot,       // pivot table
+}
+
+impl std::fmt::Display for ViewKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Table => write!(f, "table"),
+            Self::Meta => write!(f, "meta"),
+            Self::Freq => write!(f, "freq"),
+            Self::Corr => write!(f, "corr"),
+            Self::Folder => write!(f, "folder"),
+            Self::Pivot => write!(f, "pivot"),
+        }
+    }
 }
 
 /// Table cursor/viewport state
@@ -36,8 +53,15 @@ impl TableState {
     pub fn down(&mut self, n: usize, max: usize) {
         if max == 0 { return; }
         self.cr = (self.cr + n).min(max - 1);
-        let vis = (self.viewport.0 as usize).saturating_sub(3);  // header + footer_header + status
+        let vis = self.visible_rows();
         if self.cr >= self.r0 + vis { self.r0 = self.cr.saturating_sub(vis - 1); }
+    }
+
+    /// Number of visible data rows (viewport minus reserved rows)
+    #[inline]
+    #[must_use]
+    pub fn visible_rows(&self) -> usize {
+        (self.viewport.0 as usize).saturating_sub(RESERVED_ROWS)
     }
 
     /// Move cursor up n rows, scroll if needed
@@ -58,18 +82,16 @@ impl TableState {
 
     /// Ensure cursor is visible in viewport
     pub fn visible(&mut self) {
-        let vis = (self.viewport.0 as usize).saturating_sub(3);
+        let vis = self.visible_rows();
         if self.cr < self.r0 { self.r0 = self.cr; }
         else if self.cr >= self.r0 + vis { self.r0 = self.cr.saturating_sub(vis.saturating_sub(1)); }
     }
 
     /// Center cursor on screen only if not already visible
     pub fn center_if_needed(&mut self) {
-        let vis = (self.viewport.0 as usize).saturating_sub(3);
-        // Only center if cursor is outside visible area
+        let vis = self.visible_rows();
         if self.cr < self.r0 || self.cr >= self.r0 + vis {
-            let half = vis / 2;
-            self.r0 = self.cr.saturating_sub(half);
+            self.r0 = self.cr.saturating_sub(vis / 2);
         }
     }
 }
@@ -206,21 +228,34 @@ impl ViewState {
 
     /// Add command to history
     pub fn add_hist(&mut self, cmd: impl Into<String>) { self.history.push(cmd.into()); }
+
     /// Row count: disk_rows for parquet, else dataframe height
+    #[inline]
     #[must_use]
     pub fn rows(&self) -> usize { self.disk_rows.unwrap_or_else(|| self.dataframe.height()) }
+
     /// Column count: from col_names for parquet, else dataframe width
+    #[inline]
     #[must_use]
     pub fn cols(&self) -> usize { if self.col_names.is_empty() { self.dataframe.width() } else { self.col_names.len() } }
+
     /// Get column name by index (works for both parquet and in-memory views)
     #[must_use]
     pub fn col_name(&self, idx: usize) -> Option<String> {
         if !self.col_names.is_empty() { self.col_names.get(idx).cloned() }
         else { self.dataframe.get_column_names().get(idx).map(|s| s.to_string()) }
     }
+
     /// Check if view uses row selection (meta/freq) vs column selection (table)
+    #[inline]
     #[must_use]
     pub fn is_row_sel(&self) -> bool { matches!(self.kind, ViewKind::Meta | ViewKind::Freq) }
+}
+
+impl std::fmt::Display for ViewState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}[{}x{}]", self.name, self.rows(), self.cols())
+    }
 }
 
 /// View stack - manages multiple views like browser tabs
@@ -236,14 +271,22 @@ impl StateStack {
     /// Pop top view (allows returning to empty state)
     pub fn pop(&mut self) -> Option<ViewState> { self.stack.pop() }
     /// Current view reference
+    #[inline]
     #[must_use]
     pub fn cur(&self) -> Option<&ViewState> { self.stack.last() }
     /// Current view mutable reference
+    #[inline]
     pub fn cur_mut(&mut self) -> Option<&mut ViewState> { self.stack.last_mut() }
     /// Stack depth
+    #[inline]
     #[must_use]
     pub fn len(&self) -> usize { self.stack.len() }
+    /// Is empty
+    #[inline]
+    #[must_use]
+    pub fn is_empty(&self) -> bool { self.stack.is_empty() }
     /// Has any view
+    #[inline]
     #[must_use]
     pub fn has_view(&self) -> bool { !self.stack.is_empty() }
     /// Find view by id
@@ -260,6 +303,17 @@ impl StateStack {
     pub fn names(&self) -> Vec<String> {
         self.stack.iter().map(|v| v.name.clone()).collect()
     }
+}
+
+impl std::ops::Index<usize> for StateStack {
+    type Output = ViewState;
+    fn index(&self, idx: usize) -> &Self::Output { &self.stack[idx] }
+}
+
+impl<'a> IntoIterator for &'a StateStack {
+    type Item = &'a ViewState;
+    type IntoIter = std::slice::Iter<'a, ViewState>;
+    fn into_iter(self) -> Self::IntoIter { self.stack.iter() }
 }
 
 #[cfg(test)]
