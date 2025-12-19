@@ -5,6 +5,7 @@ mod keyhandler;
 mod keymap;
 mod picker;
 mod plugin;
+mod pure;
 mod render;
 mod state;
 mod theme;

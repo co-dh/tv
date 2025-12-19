@@ -2,6 +2,7 @@
 //! Resolves context (current column, selection) before creating commands
 
 use crate::app::AppContext;
+use crate::pure;
 
 /// Translate keymap command + app state into command string
 /// Returns None for interactive commands (need prompts) or navigation
@@ -11,13 +12,9 @@ pub fn to_cmd(app: &AppContext, cmd: &str) -> Option<String> {
         "freq" => {
             let v = app.view()?;
             let sep = v.col_separator.unwrap_or(0);
-            if sep > 0 {
-                // Use key columns for grouping
-                let cols = if v.col_names.is_empty() { crate::source::df_cols(&v.dataframe) } else { v.col_names.clone() };
-                Some(format!("freq {}", cols[..sep].join(",")))
-            } else {
-                cur_col(app).map(|c| format!("freq {}", c))
-            }
+            let cols = if v.col_names.is_empty() { crate::source::df_cols(&v.dataframe) } else { v.col_names.clone() };
+            // Pure: build freq command
+            pure::freq_cmd(&cols, sep, cur_col(app).as_deref())
         }
         "sort" => cur_col(app).map(|c| format!("sort {}", c)),
         "sort-" => cur_col(app).map(|c| format!("sort -{}", c)),
@@ -97,20 +94,10 @@ fn toggle_key(app: &AppContext) -> Option<String> {
         v.selected_cols.iter().filter_map(|&i| v.col_name(i)).collect()
     };
 
-    // Get current keys
-    let mut keys: Vec<String> = cols[..sep].to_vec();
-
-    // Toggle each column: remove if exists, add if not
-    for col in to_toggle {
-        if let Some(pos) = keys.iter().position(|k| k == &col) {
-            keys.remove(pos);
-        } else {
-            keys.push(col);
-        }
-    }
-
-    // Return xkey command (empty xkey clears all keys)
-    if keys.is_empty() { Some("xkey".into()) } else { Some(format!("xkey {}", keys.join(","))) }
+    // Pure: toggle columns in key list
+    let keys = pure::toggle_keys(&cols[..sep], &to_toggle);
+    // Pure: build xkey command
+    Some(pure::xkey_cmd(&keys))
 }
 
 /// Get selected columns or current column (for future use)

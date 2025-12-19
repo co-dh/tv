@@ -1,6 +1,7 @@
 use crate::app::AppContext;
 use crate::source::df_cols;
 use crate::command::Command;
+use crate::pure;
 use anyhow::{anyhow, Result};
 use polars::prelude::*;
 
@@ -12,11 +13,10 @@ impl Command for DelCol {
         let n = self.col_names.len();
         {
             let v = app.req_mut()?;
-            // Count how many deleted cols are before separator
-            let sep_adjust = if let Some(sep) = v.col_separator {
-                let all = df_cols(&v.dataframe);
-                self.col_names.iter().filter(|c| all.iter().position(|n| n == *c).map(|i| i < sep).unwrap_or(false)).count()
-            } else { 0 };
+            // Pure: count how many deleted cols are before separator
+            let sep_adjust = v.col_separator.map(|sep| {
+                pure::count_before_sep(&df_cols(&v.dataframe), &self.col_names, sep)
+            }).unwrap_or(0);
             for c in &self.col_names { v.dataframe = v.dataframe.drop(c)?; }
             if let Some(sep) = v.col_separator { v.col_separator = Some(sep.saturating_sub(sep_adjust)); }
             if v.state.cc >= v.cols() && v.cols() > 0 { v.state.cc = v.cols() - 1; }
@@ -36,12 +36,9 @@ impl Command for Filter {
         let id = app.next_id();
         let v = app.req()?;
         let path = v.path().to_string();
-        // Chain filters with AND
-        let combined = match &v.filter_clause {
-            Some(prev) => format!("({}) AND ({})", prev, self.expr),
-            None => self.expr.clone(),
-        };
-        let name = format!("{} & {}", v.name, self.expr);
+        // Pure: chain filters with AND
+        let combined = pure::combine_filters(v.filter_clause.as_deref(), &self.expr);
+        let name = pure::filter_name(&v.name, &self.expr);
         // Lazy for parquet (disk), materialized for in-memory
         if v.parquet_path.is_some() {
             let count = v.source().count_where(&path, &combined)?;
@@ -147,18 +144,15 @@ impl Command for FilterIn {
         let v = app.req()?;
         let path = v.path().to_string();
         let schema = v.source().schema(&path)?;
+        // Pure: check if column is string type
         let is_str = schema.iter().find(|(n, _)| n == &self.col)
-            .map(|(_, t)| t.contains("String") || t.contains("Utf8")).unwrap_or(true);
-        let vals = self.values.iter().map(|v| if is_str { format!("'{}'", v) } else { v.clone() }).collect::<Vec<_>>().join(",");
-        let new_clause = format!("\"{}\" IN ({})", self.col, vals);
-        let name = if self.values.len() == 1 { format!("{}={}", self.col, self.values[0]) }
-                   else { format!("{}∈{{{}}}", self.col, self.values.len()) };
+            .map(|(_, t)| pure::is_string_type(t)).unwrap_or(true);
+        // Pure: build IN clause and name
+        let new_clause = pure::in_clause(&self.col, &self.values, is_str);
+        let name = pure::filter_in_name(&self.col, &self.values);
         // Lazy filtered view for parquet: combine with existing filter
         if v.parquet_path.is_some() {
-            let combined = match &v.filter_clause {
-                Some(prev) => format!("({}) AND ({})", prev, new_clause),
-                None => new_clause,
-            };
+            let combined = pure::combine_filters(v.filter_clause.as_deref(), &new_clause);
             let count = v.source().count_where(&path, &combined)?;
             let cols = v.col_names.clone();
             app.stack.push(crate::state::ViewState::new_filtered(id, name, path, cols, combined, count));
@@ -181,9 +175,8 @@ impl Command for Xkey {
         let v = app.req_mut()?;
         // Use col_names for parquet, dataframe for memory
         let all = if v.col_names.is_empty() { df_cols(&v.dataframe) } else { v.col_names.clone() };
-        let rest: Vec<String> = all.iter().filter(|c| !self.col_names.contains(c)).cloned().collect();
-        let mut order = self.col_names.clone();
-        order.extend(rest);
+        // Pure: reorder columns with keys first
+        let order = pure::reorder_cols(&all, &self.col_names);
         // Update col_names with new order, clear cache
         v.col_names = order.clone();
         v.fetch_cache = None;
