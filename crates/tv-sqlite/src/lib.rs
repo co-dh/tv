@@ -1,5 +1,7 @@
 //! SQLite backend plugin - executes SQL on in-memory tables via virtual tables
-//! Tables registered with "memory:id" paths are accessed via thread-local storage.
+//! Supports: "memory:id" for registered tables, "source:type:args" for system sources.
+
+mod source;
 
 use rusqlite::ffi;
 use rusqlite::vtab::{read_only_module, Context, CreateVTab, IndexInfo, VTab, VTabConfig, VTabConnection, VTabCursor, VTabKind, Values};
@@ -117,13 +119,26 @@ pub extern "C" fn tv_plugin_init() -> PluginVtable {
     }
 }
 
-/// Execute SQL on registered table
+/// Execute SQL on table (memory:id or source:type:args)
 #[unsafe(no_mangle)]
 pub extern "C" fn tv_query(sql: *const c_char, path: *const c_char) -> TableHandle {
     if sql.is_null() || path.is_null() { return std::ptr::null_mut(); }
     let sql = unsafe { from_c_str(sql) };
     let path = unsafe { from_c_str(path) };
 
+    // Handle source:... paths (generate table from system data)
+    if path.starts_with("source:") {
+        let table = match source::query(&path) {
+            Some(t) => Arc::new(t),
+            None => return std::ptr::null_mut(),
+        };
+        return match exec_sql(&table, &sql) {
+            Ok(result) => Box::into_raw(Box::new(result)) as TableHandle,
+            Err(_) => std::ptr::null_mut(),
+        };
+    }
+
+    // Handle memory:id paths (registered tables)
     let id = match parse_path(&path) {
         Some(id) => id,
         None => return std::ptr::null_mut(),
