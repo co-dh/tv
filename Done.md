@@ -217,3 +217,10 @@
 - Add ViewKind enum for type-safe view dispatch (Table, Meta, Freq, Corr, Folder, Pivot)
 - ratatui Tabs widget already in use for view stack tabs
 - Status bar uses efficient direct buffer manipulation (no dedicated ratatui widget needed)
+
+## PRQL Support
+- Add prqlc dependency for PRQL-to-SQL compilation
+- prql_to_sql() compiles PRQL queries to SQL
+- prql() executes PRQL on LazyFrame (via SQL)
+- sort_head uses PRQL: `from df | sort {-col} | take N`
+- Note: prqlc 0.13.10 has bugs with `count this`/`count *`, use SQL for counts
