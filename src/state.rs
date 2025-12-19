@@ -96,6 +96,7 @@ pub struct ViewState {
     pub selected_cols: HashSet<usize>,
     pub selected_rows: HashSet<usize>,
     pub col_separator: Option<usize>,
+    pub col_order: Option<Vec<usize>>,   // display column order (xkey)
     pub history: Vec<String>,
     pub partial: bool,                   // gz truncated flag
 }
@@ -114,7 +115,8 @@ impl Clone for ViewState {
             prql: self.prql.clone(), path: self.path.clone(), data,
             state: self.state.clone(), parent: self.parent.clone(),
             selected_cols: self.selected_cols.clone(), selected_rows: self.selected_rows.clone(),
-            col_separator: self.col_separator, history: self.history.clone(), partial: self.partial,
+            col_separator: self.col_separator, col_order: self.col_order.clone(),
+            history: self.history.clone(), partial: self.partial,
         }
     }
 }
@@ -126,7 +128,7 @@ impl ViewState {
             id, name: name.into(), kind, prql, path: None, data,
             state: TableState::default(), parent: None,
             selected_cols: HashSet::new(), selected_rows: HashSet::new(),
-            col_separator: None, history: Vec::new(), partial: false,
+            col_separator: None, col_order: None, history: Vec::new(), partial: false,
         }
     }
 
@@ -214,6 +216,18 @@ impl ViewState {
     /// Row selection mode (meta/freq)
     #[inline] #[must_use]
     pub fn is_row_sel(&self) -> bool { matches!(self.kind, ViewKind::Meta | ViewKind::Freq) }
+
+    /// Get column indices in display order (respects col_order if set)
+    #[must_use]
+    pub fn display_cols(&self) -> Vec<usize> {
+        self.col_order.clone().unwrap_or_else(|| (0..self.data.cols()).collect())
+    }
+
+    /// Map display column index to data column index
+    #[inline] #[must_use]
+    pub fn data_col(&self, display_idx: usize) -> usize {
+        self.col_order.as_ref().and_then(|o| o.get(display_idx).copied()).unwrap_or(display_idx)
+    }
 
     /// Get cell
     #[must_use]

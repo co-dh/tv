@@ -181,22 +181,22 @@ impl Command for FilterIn {
     fn record(&self) -> bool { false }
 }
 
-/// Move columns to front as key columns (with separator)
+/// Move columns to front as key columns (display only, no PRQL change)
 pub struct Xkey { pub col_names: Vec<String> }
 
 impl Command for Xkey {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         let v = app.req_mut()?;
-        // Reorder columns with keys first
-        let order = pure::reorder_cols(&v.data.col_names(), &self.col_names);
-        // Append select to PRQL to enforce order
-        let sel = order.iter().map(|c| format!("`{}`", c)).collect::<Vec<_>>().join(", ");
-        v.prql = format!("{} | select {{{}}}", v.prql, sel);
+        let cols = v.data.col_names();
+        // Build display order: key cols first, then rest
+        let order: Vec<usize> = pure::reorder_cols(&cols, &self.col_names)
+            .iter().filter_map(|name| cols.iter().position(|c| c == name)).collect();
+        v.col_order = if self.col_names.is_empty() { None } else { Some(order) };
+        v.col_separator = if self.col_names.is_empty() { None } else { Some(self.col_names.len()) };
         v.selected_cols.clear();
         v.selected_cols.extend(0..self.col_names.len());
         v.state.cc = 0;
         v.state.col_widths.clear();
-        v.col_separator = if self.col_names.is_empty() { None } else { Some(self.col_names.len()) };
         Ok(())
     }
     fn to_str(&self) -> String { format!("xkey {}", self.col_names.join(",")) }
