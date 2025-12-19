@@ -48,18 +48,28 @@ fn load_plugin() {
         }
     }
 
-    // Load sqlite plugin (for memory:id paths)
-    for p in [
+    // Load sqlite plugin (essential for memory:id paths)
+    let sqlite_paths: Vec<_> = [
         exe_dir.map(|d| d.join("libtv_sqlite.so")),
         exe_dir.map(|d| d.join("plugins/libtv_sqlite.so")),
         home_lib.as_ref().map(|d| d.join("libtv_sqlite.so")),
-    ].into_iter().flatten() {
+    ].into_iter().flatten().collect();
+
+    let mut loaded = false;
+    for p in &sqlite_paths {
         if p.exists() {
             if let Err(e) = dynload::load_sqlite(p.to_str().unwrap_or("")) {
-                eprintln!("Warning: failed to load sqlite plugin: {}", e);
+                eprintln!("Error: failed to load sqlite plugin from {:?}: {}", p, e);
+                std::process::exit(1);
             }
+            loaded = true;
             break;
         }
+    }
+    if !loaded {
+        eprintln!("Error: sqlite plugin not found. Searched:");
+        for p in &sqlite_paths { eprintln!("  {:?}", p); }
+        std::process::exit(1);
     }
 }
 
@@ -377,13 +387,6 @@ fn fetch_lazy(view: &mut state::ViewState) {
     }
 }
 
-/// Compile PRQL to SQL
-fn compile_prql(prql: &str) -> Option<String> {
-    if prql.is_empty() { return None; }
-    let opts = prqlc::Options::default().no_format();
-    prqlc::compile(prql, &opts).ok()
-}
-
 /// Print view data - compiles PRQL to SQL and executes via plugin
 fn print(app: &mut AppContext) {
     if let Some(view) = app.view_mut() {
@@ -391,7 +394,7 @@ fn print(app: &mut AppContext) {
         let path = view.path().to_string();
         let prql = &view.prql;
         if !prql.is_empty() && !path.is_empty() {
-            if let Some(sql) = compile_prql(prql) {
+            if let Some(sql) = pure::compile_prql(prql) {
                 if let Some(plugin) = dynload::get_for(&path) {
                     if let Some(t) = plugin.query(&sql, &path) {
                         use table::Table;

@@ -1,6 +1,16 @@
 //! Pure functions - no I/O, no state mutation
 //! These functions only compute and return values
 
+/// Compile PRQL to SQL
+pub fn compile_prql(prql: &str) -> Option<String> {
+    if prql.is_empty() { return None; }
+    let opts = prqlc::Options::default().no_format();
+    match prqlc::compile(prql, &opts) {
+        Ok(sql) => Some(sql),
+        Err(e) => { eprintln!("PRQL compile error: {}", e); None }
+    }
+}
+
 /// Convert custom ~= operator to SQL LIKE
 /// `col ~= 'pattern'` → `col LIKE '%pattern%'`
 #[must_use]
@@ -9,6 +19,19 @@ pub fn to_sql_like(expr: &str) -> String {
         let col = col.trim();
         let pat = pat.trim().trim_matches('\'').trim_matches('"');
         format!("{} LIKE '%{}%'", col, pat)
+    } else {
+        expr.to_string()
+    }
+}
+
+/// Convert ~= to PRQL s-string with SQL LIKE
+/// `col ~= 'pattern'` → `s"col LIKE '%pattern%'"`
+#[must_use]
+pub fn to_prql_filter(expr: &str) -> String {
+    if let Some((col, pat)) = expr.split_once(" ~= ") {
+        let col = col.trim();
+        let pat = pat.trim().trim_matches('\'').trim_matches('"');
+        format!("s\"{} LIKE '%{}%'\"", col, pat)
     } else {
         expr.to_string()
     }
@@ -202,5 +225,18 @@ mod tests {
     fn test_xkey_cmd_cols() {
         let keys = vec!["a".into(), "b".into()];
         assert_eq!(xkey_cmd(&keys), "xkey a,b");
+    }
+
+    #[test]
+    fn test_compile_prql_sort_take_range() {
+        let prql = "from df | sort {size} | take 1..11";
+        let result = super::compile_prql(prql);
+        eprintln!("PRQL: {}", prql);
+        eprintln!("Result: {:?}", result);
+        assert!(result.is_some(), "compile_prql should succeed for: {}", prql);
+        // Check SQL has LIMIT/OFFSET
+        let sql = result.unwrap();
+        eprintln!("SQL: {}", sql);
+        assert!(sql.contains("LIMIT") || sql.contains("OFFSET"), "SQL should have LIMIT/OFFSET: {}", sql);
     }
 }

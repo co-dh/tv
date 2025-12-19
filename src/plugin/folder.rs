@@ -5,7 +5,7 @@ use crate::utils::unquote;
 use crate::command::Command;
 use crate::command::io::From;
 use crate::plugin::Plugin;
-use crate::state::ViewState;
+use crate::state::{ViewKind, ViewState};
 use crate::table::Table;
 use anyhow::{anyhow, Result};
 use std::path::{Path, PathBuf};
@@ -101,7 +101,7 @@ impl Command for Ls {
         let t = if self.recursive { super::system::lr(&self.dir)? } else { super::system::ls(&self.dir)? };
         let id = app.next_id();
         let name = if self.recursive { format!("ls -r:{}", self.dir.display()) } else { format!("ls:{}", self.dir.display()) };
-        app.stack.push(ViewState::new_folder(id, name, Box::new(t)));
+        app.stack.push(ViewState::new_memory(id, name, ViewKind::Folder, Box::new(t)));
         Ok(())
     }
     fn to_str(&self) -> String {

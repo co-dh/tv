@@ -8,16 +8,6 @@ use ratatui::prelude::*;
 use ratatui::style::{Color as RColor, Modifier, Style};
 use ratatui::widgets::Tabs;
 use std::collections::HashSet;
-use std::io::Write;
-use std::time::{SystemTime, UNIX_EPOCH};
-
-/// Debug log to /tmp/tv.debug.log with timestamp
-fn dbg_log(msg: &str) {
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/tv.debug.log") {
-        let ts = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
-        let _ = writeln!(f, "{} {}", ts, msg);
-    }
-}
 
 pub struct Renderer;
 
@@ -61,30 +51,20 @@ impl Renderer {
 
     /// Render table data
     fn render_table(frame: &mut Frame, view: &mut ViewState, area: Rect, selected_cols: &HashSet<usize>, selected_rows: &HashSet<usize>, decimals: usize, theme: &Theme, show_tabs: bool) {
-        // Parquet cache: keeps 10k row window in memory to avoid SQL queries on every render frame.
-        // Without cache: 60fps = 60 SQL queries/sec. Cache reduces to "only when scrolling outside window".
-        // Not used for in-memory CSV.
-        const CACHE_SIZE: usize = 10_000;
-        let lazy_offset = if let ViewSource::Parquet { ref path, .. } = view.source {
-            let rows_needed = area.height as usize + 10;
-            let (r0, rend) = (view.state.r0, view.state.r0 + rows_needed);
-            // Check if visible range is within cache
-            let in_cache = view.cache.fetch.map(|(s, e)| r0 >= s && rend <= e).unwrap_or(false);
-            if !in_cache {
-                // Fetch 10k rows centered around current position via plugin
-                let start = r0.saturating_sub(CACHE_SIZE / 4);
-                dbg_log(&format!("fetch parquet start={} rows={} filter={:?}", start, CACHE_SIZE, view.filter));
-                if let Some(plugin) = dynload::get_for(path) {  // route by path
-                    let w = view.filter.as_deref().unwrap_or("TRUE");
-                    if let Some(t) = plugin.fetch_where(path, w, start, CACHE_SIZE) {
-                        view.data = dynload::to_box_table(&t);
-                        view.cache.fetch = Some((start, start + t.rows()));
-                    }
-                }
-            }
-            // Return offset: df row 0 = cache start
-            view.cache.fetch.map(|(s, _)| s).unwrap_or(0)
-        } else { 0 };
+        // Fetch data via plugin using PRQL (compiled to SQL)
+        let (rows_needed, start) = (area.height as usize + 100, view.state.r0);
+        let path = view.filename.clone();
+        let prql = view.prql.clone();
+        let lazy_offset = path.as_ref().and_then(|p| {
+            let plugin = dynload::get_for(p)?;
+            // PRQL: take start..end (1-based, positive range required)
+            let (s, e) = (start + 1, start + rows_needed + 1);
+            let q = format!("{} | take {}..{}", prql, s, e);
+            let sql = crate::pure::compile_prql(&q)?;
+            let t = plugin.query(&sql, p)?;
+            view.data = dynload::to_box_table(&t);
+            Some(start)
+        }).unwrap_or(0);
 
         // Use Table trait for polars-free rendering
         let table = view.data.as_ref();
@@ -627,5 +607,187 @@ mod tests {
         assert!(name_w >= 6 && name_w <= 10, "name width {} should be ~6", name_w);
         // price col: max("price".len(), "200".len()) = 5
         assert!(price_w >= 5 && price_w <= 10, "price width {} should be ~5, not extended to fill screen", price_w);
+    }
+
+    #[test]
+    fn test_render_folder_sort() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+        use crate::state::{ViewState, ViewKind};
+        use std::collections::HashSet;
+        use crate::theme::Theme;
+
+        // Load sqlite plugin for test
+        let _ = crate::dynload::load_sqlite("./target/release/libtv_sqlite.so");
+
+        // Create folder data (unsorted)
+        let table = SimpleTable::new(
+            vec!["path".into(), "size".into()],
+            vec![ColType::Str, ColType::Int],
+            vec![
+                vec![TCell::Str("b.csv".into()), TCell::Int(200)],
+                vec![TCell::Str("a.csv".into()), TCell::Int(100)],
+                vec![TCell::Str("c.csv".into()), TCell::Int(50)],
+            ]
+        );
+
+        // Create view with sort by size ascending
+        let mut view = ViewState::new_memory(0, "test", ViewKind::Folder, Box::new(table));
+        view.prql = "from df | sort {size}".to_string();
+
+        // Check plugin is loaded and filename is set
+        assert!(view.filename.is_some(), "filename should be set: {:?}", view.filename);
+
+        // Render to test backend
+        let backend = TestBackend::new(80, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| {
+            let area = frame.area();
+            Renderer::render_table(
+                frame, &mut view, area,
+                &HashSet::new(), &HashSet::new(), 3,
+                &Theme::default(), false
+            );
+        }).unwrap();
+
+        // Check buffer contains sorted data (c.csv with size 50 should be first)
+        let buf = terminal.backend().buffer().clone();
+        let content = (0..buf.area.height)
+            .map(|y| (0..buf.area.width).map(|x| buf.cell((x, y)).unwrap().symbol().chars().next().unwrap_or(' ')).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        // After sort by size asc: c.csv(50), a.csv(100), b.csv(200)
+        let c_pos = content.find("c.csv");
+        let a_pos = content.find("a.csv");
+        let b_pos = content.find("b.csv");
+        assert!(c_pos.is_some() && a_pos.is_some() && b_pos.is_some(), "All files should be in output: {}", content);
+        assert!(c_pos < a_pos && a_pos < b_pos, "Should be sorted by size: c < a < b, got c={:?} a={:?} b={:?}\n{}", c_pos, a_pos, b_pos, content);
+    }
+
+    #[test]
+    fn test_sort_command_flow() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+        use crate::state::{ViewState, ViewKind};
+        use crate::command::transform::Sort;
+        use crate::command::Command;
+        use crate::app::AppContext;
+        use std::collections::HashSet;
+        use crate::theme::Theme;
+
+        // Load sqlite plugin
+        let _ = crate::dynload::load_sqlite("./target/release/libtv_sqlite.so");
+
+        // Create folder data (unsorted: b=200, a=100, c=50)
+        let table = SimpleTable::new(
+            vec!["path".into(), "size".into()],
+            vec![ColType::Str, ColType::Int],
+            vec![
+                vec![TCell::Str("b.csv".into()), TCell::Int(200)],
+                vec![TCell::Str("a.csv".into()), TCell::Int(100)],
+                vec![TCell::Str("c.csv".into()), TCell::Int(50)],
+            ]
+        );
+
+        // Create app with folder view
+        let mut app = AppContext::default();
+        app.stack.push(ViewState::new_memory(0, "test", ViewKind::Folder, Box::new(table)));
+
+        // Move cursor to size column
+        if let Some(v) = app.view_mut() { v.state.cc = 1; }
+
+        // Execute Sort command (like pressing [)
+        let mut sort = Sort { col_name: "size".to_string(), descending: false };
+        sort.exec(&mut app).unwrap();
+
+        // Verify prql changed
+        assert!(app.view().unwrap().prql.contains("sort"), "prql should contain sort: {}", app.view().unwrap().prql);
+
+        // Render
+        let backend = TestBackend::new(80, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| {
+            let area = frame.area();
+            let view = app.view_mut().unwrap();
+            Renderer::render_table(frame, view, area, &HashSet::new(), &HashSet::new(), 3, &Theme::default(), false);
+        }).unwrap();
+
+        // Check sorted order: c.csv(50) < a.csv(100) < b.csv(200)
+        let buf = terminal.backend().buffer().clone();
+        let content = (0..buf.area.height)
+            .map(|y| (0..buf.area.width).map(|x| buf.cell((x, y)).unwrap().symbol().chars().next().unwrap_or(' ')).collect::<String>())
+            .collect::<Vec<_>>().join("\n");
+
+        let c_pos = content.find("c.csv");
+        let a_pos = content.find("a.csv");
+        let b_pos = content.find("b.csv");
+        eprintln!("Buffer:\n{}", content);
+        assert!(c_pos.is_some() && a_pos.is_some() && b_pos.is_some(), "All files should be in output");
+        assert!(c_pos < a_pos && a_pos < b_pos, "Should be sorted: c < a < b, got c={:?} a={:?} b={:?}", c_pos, a_pos, b_pos);
+    }
+
+    #[test]
+    fn test_multi_render_sort() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+        use crate::state::{ViewState, ViewKind};
+        use crate::command::transform::Sort;
+        use crate::command::Command;
+        use crate::app::AppContext;
+        use std::collections::HashSet;
+        use crate::theme::Theme;
+
+        // Load sqlite plugin
+        let _ = crate::dynload::load_sqlite("./target/release/libtv_sqlite.so");
+
+        // Create folder data (unsorted: b=200, a=100, c=50)
+        let table = SimpleTable::new(
+            vec!["path".into(), "size".into()],
+            vec![ColType::Str, ColType::Int],
+            vec![
+                vec![TCell::Str("b.csv".into()), TCell::Int(200)],
+                vec![TCell::Str("a.csv".into()), TCell::Int(100)],
+                vec![TCell::Str("c.csv".into()), TCell::Int(50)],
+            ]
+        );
+
+        let mut app = AppContext::default();
+        let id = app.next_id();
+        app.stack.push(ViewState::new_memory(id, "test", ViewKind::Folder, Box::new(table)));
+
+        let backend = TestBackend::new(80, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        // First render (before sort) - should be: b, a, c
+        terminal.draw(|frame| {
+            let view = app.view_mut().unwrap();
+            Renderer::render_table(frame, view, frame.area(), &HashSet::new(), &HashSet::new(), 3, &Theme::default(), false);
+        }).unwrap();
+
+        let buf1 = terminal.backend().buffer().clone();
+        let content1 = (0..3).map(|y| (0..20).map(|x| buf1.cell((x, y)).unwrap().symbol().chars().next().unwrap_or(' ')).collect::<String>()).collect::<Vec<_>>().join("\n");
+        eprintln!("Before sort:\n{}", content1);
+
+        // Execute Sort
+        let mut sort = Sort { col_name: "size".to_string(), descending: false };
+        sort.exec(&mut app).unwrap();
+        eprintln!("After sort, prql: {}", app.view().unwrap().prql);
+
+        // Second render (after sort) - should be: c, a, b
+        terminal.draw(|frame| {
+            let view = app.view_mut().unwrap();
+            Renderer::render_table(frame, view, frame.area(), &HashSet::new(), &HashSet::new(), 3, &Theme::default(), false);
+        }).unwrap();
+
+        let buf2 = terminal.backend().buffer().clone();
+        let content2 = (0..4).map(|y| (0..20).map(|x| buf2.cell((x, y)).unwrap().symbol().chars().next().unwrap_or(' ')).collect::<String>()).collect::<Vec<_>>().join("\n");
+        eprintln!("After sort:\n{}", content2);
+
+        // Verify sorted order
+        let c_pos = content2.find("c.csv");
+        let a_pos = content2.find("a.csv");
+        let b_pos = content2.find("b.csv");
+        assert!(c_pos < a_pos && a_pos < b_pos, "After sort should be c < a < b");
     }
 }

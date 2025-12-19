@@ -3,7 +3,7 @@
 use crate::app::AppContext;
 use crate::command::Command;
 use crate::plugin::Plugin;
-use crate::state::ViewState;
+use crate::state::{ViewKind, ViewState};
 use crate::table::{SimpleTable, Col};
 use anyhow::Result;
 use std::fs;
@@ -57,8 +57,7 @@ impl Command for SysCmd {
             SysCmd::Cargo => ("cargo", cargo()?),
         };
         let id = app.next_id();
-        // Use new_system to register with sqlite for filtering/sorting
-        app.stack.push(ViewState::new_system(id, name, Box::new(t)));
+        app.stack.push(ViewState::new_memory(id, name, ViewKind::Table, Box::new(t)));
         Ok(())
     }
     fn to_str(&self) -> String {
@@ -78,7 +77,7 @@ impl Command for Lsof {
         let t = lsof(self.pid)?;
         let name = self.pid.map(|p| format!("lsof:{}", p)).unwrap_or("lsof".into());
         let id = app.next_id();
-        app.stack.push(ViewState::new_system(id, name, Box::new(t)));
+        app.stack.push(ViewState::new_memory(id, name, ViewKind::Table, Box::new(t)));
         Ok(())
     }
     fn to_str(&self) -> String { self.pid.map(|p| format!("lsof {}", p)).unwrap_or("lsof".into()) }
@@ -91,7 +90,7 @@ impl Command for Journalctl {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         let t = journalctl(self.n)?;
         let id = app.next_id();
-        app.stack.push(ViewState::new_system(id, "journalctl", Box::new(t)));
+        app.stack.push(ViewState::new_memory(id, "journalctl", ViewKind::Table, Box::new(t)));
         Ok(())
     }
     fn to_str(&self) -> String { format!("journalctl {}", self.n) }

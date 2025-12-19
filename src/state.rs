@@ -4,18 +4,6 @@ use std::collections::HashSet;
 /// Reserved rows in viewport (header + footer_header + status)
 pub const RESERVED_ROWS: usize = 3;
 
-/// Convert ~= to PRQL s-string with SQL LIKE (for backward compat)
-/// Input is already PRQL syntax from fzf, just handle legacy ~= operator
-fn to_prql_filter(expr: &str) -> String {
-    if let Some((col, pat)) = expr.split_once(" ~= ") {
-        let col = col.trim();
-        let pat = pat.trim().trim_matches('\'').trim_matches('"');
-        format!("s\"{} LIKE '%{}%'\"", col, pat)
-    } else {
-        expr.to_string()
-    }
-}
-
 // ── Grouped structs to reduce ViewState field count ─────────────────────────
 
 /// Data source: where the view's data comes from
@@ -331,37 +319,18 @@ impl ViewState {
         Self::base(id, "correlation", ViewKind::Corr, prql, data)
     }
 
-    /// Create folder view (ls/lr) - registers data with sqlite for querying
-    pub fn new_folder(id: usize, name: impl Into<String>, data: BoxTable) -> Self {
+    /// Create memory view (folder, system) - registers with sqlite for filtering/sorting
+    pub fn new_memory(id: usize, name: impl Into<String>, kind: ViewKind, data: BoxTable) -> Self {
         let n = name.into();
-        let prql = "from df".to_string();
-        // Register with sqlite for SQL queries
-        let path = crate::dynload::register_table(id, data.as_ref());
-        let mut v = Self::base(id, n, ViewKind::Folder, prql, data);
-        v.filename = path;  // "memory:id" for plugin routing
+        let cols = data.col_names();
+        // Register with sqlite - render uses filename to find plugin
+        let path = crate::dynload::register_table(id, data.as_ref()).unwrap_or_default();
+        let mut v = Self::base(id, n, kind, "from df".to_string(), data);
+        v.filename = if path.is_empty() { None } else { Some(path) };
+        v.cols = cols;
         v
     }
 
-    /// Create system view (ps, tcp, mounts, etc) - registers with sqlite for filtering/sorting
-    pub fn new_system(id: usize, name: impl Into<String>, data: BoxTable) -> Self {
-        let n = name.into();
-        let prql = "from df".to_string();
-        // Register with sqlite for SQL queries (like folder)
-        let path = crate::dynload::register_table(id, data.as_ref());
-        let mut v = Self::base(id, n, ViewKind::Table, prql, data);
-        v.filename = path;  // "memory:id" for plugin routing
-        v
-    }
-
-    /// Create filtered parquet view (lazy - all ops go to disk with WHERE)
-    pub fn new_filtered(id: usize, name: impl Into<String>, path: impl Into<String>, c: Vec<String>, flt: impl Into<String>, count: usize, parent_prql: &str, filter_expr: &str) -> Self {
-        let p = path.into();
-        // Convert ~= to s"LIKE" for PRQL (input already PRQL from fzf)
-        let prql_expr = to_prql_filter(filter_expr);
-        let prql = format!("{} | filter {}", parent_prql, prql_expr);
-        let src = ViewSource::Parquet { path: p.clone(), rows: count, cols: c.clone() };
-        Self { filename: Some(p), source: src, filter: Some(flt.into()), cols: c, ..Self::base(id, name, ViewKind::Table, prql, Self::empty_table()) }
-    }
 
     /// Add command to history
     pub fn add_hist(&mut self, cmd: impl Into<String>) { self.history.push(cmd.into()); }
@@ -585,58 +554,9 @@ mod tests {
     }
 
     #[test]
-    fn test_prql_filtered() {
-        let v = ViewState::new_filtered(0, "filtered", "data.parquet", vec!["a".into()], "x > 5", 10, r#"from "data.parquet""#, "x > 5");
-        assert_eq!(v.prql, r#"from "data.parquet" | filter x > 5"#);
-    }
-
-    #[test]
     fn test_prql_folder() {
-        let v = ViewState::new_folder(0, "ls", empty());
-        assert_eq!(v.prql, "from df"); // folder now uses sqlite, path is "memory:id"
+        let v = ViewState::new_memory(0, "ls", ViewKind::Folder, empty());
+        assert_eq!(v.prql, "from df"); // memory views use sqlite
     }
 
-    #[test]
-    fn test_prql_chained_filter() {
-        // First filter
-        let v1 = ViewState::new_filtered(0, "f1", "data.parquet", vec![], "x > 5", 10, r#"from "data.parquet""#, "x > 5");
-        assert_eq!(v1.prql, r#"from "data.parquet" | filter x > 5"#);
-        // Second filter on top (chained)
-        let v2 = ViewState::new_filtered(1, "f2", "data.parquet", vec![], "x > 5 AND y < 10", 5, &v1.prql, "y < 10");
-        assert_eq!(v2.prql, r#"from "data.parquet" | filter x > 5 | filter y < 10"#);
-    }
-
-    #[test]
-    fn test_prql_freq_on_filtered() {
-        let v1 = ViewState::new_filtered(0, "f1", "data.parquet", vec![], "x > 5", 10, r#"from "data.parquet""#, "x > 5");
-        let v2 = ViewState::new_freq(1, "freq", empty(), 0, 10, "f1", "col", &v1.prql, &["col".into()]);
-        assert_eq!(v2.prql, r#"from "data.parquet" | filter x > 5 | group {`col`} (aggregate {Cnt = count this})"#);
-    }
-
-    #[test]
-    fn test_prql_meta_on_filtered() {
-        let v1 = ViewState::new_filtered(0, "f1", "data.parquet", vec![], "x > 5", 10, r#"from "data.parquet""#, "x > 5");
-        let v2 = ViewState::new_meta(1, empty(), 0, 10, "f1", &v1.prql);
-        assert_eq!(v2.prql, r#"from "data.parquet" | filter x > 5 | meta"#);
-    }
-
-    #[test]
-    fn test_prql_corr_on_csv() {
-        let v1 = ViewState::new(0, "data", empty(), Some("data.csv".into()));
-        let v2 = ViewState::new_corr(1, empty(), &v1.prql);
-        assert_eq!(v2.prql, "from df | corr"); // corr inherits parent's from df
-    }
-
-    #[test]
-    fn test_prql_pivot() {
-        let v1 = ViewState::new(0, "data", empty(), Some("data.csv".into()));
-        let v2 = ViewState::new_pivot(1, "pivot", empty(), 0, "data", &v1.prql);
-        assert_eq!(v2.prql, "from df | pivot"); // pivot inherits parent's from df
-    }
-
-    #[test]
-    fn test_prql_multi_col_freq() {
-        let v = ViewState::new_freq(0, "freq", empty(), 1, 100, "parent", "a", r#"from "data.csv""#, &["a".into(), "b".into()]);
-        assert_eq!(v.prql, r#"from "data.csv" | group {`a`, `b`} (aggregate {Cnt = count this})"#);
-    }
 }

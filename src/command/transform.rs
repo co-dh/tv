@@ -58,15 +58,16 @@ impl Command for Filter {
         if app.is_loading() { return Err(anyhow!("Wait for loading to complete")); }
         let id = app.next_id();
         let v = app.req()?;
-        let path = v.path().to_string();
-        let parent_prql = v.prql.clone();
-        // Pure: chain filters with AND
         let combined = pure::combine_filters(v.filter.as_deref(), &self.expr);
+        let prql = format!("{} | filter {}", v.prql, pure::to_prql_filter(&self.expr));
         let name = pure::filter_name(&v.name, &self.expr);
-        let cols = v.cols.clone();
-        let count = v.rows();
-        // All views (parquet, folder, csv) use lazy PRQL filter
-        app.stack.push(crate::state::ViewState::new_filtered(id, name, path, cols, combined, count, &parent_prql, &self.expr));
+        let mut nv = v.clone();
+        nv.id = id;
+        nv.name = name;
+        nv.prql = prql;
+        nv.filter = Some(combined);
+        nv.cache = Default::default();
+        app.stack.push(nv);
         Ok(())
     }
     fn to_str(&self) -> String { format!("filter {}", self.expr) }
@@ -180,20 +181,20 @@ impl Command for FilterIn {
         if app.is_loading() { return Err(anyhow!("Wait for loading to complete")); }
         let id = app.next_id();
         let v = app.req()?;
-        let path = v.path().to_string();
         // Get schema to check if column is string type
         let schema = table_schema(v.data.as_ref());
         let is_str = schema.iter().find(|(n, _)| n == &self.col)
             .map(|(_, t)| pure::is_string_type(t)).unwrap_or(true);
-        // Pure: build IN clause and name
-        let new_clause = pure::in_clause(&self.col, &self.values, is_str);
-        let name = pure::filter_in_name(&self.col, &self.values);
-        // Lazy filtered view
-        let combined = pure::combine_filters(v.filter.as_deref(), &new_clause);
-        let cols = v.cols.clone();
-        let parent_prql = v.prql.clone();
-        let count = v.rows(); // estimate
-        app.stack.push(crate::state::ViewState::new_filtered(id, name, path, cols, combined, count, &parent_prql, &new_clause));
+        let clause = pure::in_clause(&self.col, &self.values, is_str);
+        let combined = pure::combine_filters(v.filter.as_deref(), &clause);
+        let prql = format!("{} | filter {}", v.prql, pure::to_prql_filter(&clause));
+        let mut nv = v.clone();
+        nv.id = id;
+        nv.name = pure::filter_in_name(&self.col, &self.values);
+        nv.prql = prql;
+        nv.filter = Some(combined);
+        nv.cache = Default::default();
+        app.stack.push(nv);
         Ok(())
     }
     fn to_str(&self) -> String { format!("filter_in {} {:?}", self.col, self.values) }
