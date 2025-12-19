@@ -6,8 +6,16 @@
 - do not remove or change test case just to fit the code. ask for approval of changing tests.
 - For bugs, implement a test to catch it first, then fix.
 - use short module imports: `use crate::foo::bar;` then `bar::func()`, not `crate::foo::bar::func()`
-- use sql if possible, instead of polars api. freq e.g. unify
 - unify similar funciton like freq and freq_where, the former is just empyt where condition.
+- Add #[must_use] to pure functions (path, rows, cols, key_cols, etc.)
+- Replace imperative loops with iterator chains (extend, filter_map, flat_map)
+- Use Rust idioms: if let, let-else, matches!, Option combinators (and_then, filter, ok)
+- Use ? operator more aggressively for Result/Option propagation
+- Use for with by_ref() instead of peek + unwrap patterns
+- Use impl Into<String> for flexible API (ViewState constructors, app.msg)
+- use sum type
+- use prql to implement views, so filter just append filter to current prql, sel is also append to prql.
+- prql is essential to the design, do not replace it with sql without approval.
 
 # Architecture
 
