@@ -94,8 +94,10 @@ impl Command for Frequency {
         let id = app.next_id();
         let name = format!("Freq:{}", self.col_names.join(","));
         let freq_col = self.col_names.first().cloned().unwrap_or_default();
+        // Get parent prql before pushing
+        let parent_prql = app.req()?.prql.clone();
         let mut new_view = ViewState::new_freq(
-            id, name, result, parent_id, parent_rows, parent_name, freq_col,
+            id, name, result, parent_id, parent_rows, parent_name, freq_col, &parent_prql, &self.col_names,
         );
         if !key_cols.is_empty() { new_view.col_separator = Some(key_cols.len()); }
         app.stack.push(new_view);

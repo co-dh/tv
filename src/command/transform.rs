@@ -36,6 +36,7 @@ impl Command for Filter {
         let id = app.next_id();
         let v = app.req()?;
         let path = v.path().to_string();
+        let parent_prql = v.prql.clone();
         // Pure: chain filters with AND
         let combined = pure::combine_filters(v.filter_clause.as_deref(), &self.expr);
         let name = pure::filter_name(&v.name, &self.expr);
@@ -43,7 +44,7 @@ impl Command for Filter {
         if v.parquet_path.is_some() {
             let count = v.source().count_where(&path, &combined)?;
             let cols = v.col_names.clone();
-            app.stack.push(crate::state::ViewState::new_filtered(id, name, path, cols, combined, count));
+            app.stack.push(crate::state::ViewState::new_filtered(id, name, path, cols, combined, count, &parent_prql, &self.expr));
         } else {
             let filtered = v.source().filter(&path, &combined, FILTER_LIMIT)?;
             app.stack.push(crate::state::ViewState::new(id, name, filtered, v.filename.clone()));
@@ -155,7 +156,8 @@ impl Command for FilterIn {
             let combined = pure::combine_filters(v.filter_clause.as_deref(), &new_clause);
             let count = v.source().count_where(&path, &combined)?;
             let cols = v.col_names.clone();
-            app.stack.push(crate::state::ViewState::new_filtered(id, name, path, cols, combined, count));
+            let parent_prql = v.prql.clone();
+            app.stack.push(crate::state::ViewState::new_filtered(id, name, path, cols, combined, count, &parent_prql, &new_clause));
         } else {
             let filtered = v.source().filter(&path, &new_clause, FILTER_LIMIT)?;
             let filename = v.filename.clone();

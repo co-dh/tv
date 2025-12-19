@@ -54,9 +54,9 @@ fn sel_cols(app: &AppContext, reverse: bool) -> Option<Vec<String>> {
 // === Commands ===
 
 /// Push meta view onto stack
-fn push_meta(app: &mut AppContext, df: DataFrame, pid: usize, prows: usize, pname: String, pcol: usize, sep: Option<usize>) {
+fn push_meta(app: &mut AppContext, df: DataFrame, pid: usize, prows: usize, pname: String, pcol: usize, sep: Option<usize>, parent_prql: &str) {
     let id = app.next_id();
-    let mut v = ViewState::new_meta(id, df, pid, prows, pname);
+    let mut v = ViewState::new_meta(id, df, pid, prows, pname, parent_prql);
     v.state.cr = pcol;
     if let Some(s) = sep { v.col_separator = Some(s); }
     app.stack.push(v);
@@ -69,12 +69,12 @@ impl Command for Metadata {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         // Block meta while gz is still loading
         if app.is_loading() { return Err(anyhow!("Wait for loading to complete")); }
-        let (parent_id, parent_col, parent_rows, parent_name, cached, df, col_sep, pq_path, col_names, schema) = {
+        let (parent_id, parent_col, parent_rows, parent_name, parent_prql, cached, df, col_sep, pq_path, col_names, schema) = {
             let view = app.req()?;
             let path = view.path().to_string();
             let cols = view.source().cols(&path)?;
             let schema = view.source().schema(&path)?;
-            (view.id, view.state.cc, view.rows(), view.name.clone(),
+            (view.id, view.state.cc, view.rows(), view.name.clone(), view.prql.clone(),
              view.meta_cache.clone(), view.dataframe.clone(), view.col_separator, view.parquet_path.clone(), cols, schema)
         };
         let key_cols: Vec<String> = col_sep.map(|sep| col_names[..sep].to_vec()).unwrap_or_default();
@@ -82,7 +82,7 @@ impl Command for Metadata {
         // Check cache (only for non-grouped)
         if key_cols.is_empty() {
             if let Some(cached_df) = cached {
-                push_meta(app, cached_df, parent_id, parent_rows, parent_name, parent_col, None);
+                push_meta(app, cached_df, parent_id, parent_rows, parent_name, parent_col, None, &parent_prql);
                 return Ok(());
             }
         }
@@ -91,7 +91,7 @@ impl Command for Metadata {
         if !key_cols.is_empty() {
             let types: Vec<String> = df.dtypes().iter().map(|dt| format!("{:?}", dt)).collect();
             let placeholder = placeholder_df(col_names, types)?;
-            push_meta(app, placeholder, parent_id, parent_rows, parent_name, parent_col, Some(key_cols.len()));
+            push_meta(app, placeholder, parent_id, parent_rows, parent_name, parent_col, Some(key_cols.len()), &parent_prql);
             let (tx, rx) = std::sync::mpsc::channel();
             std::thread::spawn(move || { if let Ok(r) = grp_stats(&df, &key_cols) { let _ = tx.send(r); } });
             app.bg_meta = Some((parent_id, rx));
@@ -101,7 +101,7 @@ impl Command for Metadata {
         // Non-grouped: unified LazyFrame path (parquet or in-memory)
         let types: Vec<String> = schema.iter().map(|(_, dt)| dt.clone()).collect();
         let placeholder = placeholder_df(col_names, types)?;
-        push_meta(app, placeholder, parent_id, parent_rows, parent_name, parent_col, None);
+        push_meta(app, placeholder, parent_id, parent_rows, parent_name, parent_col, None, &parent_prql);
         let (tx, rx) = std::sync::mpsc::channel();
         if let Some(path) = pq_path {
             std::thread::spawn(move || { if let Ok(r) = lf_stats_path(&path) { let _ = tx.send(r); } });

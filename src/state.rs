@@ -84,6 +84,7 @@ pub struct ViewState {
     pub id: usize,
     pub name: String,
     pub kind: ViewKind,              // view type for dispatch
+    pub prql: String,                // PRQL query that produces this view
     pub dataframe: DataFrame,
     pub state: TableState,
     pub history: Vec<String>,
@@ -137,10 +138,10 @@ impl ViewState {
     }
 
     /// Base view with default values (all Options None, all flags false)
-    fn base(id: usize, name: impl Into<String>, kind: ViewKind, df: DataFrame) -> Self {
+    fn base(id: usize, name: impl Into<String>, kind: ViewKind, prql: impl Into<String>, df: DataFrame) -> Self {
         let name = name.into();
         Self {
-            id, name, kind, dataframe: df, state: TableState::new(), history: Vec::new(),
+            id, name, kind, prql: prql.into(), dataframe: df, state: TableState::new(), history: Vec::new(),
             filename: None, show_row_numbers: false, parent_id: None, parent_rows: None, parent_name: None, freq_col: None,
             selected_cols: HashSet::new(), selected_rows: HashSet::new(), gz_source: None,
             stats_cache: None, col_separator: None, meta_cache: None, partial: false, disk_rows: None, parquet_path: None, col_names: Vec::new(),
@@ -150,49 +151,61 @@ impl ViewState {
 
     /// Create standard in-memory view (CSV, filtered results, etc.)
     pub fn new(id: usize, name: impl Into<String>, df: DataFrame, filename: Option<String>) -> Self {
-        Self { filename, ..Self::base(id, name, ViewKind::Table, df) }
+        let prql = filename.as_ref().map(|f| format!("from \"{}\"", f)).unwrap_or_default();
+        Self { filename, ..Self::base(id, name, ViewKind::Table, prql, df) }
     }
 
     /// Create lazy parquet view (no in-memory dataframe, all ops go to disk)
     pub fn new_parquet(id: usize, name: impl Into<String>, path: impl Into<String>, rows: usize, cols: Vec<String>) -> Self {
         let path = path.into();
-        Self { filename: Some(path.clone()), disk_rows: Some(rows), parquet_path: Some(path), col_names: cols, ..Self::base(id, name, ViewKind::Table, DataFrame::empty()) }
+        let prql = format!("from \"{}\"", path);
+        Self { filename: Some(path.clone()), disk_rows: Some(rows), parquet_path: Some(path), col_names: cols, ..Self::base(id, name, ViewKind::Table, prql, DataFrame::empty()) }
     }
 
     /// Create gzipped CSV view (may be partial if memory limit hit)
     pub fn new_gz(id: usize, name: impl Into<String>, df: DataFrame, filename: Option<String>, gz: impl Into<String>, partial: bool) -> Self {
-        Self { filename, gz_source: Some(gz.into()), partial, ..Self::base(id, name, ViewKind::Table, df) }
+        let gz_path = gz.into();
+        let prql = format!("from \"{}\"", gz_path);
+        Self { filename, gz_source: Some(gz_path), partial, ..Self::base(id, name, ViewKind::Table, prql, df) }
     }
 
-    /// Create metadata view with parent info
-    pub fn new_meta(id: usize, df: DataFrame, pid: usize, prows: usize, pname: impl Into<String>) -> Self {
-        Self { parent_id: Some(pid), parent_rows: Some(prows), parent_name: Some(pname.into()), ..Self::base(id, "metadata", ViewKind::Meta, df) }
+    /// Create metadata view with parent info and PRQL
+    pub fn new_meta(id: usize, df: DataFrame, pid: usize, prows: usize, pname: impl Into<String>, parent_prql: &str) -> Self {
+        let prql = format!("{} | meta", parent_prql);
+        Self { parent_id: Some(pid), parent_rows: Some(prows), parent_name: Some(pname.into()), ..Self::base(id, "metadata", ViewKind::Meta, prql, df) }
     }
 
-    /// Create freq view with parent info
-    pub fn new_freq(id: usize, name: impl Into<String>, df: DataFrame, pid: usize, prows: usize, pname: impl Into<String>, col: impl Into<String>) -> Self {
-        Self { parent_id: Some(pid), parent_rows: Some(prows), parent_name: Some(pname.into()), freq_col: Some(col.into()), ..Self::base(id, name, ViewKind::Freq, df) }
+    /// Create freq view with parent info and PRQL
+    pub fn new_freq(id: usize, name: impl Into<String>, df: DataFrame, pid: usize, prows: usize, pname: impl Into<String>, col: impl Into<String>, parent_prql: &str, grp_cols: &[String]) -> Self {
+        let grp = grp_cols.iter().map(|c| format!("`{}`", c)).collect::<Vec<_>>().join(", ");
+        let prql = format!("{} | group {{{}}} (aggregate {{Cnt = count this}})", parent_prql, grp);
+        Self { parent_id: Some(pid), parent_rows: Some(prows), parent_name: Some(pname.into()), freq_col: Some(col.into()), ..Self::base(id, name, ViewKind::Freq, prql, df) }
     }
 
     /// Create pivot view with parent info
-    pub fn new_pivot(id: usize, name: impl Into<String>, df: DataFrame, pid: usize, pname: impl Into<String>) -> Self {
-        Self { parent_id: Some(pid), parent_name: Some(pname.into()), ..Self::base(id, name, ViewKind::Pivot, df) }
+    pub fn new_pivot(id: usize, name: impl Into<String>, df: DataFrame, pid: usize, pname: impl Into<String>, parent_prql: &str) -> Self {
+        let prql = format!("{} | pivot", parent_prql);
+        Self { parent_id: Some(pid), parent_name: Some(pname.into()), ..Self::base(id, name, ViewKind::Pivot, prql, df) }
     }
 
     /// Create correlation view
-    pub fn new_corr(id: usize, df: DataFrame) -> Self {
-        Self::base(id, "correlation", ViewKind::Corr, df)
+    pub fn new_corr(id: usize, df: DataFrame, parent_prql: &str) -> Self {
+        let prql = format!("{} | corr", parent_prql);
+        Self::base(id, "correlation", ViewKind::Corr, prql, df)
     }
 
     /// Create folder view (ls/lr)
     pub fn new_folder(id: usize, name: impl Into<String>, df: DataFrame) -> Self {
-        Self::base(id, name, ViewKind::Folder, df)
+        let n = name.into();
+        let prql = format!("from sys.{}", n);
+        Self::base(id, n, ViewKind::Folder, prql, df)
     }
 
     /// Create filtered parquet view (lazy - all ops go to disk with WHERE)
-    pub fn new_filtered(id: usize, name: impl Into<String>, path: impl Into<String>, cols: Vec<String>, filter: impl Into<String>, count: usize) -> Self {
+    pub fn new_filtered(id: usize, name: impl Into<String>, path: impl Into<String>, cols: Vec<String>, filter: impl Into<String>, count: usize, parent_prql: &str, filter_expr: &str) -> Self {
         let path = path.into();
-        Self { filename: Some(path.clone()), disk_rows: Some(count), parquet_path: Some(path), col_names: cols, filter_clause: Some(filter.into()), ..Self::base(id, name, ViewKind::Table, DataFrame::empty()) }
+        let prql = format!("{} | filter {}", parent_prql, filter_expr);
+        Self { filename: Some(path.clone()), disk_rows: Some(count), parquet_path: Some(path), col_names: cols, filter_clause: Some(filter.into()), ..Self::base(id, name, ViewKind::Table, prql, DataFrame::empty()) }
     }
 
     /// Add command to history
@@ -319,5 +332,45 @@ mod tests {
 
         let names = stack.names();
         assert_eq!(names, vec!["view1", "view2", "view3"]);
+    }
+
+    #[test]
+    fn test_prql_from_file() {
+        let df = DataFrame::default();
+        let v = ViewState::new(0, "test", df, Some("data.csv".into()));
+        assert_eq!(v.prql, r#"from "data.csv""#);
+    }
+
+    #[test]
+    fn test_prql_parquet() {
+        let v = ViewState::new_parquet(0, "test", "data.parquet", 100, vec!["a".into(), "b".into()]);
+        assert_eq!(v.prql, r#"from "data.parquet""#);
+    }
+
+    #[test]
+    fn test_prql_meta() {
+        let df = DataFrame::default();
+        let v = ViewState::new_meta(0, df, 1, 100, "parent", r#"from "data.csv""#);
+        assert_eq!(v.prql, r#"from "data.csv" | meta"#);
+    }
+
+    #[test]
+    fn test_prql_freq() {
+        let df = DataFrame::default();
+        let v = ViewState::new_freq(0, "freq", df, 1, 100, "parent", "col", r#"from "data.csv""#, &["col".into()]);
+        assert_eq!(v.prql, r#"from "data.csv" | group {`col`} (aggregate {Cnt = count this})"#);
+    }
+
+    #[test]
+    fn test_prql_filtered() {
+        let v = ViewState::new_filtered(0, "filtered", "data.parquet", vec!["a".into()], "x > 5", 10, r#"from "data.parquet""#, "x > 5");
+        assert_eq!(v.prql, r#"from "data.parquet" | filter x > 5"#);
+    }
+
+    #[test]
+    fn test_prql_folder() {
+        let df = DataFrame::default();
+        let v = ViewState::new_folder(0, "ls", df);
+        assert_eq!(v.prql, "from sys.ls");
     }
 }

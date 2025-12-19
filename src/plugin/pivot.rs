@@ -40,12 +40,12 @@ pub struct PivotPick;
 
 impl Command for PivotPick {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
-        let (cols, keys, df, parent_id, parent_name) = {
+        let (cols, keys, df, parent_id, parent_name, parent_prql) = {
             let v = app.req()?;
             let cols = df_cols(&v.dataframe);
             let keys: Vec<String> = v.col_separator.map(|sep| cols[..sep].to_vec()).unwrap_or_default();
             if keys.is_empty() { return Err(anyhow!("Set xkey columns first (!)")); }
-            (cols, keys, v.dataframe.clone(), v.id, v.name.clone())
+            (cols, keys, v.dataframe.clone(), v.id, v.name.clone(), v.prql.clone())
         };
 
         // Available columns for pivot (exclude key columns)
@@ -63,7 +63,7 @@ impl Command for PivotPick {
         let placeholder = placeholder_pivot(&keys, &pivot_col)?;
         let id = app.next_id();
         let name = format!("Pivot:{}", pivot_col);
-        let v = ViewState::new_pivot(id, name, placeholder, parent_id, parent_name);
+        let v = ViewState::new_pivot(id, name, placeholder, parent_id, parent_name, &parent_prql);
         app.stack.push(v);
 
         // Background pivot computation
@@ -95,19 +95,19 @@ pub struct Pivot {
 
 impl Command for Pivot {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
-        let (keys, df, parent_id, parent_name) = {
+        let (keys, df, parent_id, parent_name, parent_prql) = {
             let v = app.req()?;
             let cols = df_cols(&v.dataframe);
             let keys: Vec<String> = v.col_separator.map(|sep| cols[..sep].to_vec()).unwrap_or_default();
             if keys.is_empty() { return Err(anyhow!("Set xkey columns first (!)")); }
-            (keys, v.dataframe.clone(), v.id, v.name.clone())
+            (keys, v.dataframe.clone(), v.id, v.name.clone(), v.prql.clone())
         };
 
         // Create placeholder and run in background
         let placeholder = placeholder_pivot(&keys, &self.pivot_col)?;
         let id = app.next_id();
         let name = format!("Pivot:{}", self.pivot_col);
-        let v = ViewState::new_pivot(id, name, placeholder, parent_id, parent_name);
+        let v = ViewState::new_pivot(id, name, placeholder, parent_id, parent_name, &parent_prql);
         app.stack.push(v);
 
         let pivot_col = self.pivot_col.clone();
