@@ -29,7 +29,7 @@ pub struct AppContext {
     next_id: usize,                // view id counter
     pub search: SearchState,       // search state
     pub bookmarks: Vec<usize>,     // bookmarked rows
-    pub show_info: bool,           // toggle info box
+    pub info_mode: u8,             // info box: 0=off, 1=help, 2=help+prql
     pub float_decimals: usize,     // decimal places for floats
     pub keymap: KeyMap,            // key bindings
     pub theme: Theme,              // color theme
@@ -54,7 +54,7 @@ impl Default for AppContext {
             next_id: 0,
             search: SearchState::default(),
             bookmarks: Vec::new(),
-            show_info: true,
+            info_mode: 1,  // start with help visible
             float_decimals: 3,
             keymap: KeyMap::default(),
             theme: Theme::load_active(),

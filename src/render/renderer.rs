@@ -28,7 +28,7 @@ impl Renderer {
         let message = app.message.clone();
         let stack_len = app.stack.len();
         let stack_names = app.stack.names();
-        let show_info = app.show_info;
+        let info_mode = app.info_mode;
         let decimals = app.float_decimals;
         let is_loading = app.is_loading();
 
@@ -41,10 +41,11 @@ impl Renderer {
             let selected_cols = view.selected_cols.clone();
             let selected_rows = view.selected_rows.clone();
             let view_name = view.name.clone();
+            let prql = view.prql.clone();
             let show_tabs = stack_names.len() > 1;
             Self::render_table(frame, view, area, &selected_cols, &selected_rows, decimals, &theme, show_tabs);
-            if show_info {
-                Self::render_info_box(frame, &view_name, stack_len, area, &hints, &theme);
+            if info_mode > 0 {
+                Self::render_info_box(frame, &view_name, stack_len, area, &hints, &theme, info_mode, &prql);
             }
             if show_tabs {
                 Self::render_tabs(frame, &stack_names, area, &theme);
@@ -52,8 +53,8 @@ impl Renderer {
             Self::render_status_bar(frame, view, &message, is_loading, area, &theme);
         } else {
             Self::empty_msg(frame, &message, area);
-            if show_info {
-                Self::render_info_box(frame, "table", stack_len, area, &hints, &theme);
+            if info_mode > 0 {
+                Self::render_info_box(frame, "table", stack_len, area, &hints, &theme, info_mode, "");
             }
         }
     }
@@ -369,13 +370,20 @@ impl Renderer {
     }
 
     /// Render info box using ratatui widgets
-    fn render_info_box(frame: &mut Frame, _view_name: &str, stack_len: usize, area: Rect, keys: &[(String, &'static str)], theme: &Theme) {
+    fn render_info_box(frame: &mut Frame, _view_name: &str, stack_len: usize, area: Rect, keys: &[(String, &'static str)], theme: &Theme, info_mode: u8, prql: &str) {
         use ratatui::widgets::{Block, Borders, Paragraph, Clear};
         use ratatui::text::{Line, Span};
 
+        // Calculate box size - add PRQL lines if mode 2
+        let prql_lines: Vec<&str> = if info_mode == 2 && !prql.is_empty() {
+            prql.split(" | ").collect()
+        } else { vec![] };
+
         let max_desc_len = keys.iter().map(|(_, d)| d.len()).max().unwrap_or(10);
-        let box_width = (max_desc_len + 11) as u16;
-        let box_height = (keys.len() + 2) as u16;
+        let max_prql_len = prql_lines.iter().map(|s| s.len()).max().unwrap_or(0);
+        let box_width = (max_desc_len.max(max_prql_len) + 11).min(60) as u16;
+        let extra_lines = if prql_lines.is_empty() { 0 } else { prql_lines.len() + 1 };  // +1 for separator
+        let box_height = (keys.len() + extra_lines + 2) as u16;
 
         let box_x = area.width.saturating_sub(box_width + 1);
         let box_y = area.height.saturating_sub(box_height + 1);
@@ -395,13 +403,24 @@ impl Renderer {
         // Build styled lines for content
         let key_style = Style::default().fg(to_rcolor(theme.info_key_fg));
         let text_style = Style::default().fg(RColor::White);
-        let lines: Vec<Line> = keys.iter().map(|(key, desc)| {
+        let prql_style = Style::default().fg(RColor::Cyan);
+        let mut lines: Vec<Line> = keys.iter().map(|(key, desc)| {
             Line::from(vec![
                 Span::styled(format!("{:>5}", key), key_style),
                 Span::raw(" "),
                 Span::styled(*desc, text_style),
             ])
         }).collect();
+
+        // Add PRQL if mode 2
+        if !prql_lines.is_empty() {
+            lines.push(Line::from(Span::styled("─────", Style::default().fg(RColor::DarkGray))));
+            for pl in prql_lines {
+                // Truncate long lines
+                let s = if pl.len() > 55 { format!("{}…", &pl[..54]) } else { pl.to_string() };
+                lines.push(Line::from(Span::styled(s, prql_style)));
+            }
+        }
 
         let para = Paragraph::new(lines).block(block);
         frame.render_widget(para, box_area);
