@@ -24,7 +24,6 @@ use plugin::meta::Metadata;
 use plugin::folder::Ls;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::crossterm::{cursor, execute, style::Print, terminal};
-use render::Renderer;
 use std::fs;
 use std::io::{self, Write};
 
@@ -89,45 +88,8 @@ fn main() -> Result<()> {
         temp_app
     };
 
-    // Update viewport
-    let size = tui.size()?;
-    app.viewport(size.height, size.width);
-
-    // Main event loop
-    loop {
-        // Check background tasks
-        app.merge_bg_data();
-        app.check_bg_saver();
-        app.check_bg_meta();
-        app.check_bg_freq();
-
-        // Force full redraw if needed (after bat/less/fzf return)
-        if app.needs_redraw {
-            tui.clear()?;
-            // Update viewport in case terminal size changed
-            let size = tui.size()?;
-            app.viewport(size.height, size.width);
-            app.needs_redraw = false;
-        }
-        // Center cursor if needed (after search, with fresh viewport)
-        if app.needs_center {
-            if let Some(view) = app.view_mut() {
-                view.state.center_if_needed();
-            }
-            app.needs_center = false;
-        }
-        // Render with ratatui diff-based update
-        tui.draw(|frame| Renderer::render(frame, &mut app))?;
-
-        // Poll for events with timeout (allows background data merge)
-        if event::poll(std::time::Duration::from_millis(100))? {
-            if let Event::Key(key) = event::read()? {
-                if !on_key(&mut app, key)? {
-                    break;
-                }
-            }
-        }
-    }
+    // Elm Architecture: run loop with on_key handler
+    app.run(&mut tui, on_key)?;
 
     render::restore()?;
     Ok(())

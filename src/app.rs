@@ -2,8 +2,11 @@ use crate::keymap::KeyMap;
 use crate::plugin::Registry;
 use crate::state::{StateStack, ViewKind, ViewState};
 use crate::theme::Theme;
+use crate::render::Renderer;
 use anyhow::{anyhow, Result};
 use polars::prelude::DataFrame;
+use ratatui::crossterm::event::{self, Event, KeyEvent};
+use ratatui::DefaultTerminal;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::PathBuf;
@@ -217,5 +220,63 @@ impl AppContext {
     /// Get page size for page up/down (viewport - header - footer_header - status)
     pub fn page(&self) -> isize {
         self.view().map(|v| (v.state.viewport.0 as isize).saturating_sub(3)).unwrap_or(10)
+    }
+
+    // ── Elm Architecture: run/draw/handle_events ─────────────────────────────
+
+    /// Main event loop (Elm Architecture)
+    pub fn run(&mut self, tui: &mut DefaultTerminal, on_key: impl Fn(&mut Self, KeyEvent) -> Result<bool>) -> Result<()> {
+        let size = tui.size()?;
+        self.viewport(size.height, size.width);
+
+        loop {
+            // Update: check background tasks
+            self.update();
+
+            // Handle redraw/center flags
+            if self.needs_redraw {
+                tui.clear()?;
+                let size = tui.size()?;
+                self.viewport(size.height, size.width);
+                self.needs_redraw = false;
+            }
+            if self.needs_center {
+                if let Some(v) = self.view_mut() { v.state.center_if_needed(); }
+                self.needs_center = false;
+            }
+
+            // Draw
+            self.draw(tui)?;
+
+            // Handle events (poll with timeout for background tasks)
+            if !self.handle_events(&on_key)? {
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    /// Draw current state to terminal
+    fn draw(&mut self, tui: &mut DefaultTerminal) -> Result<()> {
+        tui.draw(|frame| Renderer::render(frame, self))?;
+        Ok(())
+    }
+
+    /// Poll and handle events, return false to quit
+    fn handle_events(&mut self, on_key: &impl Fn(&mut Self, KeyEvent) -> Result<bool>) -> Result<bool> {
+        if event::poll(std::time::Duration::from_millis(100))? {
+            if let Event::Key(key) = event::read()? {
+                return on_key(self, key);
+            }
+        }
+        Ok(true)
+    }
+
+    /// Update: process background tasks
+    fn update(&mut self) {
+        self.merge_bg_data();
+        self.check_bg_saver();
+        self.check_bg_meta();
+        self.check_bg_freq();
     }
 }
