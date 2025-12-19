@@ -38,7 +38,7 @@ pub struct LoadResult {
     pub bg_loader: Option<Receiver<gz::GzChunk>>,
 }
 
-// ── SQL execution ───────────────────────────────────────────────────────────
+// ── SQL/PRQL execution ──────────────────────────────────────────────────────
 
 /// Execute SQL on LazyFrame with streaming engine
 pub fn sql(lf: LazyFrame, query: &str) -> Result<DataFrame> {
@@ -50,6 +50,17 @@ pub fn sql_lazy(lf: LazyFrame, query: &str) -> Result<LazyFrame> {
     let mut ctx = ::polars::sql::SQLContext::new();
     ctx.register("df", lf);
     ctx.execute(query).map_err(|e| anyhow!("{}", e))
+}
+
+/// Compile PRQL to SQL
+pub fn prql_to_sql(prql: &str) -> Result<String> {
+    prqlc::compile(prql, &prqlc::Options::default().no_signature())
+        .map_err(|e| anyhow!("PRQL: {}", e.inner[0].reason))
+}
+
+/// Execute PRQL on LazyFrame (compiles to SQL, then executes)
+pub fn prql(lf: LazyFrame, query: &str) -> Result<DataFrame> {
+    sql(lf, &prql_to_sql(query)?)
 }
 
 /// Save DataFrame to parquet
@@ -72,7 +83,7 @@ pub trait Source: Send + Sync {
         self.lf(path)?.collect_schema().map_err(|e| anyhow!("{}", e))
     }
 
-    /// Get metadata: (row_count, column_names) - default via SQL COUNT(*)
+    /// Get metadata: (row_count, column_names) - via SQL COUNT (prqlc count has bugs)
     fn metadata(&self, path: &str) -> Result<(usize, Vec<String>)> {
         let r = sql(self.lf(path)?, "SELECT COUNT(*) as cnt FROM df")?;
         Ok((r.column("cnt")?.get(0)?.try_extract::<u64>().unwrap_or(0) as usize, self.cols(path)?))
@@ -168,10 +179,10 @@ pub trait Source: Send + Sync {
         self.fetch_where(path, w, 0, limit)
     }
 
-    /// Sort and take top N
+    /// Sort and take top N (PRQL: sort + take)
     fn sort_head(&self, path: &str, col: &str, desc: bool, limit: usize) -> Result<DataFrame> {
-        let ord = if desc { "DESC" } else { "ASC" };
-        sql(self.lf(path)?, &format!("SELECT * FROM df ORDER BY \"{}\" {} LIMIT {}", col, ord, limit))
+        let sort = if desc { format!("-`{}`", col) } else { format!("`{}`", col) };
+        prql(self.lf(path)?, &format!("from df | sort {{{}}} | take {}", sort, limit))
     }
 
     /// Load file into ViewState (default: not supported)
@@ -187,4 +198,38 @@ macro_rules! test_df {
     ($($name:literal => $data:expr),+ $(,)?) => {
         DataFrame::new(vec![$(Column::new($name.into(), $data),)+]).unwrap()
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_prql_to_sql() {
+        let sql = prql_to_sql("from df | take 10").unwrap();
+        assert!(sql.contains("LIMIT") && sql.contains("10"), "Expected LIMIT 10: {}", sql);
+    }
+
+    #[test]
+    fn test_prql_filter() {
+        let sql = prql_to_sql("from df | filter x > 5").unwrap();
+        assert!(sql.contains("WHERE"), "Expected WHERE: {}", sql);
+    }
+
+    #[test]
+    fn test_prql_select() {
+        let sql = prql_to_sql("from df | select {a, b}").unwrap();
+        assert!(sql.contains("SELECT"), "Expected SELECT: {}", sql);
+    }
+
+    // Note: prqlc 0.13.10 has a bug where `count this` and `count *` panic
+    // with "called `Option::unwrap()` on a `None` value" in names.rs:211.
+    // We use SQL for count queries until this is fixed.
+
+    #[test]
+    fn test_prql_sort_take() {
+        // PRQL uses braces for sort columns, - for descending
+        let sql = prql_to_sql("from df | sort {-x} | take 10").unwrap();
+        assert!(sql.contains("ORDER BY") && sql.contains("DESC"), "Expected ORDER BY DESC: {}", sql);
+    }
 }

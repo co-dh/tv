@@ -11,6 +11,7 @@ edition = "2024"
 [dependencies]
 polars = { version = "0.52", default-features = false, features = ["lazy", "csv", "parquet", "sql", "new_streaming", "pivot", "dtype-struct", "dtype-array", "dtype-i8", "dtype-i16", "dtype-u8", "dtype-u16", "temporal", "rows"] }
 polars-ops = { version = "0.52", features = ["cov"] }
+prqlc = "0.13"
 ratatui = "0.30.0-beta.0"
 anyhow = "1.0"
 chrono = "0.4"
