@@ -407,9 +407,8 @@ fn wait_bg(app: &mut AppContext) {
 
 /// Parse command string into Command object
 fn parse(line: &str, app: &mut AppContext) -> Option<Box<dyn command::Command>> {
-    let parts: Vec<&str> = line.splitn(2, ' ').collect();
-    let cmd = parts[0].to_lowercase();
-    let arg = parts.get(1).map(|s| s.trim()).unwrap_or("");
+    let (cmd, arg) = line.split_once(' ').map(|(c, a)| (c, a.trim())).unwrap_or((line, ""));
+    let cmd = cmd.to_lowercase();
 
     // Core commands (not in plugins)
     match cmd.as_str() {
@@ -434,14 +433,8 @@ fn parse(line: &str, app: &mut AppContext) -> Option<Box<dyn command::Command>> 
             return Some(Box::new(Xkey { col_names: cols }));
         }
         "rename" => {
-            let rename_parts: Vec<&str> = arg.splitn(2, ' ').collect();
-            if rename_parts.len() == 2 {
-                return Some(Box::new(RenameCol {
-                    old_name: rename_parts[0].to_string(),
-                    new_name: rename_parts[1].to_string(),
-                }));
-            }
-            return None;
+            let (old, new) = arg.split_once(' ')?;
+            return Some(Box::new(RenameCol { old_name: old.into(), new_name: new.into() }));
         }
         "goto" => return Some(Box::new(Goto { arg: arg.to_string() })),
         "goto_col" | "gotocol" => return Some(Box::new(GotoCol { arg: arg.to_string() })),

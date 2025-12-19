@@ -93,3 +93,9 @@ impl Default for Registry {
         Self::all()
     }
 }
+
+impl std::iter::FromIterator<Box<dyn Plugin>> for Registry {
+    fn from_iter<I: IntoIterator<Item = Box<dyn Plugin>>>(iter: I) -> Self {
+        Self { plugins: iter.into_iter().collect() }
+    }
+}
