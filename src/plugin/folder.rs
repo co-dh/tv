@@ -127,7 +127,7 @@ impl Command for DelFiles {
             format!("Delete '{}'? ", name)
         } else { format!("Delete {} files? ", n) };
         let result = picker::fzf(vec!["Yes".into(), "No".into()], &prompt)?;
-        app.needs_redraw = true;
+        app.needs_clear = true;
         match result {
             Some(s) if s == "Yes" => {
                 let mut deleted = 0;
@@ -179,7 +179,7 @@ impl Command for BatView {
         // Re-enable raw mode and re-enter alternate screen
         enable_raw_mode()?;
         execute!(stdout(), EnterAlternateScreen)?;
-        app.needs_redraw = true;  // force ratatui to redraw
+        app.needs_clear = true;  // force full redraw after external program
 
         match status {
             Ok(s) if s.success() => { app.msg(format!("Viewed: {}", self.path)); Ok(()) }

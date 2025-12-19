@@ -29,14 +29,15 @@ pub struct AppContext {
     next_id: usize,                // view id counter
     pub search: SearchState,       // search state
     pub bookmarks: Vec<usize>,     // bookmarked rows
-    pub info_mode: u8,             // info box: 0=off, 1=help, 2=help+prql, 3=commands
+    pub info_mode: u8,             // info box: 0=off, 1=help, 2=help+prql, 3=commands, 4=debug
     pub float_decimals: usize,     // decimal places for floats
     pub keymap: KeyMap,            // key bindings
     pub theme: Theme,              // color theme
     pub plugins: Registry,         // plugin registry
     pub bg_saver: Option<Receiver<String>>,      // background save status
     pub raw_save: bool,            // --raw: skip type detection on save
-    pub needs_redraw: bool,  // force full redraw (after leaving alternate screen)
+    pub needs_redraw: bool,  // redraw on next frame
+    pub needs_clear: bool,   // force full clear (after fzf/bat)
     pub needs_center: bool,  // center cursor after viewport update (for search)
 }
 
@@ -62,6 +63,7 @@ impl Default for AppContext {
             bg_saver: None,
             raw_save: false,
             needs_redraw: false,
+            needs_clear: false,
             needs_center: false,
         }
     }
@@ -151,10 +153,14 @@ impl AppContext {
             self.update();
 
             // Only draw when needed
-            if self.needs_redraw || self.needs_center {
+            if self.needs_redraw || self.needs_center || self.needs_clear {
                 if self.needs_center {
                     if let Some(v) = self.view_mut() { v.state.center_if_needed(); }
                     self.needs_center = false;
+                }
+                if self.needs_clear {
+                    tui.clear()?;  // reset buffer after external program
+                    self.needs_clear = false;
                 }
                 tui.draw(|frame| Renderer::render(frame, self))?;
                 self.needs_redraw = false;

@@ -32,7 +32,7 @@ impl Command for GotoCol {
     fn record(&self) -> bool { false }
 }
 
-/// Toggle info box: 0=off, 1=help, 2=help+prql, 3=system commands
+/// Toggle info box: 0=off, 1=help, 2=help+prql, 3=commands
 pub struct ToggleInfo;
 impl Command for ToggleInfo {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {

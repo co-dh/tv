@@ -379,10 +379,11 @@ impl Renderer {
 
         // Block with border and title
         let title = if stack_len > 1 { format!(" [#{}] ", stack_len) } else { " [tv] ".to_string() };
-        let border_style = Style::default().fg(to_rcolor(theme.info_border_fg));
+        let border_style = Style::default().fg(to_rcolor(theme.info_border_fg)).bg(RColor::Black);
         let block = Block::default()
             .borders(Borders::ALL)
             .border_style(border_style)
+            .style(Style::default().bg(RColor::Black))
             .title(title);
 
         // Build styled lines for content
@@ -397,13 +398,22 @@ impl Renderer {
             ])
         }).collect();
 
-        // Add PRQL if mode 2
+        // Add PRQL and SQL if mode 2
         if !prql_lines.is_empty() {
             lines.push(Line::from(Span::styled("─────", Style::default().fg(RColor::DarkGray))));
             for pl in prql_lines {
                 // Truncate long lines
                 let s = if pl.len() > 55 { format!("{}…", &pl[..54]) } else { pl.to_string() };
                 lines.push(Line::from(Span::styled(s, prql_style)));
+            }
+            // Show compiled SQL
+            if let Some(sql) = crate::util::pure::compile_prql(prql) {
+                lines.push(Line::from(Span::styled("─ SQL ─", Style::default().fg(RColor::DarkGray))));
+                let sql_style = Style::default().fg(RColor::Yellow);
+                for chunk in sql.as_bytes().chunks(55) {
+                    let s = String::from_utf8_lossy(chunk);
+                    lines.push(Line::from(Span::styled(s.to_string(), sql_style)));
+                }
             }
         }
 
@@ -432,8 +442,8 @@ impl Renderer {
         frame.render_widget(Clear, box_area);
 
         let title = if stack_len > 1 { format!(" [#{}] :cmd ", stack_len) } else { " :commands ".to_string() };
-        let border_style = Style::default().fg(to_rcolor(theme.info_border_fg));
-        let block = Block::default().borders(Borders::ALL).border_style(border_style).title(title);
+        let border_style = Style::default().fg(to_rcolor(theme.info_border_fg)).bg(RColor::Black);
+        let block = Block::default().borders(Borders::ALL).border_style(border_style).style(Style::default().bg(RColor::Black)).title(title);
 
         let cmd_style = Style::default().fg(to_rcolor(theme.info_key_fg));
         let desc_style = Style::default().fg(RColor::White);

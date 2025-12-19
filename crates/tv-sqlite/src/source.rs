@@ -71,6 +71,7 @@ fn cols_to_table(cols: Vec<(&str, ColType, Vec<Cell>)>) -> SimpleTable {
 
 /// Run command and return stdout
 fn run_cmd(cmd: &str, args: &[&str]) -> Result<String, std::io::Error> {
+    crate::dbg(&format!("CMD {} {}", cmd, args.join(" ")));
     let out = Command::new(cmd).args(args).output()?;
     Ok(String::from_utf8_lossy(&out.stdout).into())
 }

@@ -22,7 +22,7 @@ pub fn do_search(app: &mut AppContext) -> Result<()> {
     });
     if let Some((hint_list, col_name, is_folder)) = info {
         let expr_opt = picker::fzf(hint_list, "Search> ");
-        app.needs_redraw = true;
+        app.needs_clear = true;
         if let Ok(Some(expr)) = expr_opt {
             let prql_mode = theme::load_config_value("prql_hints").map(|v| v == "true").unwrap_or(false);
             let expr = if !prql_mode && is_plain_value(&expr) {
@@ -55,7 +55,7 @@ pub fn do_filter(app: &mut AppContext) -> Result<()> {
     });
     if let Some((hint_list, col_name, is_str, header)) = info {
         let expr_opt = picker::fzf_filter(hint_list, &col_name, is_str, Some(&header));
-        app.needs_redraw = true;
+        app.needs_clear = true;
         if let Ok(Some(expr)) = expr_opt {
             run(app, Box::new(Filter { expr }));
         }
@@ -73,7 +73,7 @@ pub fn do_command_picker(app: &mut AppContext) -> Result<()> {
         "select <cols>", "delcol <cols>", "sort <col>", "sort -<col>", "take <n>", "rename <old> <new>",
     ].iter().map(|s| s.to_string()).collect();
     let result = picker::fzf(cmd_list, ": ");
-    app.needs_redraw = true;
+    app.needs_clear = true;
     if let Ok(Some(selected)) = result {
         let cmd_str = selected.split_whitespace().next().unwrap_or(&selected);
         if let Some(cmd) = parse(cmd_str, app).or_else(|| parse(&selected, app)) {
@@ -88,7 +88,7 @@ pub fn do_goto_col(app: &mut AppContext) -> Result<()> {
     if let Some(view) = app.view() {
         let col_names = view.data.col_names();
         let result = picker::fzf(col_names.clone(), "Column: ");
-        app.needs_redraw = true;
+        app.needs_clear = true;
         if let Ok(Some(selected)) = result {
             if let Some(idx) = col_names.iter().position(|c| c == &selected) {
                 if let Some(v) = app.view_mut() {

@@ -61,8 +61,6 @@ pub fn run(app: &mut AppContext, cmd: Box<dyn Command>) {
 
 /// Dispatch action to view-specific plugin handler
 pub fn dispatch(app: &mut AppContext, action: &str) -> bool {
-    // Fetch lazy data before dispatch (plugin may need it)
-    if let Some(v) = app.view_mut() { fetch_lazy(v); }
     let name = match app.view() { Some(v) => v.name.clone(), None => return false };
     // mem::take to avoid borrow conflict: plugins.handle needs &mut app
     let plugins = std::mem::take(&mut app.plugins);
@@ -115,8 +113,6 @@ pub fn on_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
 
 /// Handle keymap command, return false to quit
 pub fn handle_cmd(app: &mut AppContext, cmd: &str) -> Result<bool> {
-    // Fetch data for source: paths before resolving commands
-    if let Some(v) = app.view_mut() { fetch_lazy(v); }
     // Try keyhandler for commands it can resolve (with context)
     if let Some(cmd_str) = keyhandler::to_cmd(app, cmd) {
         if let Some(c) = parse(&cmd_str, app) {
@@ -201,7 +197,7 @@ pub fn handle_cmd(app: &mut AppContext, cmd: &str) -> Result<bool> {
         "aggregate" => {
             if let Some(col) = app.view().and_then(|v| v.col_name(v.state.cc)) {
                 let result = picker::fzf(vec!["count".into(), "sum".into(), "mean".into(), "min".into(), "max".into(), "std".into()], "Aggregate: ");
-                app.needs_redraw = true;
+                app.needs_clear = true;
                 if let Ok(Some(func)) = result { run(app, Box::new(Agg { col, func })); }
             }
         }
@@ -285,7 +281,6 @@ fn print_status(app: &mut AppContext) {
             .map(|kb| kb / 1024).unwrap_or(0)
     }
     if let Some(view) = app.view_mut() {
-        fetch_lazy(view);
         let col_name = view.col_name(view.state.cc).unwrap_or_default();
         let df_rows = view.data.rows();
         let keys = view.col_separator.unwrap_or(0);

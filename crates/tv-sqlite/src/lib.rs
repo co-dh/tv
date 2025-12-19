@@ -3,6 +3,16 @@
 
 mod source;
 
+/// Debug log to ~/.tv/debug.log
+fn dbg(msg: &str) {
+    use std::io::Write;
+    let Some(home) = dirs::home_dir() else { return };
+    let log = home.join(".tv").join("debug.log");
+    let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(log) else { return };
+    let ts = chrono::Local::now().format("%H:%M:%S%.3f");
+    let _ = writeln!(f, "[{}] {}", ts, msg);
+}
+
 use rusqlite::ffi;
 use rusqlite::vtab::{read_only_module, Context, CreateVTab, IndexInfo, VTab, VTabConfig, VTabConnection, VTabCursor, VTabKind, Values};
 use rusqlite::{Connection, Error as SqlError, Result as SqlResult};
@@ -80,10 +90,14 @@ fn get_source(path: &str) -> Option<Arc<SimpleTable>> {
 
     // Return cached if fresh
     if let Some(entry) = cache.get(path) {
-        if entry.ts.elapsed() < ttl { return Some(entry.table.clone()); }
+        if entry.ts.elapsed() < ttl {
+            dbg(&format!("SRC CACHE HIT {} {}x{}", path, entry.table.rows(), entry.table.cols()));
+            return Some(entry.table.clone());
+        }
     }
 
     // Generate new and cache
+    dbg(&format!("SRC CACHE MISS {}", path));
     let table = Arc::new(source::query(path)?);
     cache.insert(path.to_string(), CachedSource { table: table.clone(), ts: std::time::Instant::now() });
     Some(table)
@@ -177,15 +191,18 @@ pub extern "C" fn tv_query(sql: *const c_char, path: *const c_char) -> TableHand
     if sql.is_null() || path.is_null() { return std::ptr::null_mut(); }
     let sql = unsafe { from_c_str(sql) };
     let path = unsafe { from_c_str(path) };
+    dbg(&format!("QUERY path={} sql={}", path, sql));
 
     // Check query cache first
     if let Ok(guard) = query_cache().lock() {
         if let Some(ref e) = *guard {
             if e.path == path && e.sql == sql {
+                dbg(&format!("QCACHE HIT {}x{}", e.result.rows(), e.result.cols()));
                 return e.result.as_ref() as *const SimpleTable as TableHandle;
             }
         }
     }
+    dbg("QCACHE MISS");
 
     // Get source table
     let table: Arc<SimpleTable> = if path.starts_with("source:") {
@@ -194,9 +211,11 @@ pub extern "C" fn tv_query(sql: *const c_char, path: *const c_char) -> TableHand
         let id = match parse_path(&path) { Some(id) => id, None => return std::ptr::null_mut() };
         match get_registered(id) { Some(t) => t, None => return std::ptr::null_mut() }
     };
+    dbg(&format!("SOURCE {}x{}", table.rows(), table.cols()));
 
     // Execute SQL and cache result
-    let result = match exec_sql(&table, &sql) { Ok(r) => r, Err(_) => return std::ptr::null_mut() };
+    let result = match exec_sql(&table, &sql) { Ok(r) => r, Err(e) => { dbg(&format!("SQL ERR {}", e)); return std::ptr::null_mut(); } };
+    dbg(&format!("RESULT {}x{}", result.rows(), result.cols()));
     if let Ok(mut guard) = query_cache().lock() {
         let entry = QueryCacheEntry { path, sql, result: Box::new(result) };
         let ptr = entry.result.as_ref() as *const SimpleTable as TableHandle;
