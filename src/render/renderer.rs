@@ -70,6 +70,7 @@ impl Renderer {
         let table = view.data.as_ref();
         let total_rows = view.rows();  // use disk_rows for parquet
         let is_correlation = view.kind == ViewKind::Corr;
+        let dcols = view.display_cols();  // column indices in display order
 
         // Calculate column widths if needed (based on content, don't extend last col)
         if view.state.need_widths() {
@@ -94,11 +95,11 @@ impl Renderer {
         } else { 0 };
         let screen_width = area.width.saturating_sub(if row_num_width > 0 { row_num_width + 1 } else { 0 }) as i32;
 
-        // Calculate xs - x position for each column (qtv style)
-        let mut xs: Vec<i32> = Vec::with_capacity(table.cols() + 1);
+        // Calculate xs - x position for each column in display order
+        let mut xs: Vec<i32> = Vec::with_capacity(dcols.len() + 1);
         xs.push(0);
-        for col_idx in 0..table.cols() {
-            let col_width = state.col_widths.get(col_idx).copied().unwrap_or(10) as i32;
+        for &data_idx in &dcols {
+            let col_width = state.col_widths.get(data_idx).copied().unwrap_or(10) as i32;
             xs.push(*xs.last().unwrap() + col_width + 1);
         }
 
@@ -115,14 +116,14 @@ impl Renderer {
         let col_sep = view.col_separator;
 
         // Render headers
-        Self::render_headers_xs(frame, table, state, &xs, screen_width, row_num_width, selected_cols, col_sep, theme, area);
+        Self::render_headers_xs(frame, table, state, &dcols, &xs, screen_width, row_num_width, selected_cols, col_sep, theme, area);
 
         // Render data rows (for lazy parquet, df_idx = row_idx - lazy_offset)
         for row_idx in state.r0..end_row {
             let df_idx = row_idx - lazy_offset;
             if df_idx >= table.rows() { break; }  // fetched window exhausted
             let screen_row = (row_idx - state.r0 + 1) as u16;
-            Self::render_row_xs(frame, table, df_idx, row_idx, state, &xs, screen_width, row_num_width, is_correlation, selected_cols, selected_rows, col_sep, decimals, theme, area, screen_row);
+            Self::render_row_xs(frame, table, df_idx, row_idx, state, &dcols, &xs, screen_width, row_num_width, is_correlation, selected_cols, selected_rows, col_sep, decimals, theme, area, screen_row);
         }
 
         // Draw separator bar if set (stop before tabs/status)
@@ -151,11 +152,11 @@ impl Renderer {
         }
 
         // Footer header (aligned with table)
-        Self::render_header_footer(frame, table, state, &xs, screen_width, row_num_width, theme, area, show_tabs);
+        Self::render_header_footer(frame, table, state, &dcols, &xs, screen_width, row_num_width, theme, area, show_tabs);
     }
 
-    /// Render column headers
-    fn render_headers_xs(frame: &mut Frame, table: &dyn Table, state: &TableState, xs: &[i32], screen_width: i32, row_num_width: u16, selected_cols: &HashSet<usize>, _col_sep: Option<usize>, theme: &Theme, area: Rect) {
+    /// Render column headers (dcols = display order of data column indices)
+    fn render_headers_xs(frame: &mut Frame, table: &dyn Table, state: &TableState, dcols: &[usize], xs: &[i32], screen_width: i32, row_num_width: u16, selected_cols: &HashSet<usize>, _col_sep: Option<usize>, theme: &Theme, area: Rect) {
         let buf = frame.buffer_mut();
         let header_style = Style::default().bg(to_rcolor(theme.header_bg)).fg(to_rcolor(theme.header_fg)).add_modifier(Modifier::BOLD);
 
@@ -174,21 +175,20 @@ impl Renderer {
             x_pos += row_num_width + 1;
         }
 
-        for col_idx in 0..table.cols() {
-            let col_name = table.col_name(col_idx).unwrap_or_default();
-            let x = xs[col_idx];
-            let next_x = xs.get(col_idx + 1).copied().unwrap_or(x);
+        for (disp_idx, &data_idx) in dcols.iter().enumerate() {
+            let col_name = table.col_name(data_idx).unwrap_or_default();
+            let x = xs[disp_idx];
+            let next_x = xs.get(disp_idx + 1).copied().unwrap_or(x);
             if next_x <= 0 { continue; }
             if x >= screen_width { break; }
 
-            let is_current = col_idx == state.cc;
-            let is_selected = selected_cols.contains(&col_idx);
-            let col_width = state.col_widths.get(col_idx).copied().unwrap_or(10) as usize;
+            let is_current = disp_idx == state.cc;
+            let is_selected = selected_cols.contains(&disp_idx);
+            let col_width = state.col_widths.get(data_idx).copied().unwrap_or(10) as usize;
 
             let style = if is_current {
                 Style::default().bg(to_rcolor(theme.cursor_bg)).fg(to_rcolor(theme.cursor_fg)).add_modifier(Modifier::BOLD)
             } else if is_selected {
-                // Selected column: cyan foreground
                 Style::default().bg(to_rcolor(theme.header_bg)).fg(to_rcolor(theme.select_fg)).add_modifier(Modifier::BOLD)
             } else { header_style };
 
@@ -209,9 +209,8 @@ impl Renderer {
         }
     }
 
-    /// Render a single data row
-    // df_idx: index into dataframe, row_idx: actual row number in file (for display/cursor)
-    fn render_row_xs(frame: &mut Frame, table: &dyn Table, df_idx: usize, row_idx: usize, state: &TableState, xs: &[i32], screen_width: i32, row_num_width: u16, is_correlation: bool, selected_cols: &HashSet<usize>, selected_rows: &HashSet<usize>, _col_sep: Option<usize>, decimals: usize, theme: &Theme, area: Rect, screen_row: u16) {
+    /// Render a single data row (dcols = display order of data column indices)
+    fn render_row_xs(frame: &mut Frame, table: &dyn Table, df_idx: usize, row_idx: usize, state: &TableState, dcols: &[usize], xs: &[i32], screen_width: i32, row_num_width: u16, is_correlation: bool, selected_cols: &HashSet<usize>, selected_rows: &HashSet<usize>, _col_sep: Option<usize>, decimals: usize, theme: &Theme, area: Rect, screen_row: u16) {
         let buf = frame.buffer_mut();
         let is_cur_row = row_idx == state.cr;
         let is_sel_row = selected_rows.contains(&row_idx);
@@ -234,21 +233,21 @@ impl Renderer {
             x_pos += row_num_width + 1;
         }
 
-        for col_idx in 0..table.cols() {
-            let x = xs[col_idx];
-            let next_x = xs.get(col_idx + 1).copied().unwrap_or(x);
+        for (disp_idx, &data_idx) in dcols.iter().enumerate() {
+            let x = xs[disp_idx];
+            let next_x = xs.get(disp_idx + 1).copied().unwrap_or(x);
             if next_x <= 0 { continue; }
             if x >= screen_width { break; }
 
-            let is_cur_col = col_idx == state.cc;
+            let is_cur_col = disp_idx == state.cc;
             let is_cur_cell = is_cur_row && is_cur_col;
-            let is_sel = selected_cols.contains(&col_idx);
+            let is_sel = selected_cols.contains(&disp_idx);
 
-            let col_width = state.col_widths.get(col_idx).copied().unwrap_or(10) as usize;
-            let value = Self::format_cell(table, col_idx, df_idx, decimals);
+            let col_width = state.col_widths.get(data_idx).copied().unwrap_or(10) as usize;
+            let value = Self::format_cell(table, data_idx, df_idx, decimals);
 
             // Correlation color
-            let corr_color = if is_correlation && col_idx > 0 { Self::correlation_color(&value) } else { None };
+            let corr_color = if is_correlation && disp_idx > 0 { Self::correlation_color(&value) } else { None };
 
             let style = if is_cur_cell {
                 Style::default().bg(to_rcolor(theme.cursor_bg)).fg(to_rcolor(theme.cursor_fg))
@@ -261,7 +260,6 @@ impl Renderer {
             } else if is_sel_row {
                 Style::default().fg(to_rcolor(theme.row_num_fg))
             } else if is_sel {
-                // Selected column: cyan foreground
                 Style::default().fg(to_rcolor(theme.select_fg))
             } else if let Some(c) = corr_color {
                 Style::default().fg(to_rcolor(c))
@@ -271,7 +269,7 @@ impl Renderer {
 
             let start_x = x.max(0) as u16 + x_pos;
             // Right-align numeric columns
-            let is_num = table.col_type(col_idx).is_numeric();
+            let is_num = table.col_type(data_idx).is_numeric();
             let display = if is_num { format!("{:>width$}", value, width = col_width) }
                          else { format!("{:width$}", value, width = col_width) };
 
@@ -484,7 +482,7 @@ impl Renderer {
     }
 
     /// Render column header above tabs/status (footer header) - aligned with table
-    fn render_header_footer(frame: &mut Frame, table: &dyn Table, state: &TableState, xs: &[i32], screen_width: i32, row_num_width: u16, theme: &Theme, area: Rect, show_tabs: bool) {
+    fn render_header_footer(frame: &mut Frame, table: &dyn Table, state: &TableState, dcols: &[usize], xs: &[i32], screen_width: i32, row_num_width: u16, theme: &Theme, area: Rect, show_tabs: bool) {
         let row = area.height.saturating_sub(if show_tabs { 3 } else { 2 });
         if row == 0 { return; }
         let buf = frame.buffer_mut();
@@ -492,13 +490,13 @@ impl Renderer {
         // Fill row
         for x in 0..area.width { buf[(x, row)].set_style(style); buf[(x, row)].set_char(' '); }
         let x_pos = if row_num_width > 0 { row_num_width + 1 } else { 0 };
-        for col_idx in 0..table.cols() {
-            let col_name = table.col_name(col_idx).unwrap_or_default();
-            let x = xs.get(col_idx).copied().unwrap_or(0);
-            let next_x = xs.get(col_idx + 1).copied().unwrap_or(x);
+        for (disp_idx, &data_idx) in dcols.iter().enumerate() {
+            let col_name = table.col_name(data_idx).unwrap_or_default();
+            let x = xs.get(disp_idx).copied().unwrap_or(0);
+            let next_x = xs.get(disp_idx + 1).copied().unwrap_or(x);
             if next_x <= 0 { continue; }
             if x >= screen_width { break; }
-            let col_width = state.col_widths.get(col_idx).copied().unwrap_or(10) as usize;
+            let col_width = state.col_widths.get(data_idx).copied().unwrap_or(10) as usize;
             let start_x = x.max(0) as u16 + x_pos;
             let display = format!("{:width$}", col_name, width = col_width);
             for (i, ch) in display.chars().take(col_width).enumerate() {
