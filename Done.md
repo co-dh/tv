@@ -233,3 +233,12 @@
 - Key helpers: toggle_keys, freq_cmd, xkey_cmd
 - Refactored transform.rs: DelCol, Filter, FilterIn, Xkey use pure functions
 - Refactored keyhandler.rs: freq, toggle_key use pure functions
+
+## Elm Architecture (Model-View-Update)
+- Following ratatui tutorial pattern (https://ratatui.rs/tutorials/counter-app/basic-app/)
+- App::run() - main event loop in AppContext
+- App::draw() - render state to terminal
+- App::handle_events() - poll and process input
+- App::update() - process background tasks
+- main() now calls app.run(&mut tui, on_key)
+- Simplified main.rs by ~40 lines
