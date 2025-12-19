@@ -5,6 +5,7 @@ use crate::app::AppContext;
 use crate::data::table::{Cell, ColType, SimpleTable, BoxTable};
 use crate::data::dynload;
 use crate::utils::unquote;
+use crate::util::pure;
 use crate::command::Command;
 use crate::command::executor::CommandExecutor;
 use crate::command::transform::FilterIn;
@@ -96,11 +97,13 @@ impl Command for Frequency {
              v.key_cols(), v.filter.clone(), v.prql.clone())
         };
 
-        // Use plugin for freq
-        let plugin = dynload::get().ok_or_else(|| anyhow!("polars plugin not loaded"))?;
-        let grp = self.col_names.join(", ");
-        let w = filter.as_deref().unwrap_or("TRUE");
-        let t = plugin.freq(&path, &grp, w).ok_or_else(|| anyhow!("freq query failed"))?;
+        // Build PRQL for freq: group by cols, count, sort desc
+        let plugin = dynload::get_for(&path).ok_or_else(|| anyhow!("plugin not loaded"))?;
+        let grp_cols = self.col_names.iter().map(|c| format!("`{}`", c)).collect::<Vec<_>>().join(", ");
+        let filter_clause = filter.as_deref().map(|f| format!(" | filter {}", f)).unwrap_or_default();
+        let prql = format!("from df{} | group {{{}}} (aggregate {{Cnt = count this}}) | sort {{-Cnt}}", filter_clause, grp_cols);
+        let sql = pure::compile_prql(&prql).ok_or_else(|| anyhow!("prql compile failed"))?;
+        let t = plugin.query(&sql, &path).ok_or_else(|| anyhow!("freq query failed"))?;
         let result = add_pct_bar(dynload::to_box_table(&t));
 
         // Create freq view

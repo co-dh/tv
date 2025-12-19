@@ -3,7 +3,9 @@
 use crate::app::AppContext;
 use crate::command::Command;
 use crate::data::dynload;
+use crate::data::table::{Cell, Table};
 use crate::state::ViewState;
+use crate::util::pure;
 use anyhow::{anyhow, Result};
 use std::path::Path;
 
@@ -28,13 +30,19 @@ impl Command for From {
         // Check if parquet for lazy loading
         let is_pq = p.ends_with(".parquet") || p.ends_with(".pq");
         let view = if is_pq {
-            // Parquet: get count and schema, data fetched lazily
-            let rows = plugin.count(p);
-            let cols = plugin.schema(p);
+            // Parquet: get count and schema, data fetched lazily via PRQL
+            let count_sql = pure::compile_prql("from df | aggregate {n = count this}").ok_or_else(|| anyhow!("prql compile failed"))?;
+            let rows = plugin.query(&count_sql, p)
+                .and_then(|t| if t.rows() > 0 { Some(t.cell(0, 0)) } else { None })
+                .and_then(|c| if let Cell::Int(n) = c { Some(n as usize) } else { None })
+                .unwrap_or(0);
+            let schema_sql = pure::compile_prql("from df | take 1").ok_or_else(|| anyhow!("prql compile failed"))?;
+            let cols = plugin.query(&schema_sql, p).map(|t| t.col_names()).unwrap_or_default();
             ViewState::new_parquet(id, &name, p, rows, cols)
         } else {
-            // CSV/other: fetch all rows into memory
-            let t = plugin.fetch(p, 0, 1_000_000).ok_or_else(|| anyhow!("Failed to load: {}", p))?;
+            // CSV/other: fetch all rows into memory via PRQL
+            let sql = pure::compile_prql("from df | take 1000000").ok_or_else(|| anyhow!("prql compile failed"))?;
+            let t = plugin.query(&sql, p).ok_or_else(|| anyhow!("Failed to load: {}", p))?;
             let table = dynload::to_box_table(&t);
             ViewState::new(id, &name, table, Some(p.to_string()))
         };

@@ -2,6 +2,7 @@
 
 use crate::app::AppContext;
 use crate::utils::unquote;
+use crate::util::pure;
 use crate::command::Command;
 use crate::command::executor::CommandExecutor;
 use crate::command::transform::Xkey;
@@ -73,10 +74,11 @@ impl Command for Metadata {
     fn to_str(&self) -> String { "meta".to_string() }
 }
 
-/// Compute column metadata via SQL - returns BoxTable
+/// Compute column metadata via PRQL - returns BoxTable
 fn compute_meta(plugin: &'static dynload::Plugin, path: &str) -> Result<crate::data::table::BoxTable> {
-    // Get column names
-    let cols = plugin.schema(path);
+    // Get column names via PRQL schema query
+    let schema_sql = pure::compile_prql("from df | take 1").ok_or_else(|| anyhow!("prql compile failed"))?;
+    let cols = plugin.query(&schema_sql, path).map(|t| t.col_names()).unwrap_or_default();
     if cols.is_empty() { return Err(anyhow!("empty schema")); }
 
     // Build SQL for each column's stats: count, distinct, null%, min, max

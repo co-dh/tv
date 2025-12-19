@@ -11,7 +11,7 @@ use crate::data::dynload;
 use crate::data::table::Table;
 use crate::input::handler::{dispatch, run};
 use crate::input::parser::parse;
-use crate::util::{picker, theme};
+use crate::util::{picker, pure, theme};
 
 /// Search with fzf (/)
 pub fn do_search(app: &mut AppContext) -> Result<()> {
@@ -147,15 +147,21 @@ pub fn prompt(_app: &mut AppContext, prompt_str: &str) -> Result<Option<String>>
     }
 }
 
-/// Generate filter hints from table data
+/// Generate filter hints from table data via PRQL distinct
 pub fn hints(table: &dyn Table, col_name: &str, _row: usize, file: Option<&str>) -> Vec<String> {
     let mut items = Vec::new();
 
-    // Try to get hints from plugin for parquet files
+    // Try PRQL distinct for parquet files
     if let Some(path) = file.filter(|f| f.ends_with(".parquet")) {
-        if let Some(plugin) = dynload::get() {
-            if let Some(vals) = plugin.distinct(path, col_name) {
-                items.extend(vals.into_iter().filter(|v| v != "null"));
+        let prql = format!("from df | select {{`{}`}} | group {{`{}`}} () | take 500", col_name, col_name);
+        if let Some(sql) = pure::compile_prql(&prql) {
+            if let Some(plugin) = dynload::get() {
+                if let Some(t) = plugin.query(&sql, path) {
+                    for r in 0..t.rows() {
+                        let v = t.cell(r, 0).format(10);
+                        if v != "null" { items.push(unquote(&v)); }
+                    }
+                }
             }
         }
     } else {
@@ -165,9 +171,7 @@ pub fn hints(table: &dyn Table, col_name: &str, _row: usize, file: Option<&str>)
             let mut seen = std::collections::HashSet::new();
             for r in 0..table.rows().min(1000) {
                 let v = table.cell(r, idx).format(10);
-                if v != "null" && seen.insert(v.clone()) {
-                    items.push(unquote(&v));
-                }
+                if v != "null" && seen.insert(v.clone()) { items.push(unquote(&v)); }
             }
         }
     }

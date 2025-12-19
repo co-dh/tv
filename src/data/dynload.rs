@@ -50,46 +50,6 @@ impl Plugin {
         if h.is_null() { None } else { Some(PluginTable { h, vt: &self.vt }) }
     }
 
-    /// Query helper - SELECT * with LIMIT/OFFSET
-    pub fn fetch(&self, path: &str, offset: usize, limit: usize) -> Option<PluginTable<'_>> {
-        self.query(&format!("SELECT * FROM df LIMIT {} OFFSET {}", limit, offset), path)
-    }
-
-    /// Query helper - SELECT * WHERE with LIMIT/OFFSET
-    pub fn fetch_where(&self, path: &str, filter: &str, offset: usize, limit: usize) -> Option<PluginTable<'_>> {
-        self.query(&format!("SELECT * FROM df WHERE {} LIMIT {} OFFSET {}", filter, limit, offset), path)
-    }
-
-    /// Query helper - COUNT(*)
-    pub fn count(&self, path: &str) -> usize {
-        self.query("SELECT count(*) as cnt FROM df", path)
-            .and_then(|t| if t.rows() > 0 { Some(t.cell(0, 0)) } else { None })
-            .and_then(|c| if let Cell::Int(n) = c { Some(n as usize) } else { None })
-            .unwrap_or(0)
-    }
-
-    /// Query helper - frequency table
-    pub fn freq(&self, path: &str, cols: &str, filter: &str) -> Option<PluginTable<'_>> {
-        let w = if filter.is_empty() { "TRUE" } else { filter };
-        self.query(&format!(
-            "SELECT {}, count(*) as Cnt FROM df WHERE {} GROUP BY {} ORDER BY Cnt DESC",
-            cols, w, cols
-        ), path)
-    }
-
-    /// Get schema (column names)
-    pub fn schema(&self, path: &str) -> Vec<String> {
-        self.query("SELECT * FROM df LIMIT 0", path)
-            .map(|t| t.col_names())
-            .unwrap_or_default()
-    }
-
-    /// Get distinct values for column (for hints)
-    pub fn distinct(&self, path: &str, col: &str) -> Option<Vec<String>> {
-        let t = self.query(&format!("SELECT DISTINCT \"{}\" FROM df LIMIT 500", col), path)?;
-        Some((0..t.rows()).map(|r| t.cell(r, 0).format(10)).collect())
-    }
-
     /// Register memory table (sqlite only)
     fn register(&self, id: usize, names: &[*const c_char], types: &[u8], rows: &[*const CCell], n_rows: usize, n_cols: usize) {
         if let Some(f) = self.register_fn {

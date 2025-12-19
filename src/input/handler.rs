@@ -71,14 +71,18 @@ pub fn dispatch(app: &mut AppContext, action: &str) -> bool {
     if let Some(cmd) = cmd { run(app, cmd); true } else { false }
 }
 
-/// Fetch visible rows for lazy parquet view (via plugin)
+/// Fetch visible rows for lazy parquet view (via plugin + PRQL)
 pub fn fetch_lazy(view: &mut crate::state::ViewState) {
     if let ViewSource::Parquet { ref path, .. } = view.source {
         let offset = view.state.r0;
         if let Some(plugin) = dynload::get_for(path) {
-            let w = view.filter.as_deref().unwrap_or("TRUE");
-            if let Some(t) = plugin.fetch_where(path, w, offset, 50) {
-                view.data = dynload::to_box_table(&t);
+            // Use PRQL chain with take range (1-based)
+            let (s, e) = (offset + 1, offset + 51);
+            let prql = format!("{} | take {}..{}", view.prql, s, e);
+            if let Some(sql) = crate::util::pure::compile_prql(&prql) {
+                if let Some(t) = plugin.query(&sql, path) {
+                    view.data = dynload::to_box_table(&t);
+                }
             }
         }
     }
