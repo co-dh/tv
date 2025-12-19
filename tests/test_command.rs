@@ -305,3 +305,16 @@ fn test_lr_filter_extension_open() {
     // After enter, should open parquet (show a, b columns)
     assert!(out.contains("a") || out.contains("b"), "Should open parquet after filter: {}", out);
 }
+
+// Test sort on folder view (uses sqlite vtable)
+#[test]
+fn test_lr_sort_size() {
+    // lr tests/data, move to size column, sort ascending
+    let out = run_keys(":lr tests/data<ret><right>[", "tests/data/basic.csv");
+    // First file should be small (unsorted.csv or basic.csv are small)
+    let lines: Vec<&str> = out.lines().collect();
+    assert!(lines.len() > 3, "Should have data rows: {}", out);
+    // Line 3 is first data row (after header, col names)
+    let first_row = lines.get(2).unwrap_or(&"");
+    assert!(first_row.contains("csv"), "Small file should be first after sort: {}", out);
+}
