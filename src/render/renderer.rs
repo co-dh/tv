@@ -790,4 +790,47 @@ mod tests {
         let b_pos = content2.find("b.csv");
         assert!(c_pos < a_pos && a_pos < b_pos, "After sort should be c < a < b");
     }
+
+    #[test]
+    fn test_no_quotes_in_strings() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+        use crate::state::{ViewState, ViewKind};
+        use crate::app::AppContext;
+        use std::collections::HashSet;
+        use crate::theme::Theme;
+
+        // Load sqlite plugin
+        let _ = crate::dynload::load_sqlite("./target/release/libtv_sqlite.so");
+
+        // Create data with string values
+        let table = SimpleTable::new(
+            vec!["name".into(), "value".into()],
+            vec![ColType::Str, ColType::Str],
+            vec![
+                vec![TCell::Str("hello".into()), TCell::Str("world".into())],
+                vec![TCell::Str("foo".into()), TCell::Str("bar".into())],
+            ]
+        );
+
+        let mut app = AppContext::default();
+        app.stack.push(ViewState::new_memory(0, "test", ViewKind::Table, Box::new(table)));
+
+        let backend = TestBackend::new(80, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| {
+            let view = app.view_mut().unwrap();
+            Renderer::render_table(frame, view, frame.area(), &HashSet::new(), &HashSet::new(), 3, &Theme::default(), false);
+        }).unwrap();
+
+        let buf = terminal.backend().buffer().clone();
+        let content = (0..5).map(|y| (0..30).map(|x| buf.cell((x, y)).unwrap().symbol().chars().next().unwrap_or(' ')).collect::<String>()).collect::<Vec<_>>().join("\n");
+        eprintln!("Content:\n{}", content);
+
+        // Should NOT have quotes around strings
+        assert!(!content.contains("\"hello\""), "Should not have quotes: {}", content);
+        assert!(!content.contains("\"world\""), "Should not have quotes: {}", content);
+        assert!(content.contains("hello"), "Should have hello: {}", content);
+        assert!(content.contains("world"), "Should have world: {}", content);
+    }
 }

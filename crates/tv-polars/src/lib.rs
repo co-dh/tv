@@ -105,6 +105,8 @@ pub extern "C" fn tv_cell(h: TableHandle, row: usize, col: usize) -> CCell {
             AnyValue::UInt64(n) => CCell { typ: CellType::Int, i: n as i64, f: 0.0, s: std::ptr::null_mut() },
             AnyValue::Float32(f) => CCell { typ: CellType::Float, i: 0, f: f as f64, s: std::ptr::null_mut() },
             AnyValue::Float64(f) => CCell { typ: CellType::Float, i: 0, f, s: std::ptr::null_mut() },
+            AnyValue::String(s) => CCell { typ: CellType::Str, i: 0, f: 0.0, s: to_c_str(s) },
+            AnyValue::StringOwned(s) => CCell { typ: CellType::Str, i: 0, f: 0.0, s: to_c_str(s.as_str()) },
             _ => CCell { typ: CellType::Str, i: 0, f: 0.0, s: to_c_str(&v.to_string()) },
         })
         .unwrap_or_default()
