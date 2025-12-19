@@ -14,9 +14,8 @@ static SQLITE: OnceLock<Plugin> = OnceLock::new();
 pub struct Plugin {
     _lib: Library,
     vt: PluginVtable,
-    // Optional register/unregister for memory tables (sqlite)
+    // Optional register for memory tables (sqlite)
     register_fn: Option<extern "C" fn(usize, *const *const c_char, *const u8, *const *const CCell, usize, usize)>,
-    unregister_fn: Option<extern "C" fn(usize)>,
 }
 
 unsafe impl Send for Plugin {}
@@ -31,12 +30,10 @@ impl Plugin {
         if vt.version != PLUGIN_API_VERSION {
             anyhow::bail!("plugin version {} != {}", vt.version, PLUGIN_API_VERSION);
         }
-        // Try to load optional register/unregister symbols
+        // Try to load optional register symbol
         let register_fn = unsafe { lib.get::<extern "C" fn(usize, *const *const c_char, *const u8, *const *const CCell, usize, usize)>(b"tv_register") }
             .ok().map(|s| *s);
-        let unregister_fn = unsafe { lib.get::<extern "C" fn(usize)>(b"tv_unregister") }
-            .ok().map(|s| *s);
-        Ok(Self { _lib: lib, vt, register_fn, unregister_fn })
+        Ok(Self { _lib: lib, vt, register_fn })
     }
 
     /// Check if plugin supports memory table registration
@@ -55,11 +52,6 @@ impl Plugin {
         if let Some(f) = self.register_fn {
             f(id, names.as_ptr(), types.as_ptr(), rows.as_ptr(), n_rows, n_cols);
         }
-    }
-
-    /// Unregister memory table (sqlite only)
-    fn unregister(&self, id: usize) {
-        if let Some(f) = self.unregister_fn { f(id); }
     }
 }
 
@@ -86,9 +78,9 @@ pub fn get() -> Option<&'static Plugin> { POLARS.get() }
 /// Get sqlite plugin
 pub fn get_sqlite() -> Option<&'static Plugin> { SQLITE.get() }
 
-/// Get plugin for path (routes memory: to sqlite, files to polars)
+/// Get plugin for path (routes memory:/source: to sqlite, files to polars)
 pub fn get_for(path: &str) -> Option<&'static Plugin> {
-    if path.starts_with("memory:") { SQLITE.get() } else { POLARS.get() }
+    if path.starts_with("memory:") || path.starts_with("source:") { SQLITE.get() } else { POLARS.get() }
 }
 
 /// Register in-memory table with sqlite plugin for querying
@@ -138,11 +130,6 @@ pub fn register_table(id: usize, t: &dyn Table) -> Option<String> {
     // Register with sqlite
     p.register(id, &name_ptrs, &types, &row_ptrs, rows, cols);
     Some(format!("memory:{}", id))
-}
-
-/// Unregister table from sqlite plugin
-pub fn unregister_table(id: usize) {
-    if let Some(p) = SQLITE.get() { p.unregister(id); }
 }
 
 /// Table from plugin query result

@@ -26,12 +26,12 @@ impl Plugin for CorrPlugin {
 
     fn parse(&self, cmd: &str, _arg: &str) -> Option<Box<dyn Command>> {
         if cmd != "corr" { return None; }
-        Some(Box::new(Correlation { selected_cols: vec![] }))
+        Some(Box::new(Correlation))
     }
 }
 
 /// Correlation matrix for numeric columns (stub)
-pub struct Correlation { pub selected_cols: Vec<usize> }
+pub struct Correlation;
 
 impl Command for Correlation {
     fn exec(&mut self, _app: &mut AppContext) -> Result<()> {

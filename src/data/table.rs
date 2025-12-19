@@ -105,54 +105,6 @@ impl SimpleTable {
     pub fn empty() -> Self {
         Self { names: vec![], types: vec![], data: vec![] }
     }
-
-    /// Append rows from another table (for streaming)
-    pub fn append(&mut self, other: &dyn Table) {
-        for r in 0..other.rows() {
-            let row: Vec<Cell> = (0..other.cols()).map(|c| other.cell(r, c)).collect();
-            self.data.push(row);
-        }
-    }
-
-    /// Build table from columns (columnar layout)
-    pub fn from_cols(cols: Vec<Col>) -> Self {
-        if cols.is_empty() { return Self::empty(); }
-        let n_rows = cols[0].len();
-        let names: Vec<String> = cols.iter().map(|c| c.name.clone()).collect();
-        let types: Vec<ColType> = cols.iter().map(|c| c.typ.clone()).collect();
-        let data: Vec<Vec<Cell>> = (0..n_rows)
-            .map(|r| cols.iter().map(|c| c.cells.get(r).cloned().unwrap_or(Cell::Null)).collect())
-            .collect();
-        Self { names, types, data }
-    }
-}
-
-/// Column for building SimpleTable
-pub struct Col {
-    pub name: String,
-    pub typ: ColType,
-    pub cells: Vec<Cell>,
-}
-
-impl Col {
-    /// String column
-    pub fn str(name: &str, data: Vec<String>) -> Self {
-        Self { name: name.into(), typ: ColType::Str, cells: data.into_iter().map(Cell::Str).collect() }
-    }
-    /// Int column
-    pub fn int(name: &str, data: Vec<i64>) -> Self {
-        Self { name: name.into(), typ: ColType::Int, cells: data.into_iter().map(Cell::Int).collect() }
-    }
-    /// Float column
-    pub fn float(name: &str, data: Vec<f64>) -> Self {
-        Self { name: name.into(), typ: ColType::Float, cells: data.into_iter().map(Cell::Float).collect() }
-    }
-    /// Bool column
-    pub fn bool(name: &str, data: Vec<bool>) -> Self {
-        Self { name: name.into(), typ: ColType::Bool, cells: data.into_iter().map(Cell::Bool).collect() }
-    }
-    /// Length of column
-    pub fn len(&self) -> usize { self.cells.len() }
 }
 
 impl Table for SimpleTable {

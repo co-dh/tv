@@ -1,13 +1,5 @@
 //! Utility functions shared across modules.
 
-use crate::data::table::ColType;
-
-/// Check if ColType is numeric (int/float)
-#[must_use]
-pub fn is_numeric(ct: &ColType) -> bool {
-    matches!(ct, ColType::Int | ColType::Float)
-}
-
 /// Format number with commas (1234567 -> "1,234,567")
 #[must_use]
 pub fn commify(s: &str) -> String {

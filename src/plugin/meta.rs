@@ -59,7 +59,7 @@ impl Command for Metadata {
         // Get view info before mutation
         let (parent_rows, parent_name, path, parent_prql) = {
             let v = app.req()?;
-            (v.rows(), v.name.clone(), v.path().to_string(), v.prql.clone())
+            (v.rows(), v.name.clone(), v.path.clone().unwrap_or_default(), v.prql.clone())
         };
 
         // Get column metadata via plugin SQL

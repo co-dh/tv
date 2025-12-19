@@ -91,17 +91,16 @@ impl Command for Frequency {
         if app.is_loading() { return Err(anyhow!("Wait for loading to complete")); }
 
         // Get view info before mutation
-        let (parent_id, parent_rows, parent_name, path, key_cols, filter, parent_prql) = {
+        let (parent_id, parent_rows, parent_name, path, key_cols, parent_prql) = {
             let v = app.req()?;
-            (v.id, v.rows(), v.name.clone(), v.path().to_string(),
-             v.key_cols(), v.filter.clone(), v.prql.clone())
+            (v.id, v.rows(), v.name.clone(), v.path.clone().unwrap_or_default(),
+             v.key_cols(), v.prql.clone())
         };
 
-        // Build PRQL for freq: group by cols, count, sort desc
+        // Build PRQL for freq: group by cols, count, sort desc (using parent prql as base)
         let plugin = dynload::get_for(&path).ok_or_else(|| anyhow!("plugin not loaded"))?;
         let grp_cols = self.col_names.iter().map(|c| format!("`{}`", c)).collect::<Vec<_>>().join(", ");
-        let filter_clause = filter.as_deref().map(|f| format!(" | filter {}", f)).unwrap_or_default();
-        let prql = format!("from df{} | group {{{}}} (aggregate {{Cnt = count this}}) | sort {{-Cnt}}", filter_clause, grp_cols);
+        let prql = format!("{} | group {{{}}} (aggregate {{Cnt = count this}}) | sort {{-Cnt}}", parent_prql, grp_cols);
         let sql = pure::compile_prql(&prql).ok_or_else(|| anyhow!("prql compile failed"))?;
         let t = plugin.query(&sql, &path).ok_or_else(|| anyhow!("freq query failed"))?;
         let result = add_pct_bar(dynload::to_box_table(&t));

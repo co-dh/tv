@@ -14,6 +14,7 @@ pub fn compile_prql(prql: &str) -> Option<String> {
 /// Convert custom ~= operator to SQL LIKE
 /// `col ~= 'pattern'` → `col LIKE '%pattern%'`
 #[must_use]
+#[allow(dead_code)]  // used in tests
 pub fn to_sql_like(expr: &str) -> String {
     if let Some((col, pat)) = expr.split_once(" ~= ") {
         let col = col.trim();
@@ -39,6 +40,7 @@ pub fn to_prql_filter(expr: &str) -> String {
 
 /// Combine filter clauses with AND, converting ~= to LIKE
 #[must_use]
+#[allow(dead_code)]  // used in tests
 pub fn combine_filters(prev: Option<&str>, new: &str) -> String {
     let new_sql = to_sql_like(new);
     match prev {
@@ -127,6 +129,18 @@ pub fn freq_cmd(cols: &[String], sep: usize, cur: Option<&str>) -> Option<String
 #[must_use]
 pub fn xkey_cmd(keys: &[String]) -> String {
     if keys.is_empty() { "xkey".into() } else { format!("xkey {}", keys.join(",")) }
+}
+
+/// Append sort to PRQL, replacing previous sort if consecutive
+#[must_use]
+pub fn append_sort(prql: &str, col: &str, desc: bool) -> String {
+    let sort_expr = if desc { format!("-`{}`", col) } else { format!("`{}`", col) };
+    // Check if ends with | sort {...} - replace it
+    if let Some(i) = prql.rfind(" | sort {") {
+        format!("{} | sort {{{}}}", &prql[..i], sort_expr)
+    } else {
+        format!("{} | sort {{{}}}", prql, sort_expr)
+    }
 }
 
 #[cfg(test)]
@@ -225,6 +239,21 @@ mod tests {
     fn test_xkey_cmd_cols() {
         let keys = vec!["a".into(), "b".into()];
         assert_eq!(xkey_cmd(&keys), "xkey a,b");
+    }
+
+    #[test]
+    fn test_append_sort_new() {
+        assert_eq!(append_sort("from df", "col", false), "from df | sort {`col`}");
+    }
+
+    #[test]
+    fn test_append_sort_replace() {
+        assert_eq!(append_sort("from df | sort {`a`}", "b", true), "from df | sort {-`b`}");
+    }
+
+    #[test]
+    fn test_append_sort_after_filter() {
+        assert_eq!(append_sort("from df | filter x > 5 | sort {`a`}", "b", false), "from df | filter x > 5 | sort {`b`}");
     }
 
     #[test]

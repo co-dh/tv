@@ -29,7 +29,7 @@ pub struct AppContext {
     next_id: usize,                // view id counter
     pub search: SearchState,       // search state
     pub bookmarks: Vec<usize>,     // bookmarked rows
-    pub info_mode: u8,             // info box: 0=off, 1=help, 2=help+prql
+    pub info_mode: u8,             // info box: 0=off, 1=help, 2=help+prql, 3=commands
     pub float_decimals: usize,     // decimal places for floats
     pub keymap: KeyMap,            // key bindings
     pub theme: Theme,              // color theme

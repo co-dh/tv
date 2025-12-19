@@ -19,7 +19,7 @@ pub fn parse(line: &str, app: &mut AppContext) -> Option<Box<dyn Command>> {
     match cmd.as_str() {
         "load" | "from" => return Some(Box::new(From { file_path: arg.to_string() })),
         "save" => return Some(Box::new(Save { file_path: arg.to_string() })),
-        "corr" | "correlation" => return Some(Box::new(Correlation { selected_cols: vec![] })),
+        "corr" | "correlation" => return Some(Box::new(Correlation)),
         "del_col" | "delcol" => return Some(Box::new(DelCol { col_names: arg.split(',').map(|s| s.trim().to_string()).collect() })),
         "filter" => return Some(Box::new(Filter { expr: arg.to_string() })),
         "select" | "sel" => return Some(Box::new(Select {

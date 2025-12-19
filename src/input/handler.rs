@@ -13,7 +13,7 @@ use crate::input::keyhandler;
 use crate::input::parser::parse;
 use crate::input::prompt::{do_search, do_filter, do_command_picker, do_goto_col, prompt};
 use crate::plugin::corr::Correlation;
-use crate::state::{ViewKind, ViewSource};
+use crate::state::ViewKind;
 use crate::util::picker;
 
 /// Convert KeyEvent to Kakoune-style key name for keymap lookup
@@ -71,18 +71,20 @@ pub fn dispatch(app: &mut AppContext, action: &str) -> bool {
     if let Some(cmd) = cmd { run(app, cmd); true } else { false }
 }
 
-/// Fetch visible rows for lazy parquet view (via plugin + PRQL)
+/// Fetch data for lazy views (parquet files or source: paths)
 pub fn fetch_lazy(view: &mut crate::state::ViewState) {
-    if let ViewSource::Parquet { ref path, .. } = view.source {
-        let offset = view.state.r0;
-        if let Some(plugin) = dynload::get_for(path) {
-            // Use PRQL chain with take range (1-based)
-            let (s, e) = (offset + 1, offset + 51);
-            let prql = format!("{} | take {}..{}", view.prql, s, e);
-            if let Some(sql) = crate::util::pure::compile_prql(&prql) {
-                if let Some(t) = plugin.query(&sql, path) {
-                    view.data = dynload::to_box_table(&t);
-                }
+    let path = match &view.path {
+        Some(p) if p.ends_with(".parquet") || p.ends_with(".pq") || p.starts_with("source:") => p.clone(),
+        _ => return,
+    };
+    let offset = view.state.r0;
+    if let Some(plugin) = dynload::get_for(&path) {
+        // Use PRQL chain with take range (1-based)
+        let (s, e) = (offset + 1, offset + 51);
+        let prql = format!("{} | take {}..{}", view.prql, s, e);
+        if let Some(sql) = crate::util::pure::compile_prql(&prql) {
+            if let Some(t) = plugin.query(&sql, &path) {
+                view.data = dynload::to_box_table(&t);
             }
         }
     }
@@ -113,6 +115,8 @@ pub fn on_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
 
 /// Handle keymap command, return false to quit
 pub fn handle_cmd(app: &mut AppContext, cmd: &str) -> Result<bool> {
+    // Fetch data for source: paths before resolving commands
+    if let Some(v) = app.view_mut() { fetch_lazy(v); }
     // Try keyhandler for commands it can resolve (with context)
     if let Some(cmd_str) = keyhandler::to_cmd(app, cmd) {
         if let Some(c) = parse(&cmd_str, app) {
@@ -175,11 +179,14 @@ pub fn handle_cmd(app: &mut AppContext, cmd: &str) -> Result<bool> {
                 app.msg(format!("Search: {}", expr));
             }
         }
+        "meta" => {
+            if app.has_view() {
+                if let Some(c) = parse("meta", app) { run(app, c); }
+            }
+        }
         "corr" => {
             if app.has_view() {
-                run(app, Box::new(Correlation {
-                    selected_cols: app.view().map(|v| v.selected_cols.iter().copied().collect()).unwrap_or_default()
-                }));
+                run(app, Box::new(Correlation));
                 if let Some(v) = app.view_mut() { v.selected_cols.clear(); }
             }
         }
@@ -280,12 +287,11 @@ fn print_status(app: &mut AppContext) {
     if let Some(view) = app.view_mut() {
         fetch_lazy(view);
         let col_name = view.col_name(view.state.cc).unwrap_or_default();
-        let disk = view.source.disk_rows().map(|n| n.to_string()).unwrap_or("-".into());
         let df_rows = view.data.rows();
         let keys = view.col_separator.unwrap_or(0);
         let sel = view.selected_cols.len();
         let sel_cols: Vec<usize> = view.selected_cols.iter().copied().collect();
-        println!("STATUS: view={} rows={} disk={} df={} col={} col_name={} keys={} sel={} sel_cols={:?} mem={}MB",
-            view.name, view.rows(), disk, df_rows, view.state.cc, col_name, keys, sel, sel_cols, mem_mb());
+        println!("STATUS: view={} rows={} df={} col={} col_name={} keys={} sel={} sel_cols={:?} mem={}MB",
+            view.name, view.rows(), df_rows, view.state.cc, col_name, keys, sel, sel_cols, mem_mb());
     }
 }

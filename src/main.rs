@@ -366,7 +366,7 @@ fn wait_bg(app: &mut AppContext) {
 /// Print view data - compiles PRQL to SQL and executes via plugin
 fn print(app: &mut AppContext) {
     if let Some(view) = app.view_mut() {
-        let path = view.path().to_string();
+        let path = view.path.clone().unwrap_or_default();
         let prql = &view.prql;
         if !prql.is_empty() && !path.is_empty() {
             if let Some(sql) = pure::compile_prql(prql) {
@@ -408,7 +408,7 @@ mod tests {
     fn test_key_str_backslash() {
         use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
         let key = KeyEvent::new(KeyCode::Char('\\'), KeyModifiers::NONE);
-        assert_eq!(input::key_str(&key), "<backslash>", "backslash should map to <backslash>");
+        assert_eq!(input::handler::key_str(&key), "<backslash>", "backslash should map to <backslash>");
     }
 
     #[test]

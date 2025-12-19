@@ -49,6 +49,58 @@ fn registry() -> &'static Mutex<HashMap<usize, Arc<SimpleTable>>> {
     REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+// ── Source Cache ─────────────────────────────────────────────────────────────
+
+/// Cached source table with timestamp
+struct CachedSource { table: Arc<SimpleTable>, ts: std::time::Instant }
+
+/// Cache for source:... paths
+static SOURCE_CACHE: OnceLock<Mutex<HashMap<String, CachedSource>>> = OnceLock::new();
+
+fn source_cache() -> &'static Mutex<HashMap<String, CachedSource>> {
+    SOURCE_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// TTL for source caches (seconds): static sources get longer cache
+fn source_ttl(path: &str) -> u64 {
+    match path {
+        p if p.starts_with("source:pacman") => 600,   // 10 min (slow, static)
+        p if p.starts_with("source:cargo") => 300,    // 5 min (slow, static)
+        p if p.starts_with("source:systemctl") => 60, // 1 min
+        p if p.starts_with("source:ls") => 10,        // 10 sec (dir may change)
+        p if p.starts_with("source:lr") => 30,        // 30 sec
+        _ => 5,                                        // 5 sec for dynamic (ps, tcp, etc.)
+    }
+}
+
+/// Get cached source table or generate new one
+fn get_source(path: &str) -> Option<Arc<SimpleTable>> {
+    let mut cache = source_cache().lock().ok()?;
+    let ttl = std::time::Duration::from_secs(source_ttl(path));
+
+    // Return cached if fresh
+    if let Some(entry) = cache.get(path) {
+        if entry.ts.elapsed() < ttl { return Some(entry.table.clone()); }
+    }
+
+    // Generate new and cache
+    let table = Arc::new(source::query(path)?);
+    cache.insert(path.to_string(), CachedSource { table: table.clone(), ts: std::time::Instant::now() });
+    Some(table)
+}
+
+// ── Query Result Cache ───────────────────────────────────────────────────────
+
+/// Cached query result: (path, sql) -> result table
+struct QueryCacheEntry { path: String, sql: String, result: Box<SimpleTable> }
+
+/// Single-entry query cache (like polars plugin)
+static QUERY_CACHE: OnceLock<Mutex<Option<QueryCacheEntry>>> = OnceLock::new();
+
+fn query_cache() -> &'static Mutex<Option<QueryCacheEntry>> {
+    QUERY_CACHE.get_or_init(|| Mutex::new(None))
+}
+
 /// Register table for "memory:id" path access
 #[unsafe(no_mangle)]
 pub extern "C" fn tv_register(id: usize, names: *const *const c_char, types: *const u8,
@@ -119,45 +171,44 @@ pub extern "C" fn tv_plugin_init() -> PluginVtable {
     }
 }
 
-/// Execute SQL on table (memory:id or source:type:args)
+/// Execute SQL on table (memory:id or source:type:args) - cached
 #[unsafe(no_mangle)]
 pub extern "C" fn tv_query(sql: *const c_char, path: *const c_char) -> TableHandle {
     if sql.is_null() || path.is_null() { return std::ptr::null_mut(); }
     let sql = unsafe { from_c_str(sql) };
     let path = unsafe { from_c_str(path) };
 
-    // Handle source:... paths (generate table from system data)
-    if path.starts_with("source:") {
-        let table = match source::query(&path) {
-            Some(t) => Arc::new(t),
-            None => return std::ptr::null_mut(),
-        };
-        return match exec_sql(&table, &sql) {
-            Ok(result) => Box::into_raw(Box::new(result)) as TableHandle,
-            Err(_) => std::ptr::null_mut(),
-        };
+    // Check query cache first
+    if let Ok(guard) = query_cache().lock() {
+        if let Some(ref e) = *guard {
+            if e.path == path && e.sql == sql {
+                return e.result.as_ref() as *const SimpleTable as TableHandle;
+            }
+        }
     }
 
-    // Handle memory:id paths (registered tables)
-    let id = match parse_path(&path) {
-        Some(id) => id,
-        None => return std::ptr::null_mut(),
-    };
-    let table = match get_registered(id) {
-        Some(t) => t,
-        None => return std::ptr::null_mut(),
+    // Get source table
+    let table: Arc<SimpleTable> = if path.starts_with("source:") {
+        match get_source(&path) { Some(t) => t, None => return std::ptr::null_mut() }
+    } else {
+        let id = match parse_path(&path) { Some(id) => id, None => return std::ptr::null_mut() };
+        match get_registered(id) { Some(t) => t, None => return std::ptr::null_mut() }
     };
 
-    match exec_sql(&table, &sql) {
-        Ok(result) => Box::into_raw(Box::new(result)) as TableHandle,
-        Err(_) => std::ptr::null_mut(),
+    // Execute SQL and cache result
+    let result = match exec_sql(&table, &sql) { Ok(r) => r, Err(_) => return std::ptr::null_mut() };
+    if let Ok(mut guard) = query_cache().lock() {
+        let entry = QueryCacheEntry { path, sql, result: Box::new(result) };
+        let ptr = entry.result.as_ref() as *const SimpleTable as TableHandle;
+        *guard = Some(entry);
+        return ptr;
     }
+    std::ptr::null_mut()
 }
 
+/// No-op: query cache owns the result
 #[unsafe(no_mangle)]
-pub extern "C" fn tv_result_free(h: TableHandle) {
-    if !h.is_null() { unsafe { drop(Box::from_raw(h as *mut SimpleTable)); } }
-}
+pub extern "C" fn tv_result_free(_h: TableHandle) {}
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tv_result_rows(h: TableHandle) -> usize {

@@ -2,7 +2,7 @@ use crate::app::AppContext;
 use crate::data::dynload;
 use crate::data::table::{Cell, Table};
 use crate::utils::commify;
-use crate::state::{TableState, ViewKind, ViewSource, ViewState};
+use crate::state::{TableState, ViewKind, ViewState};
 use crate::util::theme::Theme;
 use ratatui::prelude::*;
 use ratatui::style::{Color as RColor, Modifier, Style};
@@ -53,7 +53,7 @@ impl Renderer {
     fn render_table(frame: &mut Frame, view: &mut ViewState, area: Rect, selected_cols: &HashSet<usize>, selected_rows: &HashSet<usize>, decimals: usize, theme: &Theme, show_tabs: bool) {
         // Fetch data via plugin using PRQL (compiled to SQL)
         let (rows_needed, start) = (area.height as usize + 100, view.state.r0);
-        let path = view.filename.clone();
+        let path = view.path.clone();
         let prql = view.prql.clone();
         let lazy_offset = path.as_ref().and_then(|p| {
             let plugin = dynload::get_for(p)?;
@@ -88,8 +88,8 @@ impl Renderer {
             return;
         }
 
-        // Row number width (use total_rows for lazy parquet)
-        let row_num_width = if view.show_row_numbers {
+        // Row number width (show for table/freq/meta, not folder)
+        let row_num_width = if !matches!(view.kind, ViewKind::Folder) {
             total_rows.to_string().len().max(3) as u16
         } else { 0 };
         let screen_width = area.width.saturating_sub(if row_num_width > 0 { row_num_width + 1 } else { 0 }) as i32;
@@ -353,6 +353,12 @@ impl Renderer {
         use ratatui::widgets::{Block, Borders, Paragraph, Clear};
         use ratatui::text::{Line, Span};
 
+        // Mode 3: show system commands from plugin
+        if info_mode == 3 {
+            Self::render_commands_box(frame, stack_len, area, theme);
+            return;
+        }
+
         // Calculate box size - add PRQL lines if mode 2
         let prql_lines: Vec<&str> = if info_mode == 2 && !prql.is_empty() {
             prql.split(" | ").collect()
@@ -400,6 +406,44 @@ impl Renderer {
                 lines.push(Line::from(Span::styled(s, prql_style)));
             }
         }
+
+        let para = Paragraph::new(lines).block(block);
+        frame.render_widget(para, box_area);
+    }
+
+    /// Render system commands box (mode 3) - fetches from sqlite plugin
+    fn render_commands_box(frame: &mut Frame, stack_len: usize, area: Rect, theme: &Theme) {
+        use ratatui::widgets::{Block, Borders, Paragraph, Clear};
+        use ratatui::text::{Line, Span};
+        use crate::util::pure;
+
+        // Fetch commands from sqlite plugin
+        let cmds: Vec<(String, String)> = dynload::get_sqlite()
+            .and_then(|p| pure::compile_prql("from df").and_then(|sql| p.query(&sql, "source:commands")))
+            .map(|t| (0..t.rows()).map(|r| (t.cell(r, 0).format(10), t.cell(r, 1).format(10))).collect())
+            .unwrap_or_default();
+
+        let box_width = 35u16;
+        let box_height = (cmds.len() + 2).min(20) as u16;
+        let box_x = area.width.saturating_sub(box_width + 1);
+        let box_y = area.height.saturating_sub(box_height + 1);
+        let box_area = Rect::new(box_x, box_y, box_width, box_height);
+
+        frame.render_widget(Clear, box_area);
+
+        let title = if stack_len > 1 { format!(" [#{}] :cmd ", stack_len) } else { " :commands ".to_string() };
+        let border_style = Style::default().fg(to_rcolor(theme.info_border_fg));
+        let block = Block::default().borders(Borders::ALL).border_style(border_style).title(title);
+
+        let cmd_style = Style::default().fg(to_rcolor(theme.info_key_fg));
+        let desc_style = Style::default().fg(RColor::White);
+        let lines: Vec<Line> = cmds.iter().take(18).map(|(cmd, desc)| {
+            Line::from(vec![
+                Span::styled(format!("{:>15}", cmd), cmd_style),
+                Span::raw(" "),
+                Span::styled(desc.as_str(), desc_style),
+            ])
+        }).collect();
 
         let para = Paragraph::new(lines).block(block);
         frame.render_widget(para, box_area);
@@ -475,27 +519,14 @@ impl Renderer {
             let pr = view.parent.as_ref().map(|p| format!(" ({})", commify(&p.rows.to_string()))).unwrap_or_default();
             format!("{} <- {}{}{}", view.name, pn, pr, sel_info)
         }
-        else { format!("{}{}", view.filename.as_deref().unwrap_or("(no file)"), sel_info) };
+        else { format!("{}{}", view.path.as_deref().unwrap_or("(no file)"), sel_info) };
 
-        // Use cached stats if column unchanged
+        // Get column stats for current column
         let col_stats_str = if view.cols() > 0 {
-            let cc = view.state.cc;
-            if let Some((cached_cc, ref s)) = view.cache.stats {
-                if cached_cc == cc { s.clone() }
-                else {
-                    let s = view.col_stats(cc).format();
-                    view.cache.stats = Some((cc, s.clone()));
-                    s
-                }
-            } else {
-                let s = view.col_stats(cc).format();
-                view.cache.stats = Some((cc, s.clone()));
-                s
-            }
+            view.col_stats(view.state.cc).format()
         } else { String::new() };
 
-        let is_partial = matches!(view.source, ViewSource::Gz { partial: true, .. });
-        let partial = if is_loading || is_partial { " Partial" } else { "" };
+        let partial = if is_loading || view.partial { " Partial" } else { "" };
         let right = if col_stats_str.is_empty() { format!("{}/{}{}", view.state.cr, total_str, partial) }
         else { format!("{} {}/{}{}", col_stats_str, view.state.cr, total_str, partial) };
 
@@ -635,8 +666,8 @@ mod tests {
         let mut view = ViewState::new_memory(100, "test", ViewKind::Folder, Box::new(table));
         view.prql = "from df | sort {size}".to_string();
 
-        // Check plugin is loaded and filename is set
-        assert!(view.filename.is_some(), "filename should be set: {:?}", view.filename);
+        // Check plugin is loaded and path is set
+        assert!(view.path.is_some(), "path should be set: {:?}", view.path);
 
         // Render to test backend
         let backend = TestBackend::new(80, 10);
@@ -753,8 +784,8 @@ mod tests {
         );
 
         let mut app = AppContext::default();
-        let id = app.next_id();
-        app.stack.push(ViewState::new_memory(id, "test", ViewKind::Folder, Box::new(table)));
+        // Use unique ID to avoid test conflicts with other tests
+        app.stack.push(ViewState::new_memory(300, "test", ViewKind::Folder, Box::new(table)));
 
         let backend = TestBackend::new(80, 10);
         let mut terminal = Terminal::new(backend).unwrap();

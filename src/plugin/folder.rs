@@ -1,12 +1,13 @@
 //! Folder view plugin - directory listing (ls [-r])
+//! Uses sqlite plugin source:ls or source:lr paths for data
 
 use crate::app::AppContext;
 use crate::utils::unquote;
 use crate::command::Command;
 use crate::command::io::From;
+use crate::data::table::Table;
 use crate::plugin::Plugin;
 use crate::state::{ViewKind, ViewState};
-use crate::data::table::Table;
 use anyhow::{anyhow, Result};
 use std::path::{Path, PathBuf};
 
@@ -98,10 +99,13 @@ pub struct Ls { pub dir: PathBuf, pub recursive: bool }
 
 impl Command for Ls {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
-        let t = if self.recursive { super::system::lr(&self.dir)? } else { super::system::ls(&self.dir)? };
         let id = app.next_id();
-        let name = if self.recursive { format!("ls -r:{}", self.dir.display()) } else { format!("ls:{}", self.dir.display()) };
-        app.stack.push(ViewState::new_memory(id, name, ViewKind::Folder, Box::new(t)));
+        let (name, source_path) = if self.recursive {
+            (format!("ls -r:{}", self.dir.display()), format!("source:lr:{}", self.dir.display()))
+        } else {
+            (format!("ls:{}", self.dir.display()), format!("source:ls:{}", self.dir.display()))
+        };
+        app.stack.push(ViewState::new_source(id, name, ViewKind::Folder, source_path));
         Ok(())
     }
     fn to_str(&self) -> String {
@@ -115,6 +119,8 @@ pub struct DelFiles { pub paths: Vec<String>, pub dir: PathBuf }
 impl Command for DelFiles {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         use crate::util::picker;
+        use crate::data::dynload;
+        use crate::util::pure;
         let n = self.paths.len();
         let prompt = if n == 1 {
             let name = Path::new(&self.paths[0]).file_name().and_then(|s| s.to_str()).unwrap_or(&self.paths[0]);
@@ -129,13 +135,18 @@ impl Command for DelFiles {
                     if std::fs::remove_file(path).is_ok() { deleted += 1; }
                 }
                 app.msg(format!("Deleted {} file(s)", deleted));
-                // Refresh by re-running ls on parent dir
-                let t = super::system::ls(&self.dir)?;
-                if let Some(view) = app.view_mut() {
-                    let rows = t.rows();
-                    view.data = Box::new(t);
-                    view.selected_rows.clear();
-                    if view.state.cr >= rows { view.state.cr = rows.saturating_sub(1); }
+                // Refresh via source:ls
+                let source_path = format!("source:ls:{}", self.dir.display());
+                if let Some(plugin) = dynload::get_sqlite() {
+                    let sql = pure::compile_prql("from df").unwrap_or_default();
+                    if let Some(t) = plugin.query(&sql, &source_path) {
+                        if let Some(view) = app.view_mut() {
+                            let rows = t.rows();
+                            view.data = dynload::to_box_table(&t);
+                            view.selected_rows.clear();
+                            if view.state.cr >= rows { view.state.cr = rows.saturating_sub(1); }
+                        }
+                    }
                 }
             }
             _ => app.msg("Cancelled"),

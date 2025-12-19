@@ -17,7 +17,7 @@ use crate::util::{picker, pure, theme};
 pub fn do_search(app: &mut AppContext) -> Result<()> {
     let info = app.view().and_then(|v| {
         let col_name = v.col_name(v.state.cc)?;
-        let file = v.filename.as_deref();
+        let file = v.path.as_deref();
         Some((hints(v.data.as_ref(), &col_name, v.state.cr, file), col_name, v.name.starts_with("ls")))
     });
     if let Some((hint_list, col_name, is_folder)) = info {
@@ -49,7 +49,7 @@ pub fn do_filter(app: &mut AppContext) -> Result<()> {
     let info = app.view().and_then(|v| {
         let col_name = v.col_name(v.state.cc)?;
         let is_str = v.data.col_type(v.state.cc) == crate::data::table::ColType::Str;
-        let file = v.filename.as_deref();
+        let file = v.path.as_deref();
         let header = v.data.col_names().join(" | ");
         Some((hints(v.data.as_ref(), &col_name, v.state.cr, file), col_name, is_str, header))
     });
