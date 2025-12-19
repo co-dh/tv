@@ -57,7 +57,8 @@ impl Command for SysCmd {
             SysCmd::Cargo => ("cargo", cargo()?),
         };
         let id = app.next_id();
-        app.stack.push(ViewState::new(id, name, Box::new(t), None));
+        // Use new_system to register with sqlite for filtering/sorting
+        app.stack.push(ViewState::new_system(id, name, Box::new(t)));
         Ok(())
     }
     fn to_str(&self) -> String {
@@ -77,7 +78,7 @@ impl Command for Lsof {
         let t = lsof(self.pid)?;
         let name = self.pid.map(|p| format!("lsof:{}", p)).unwrap_or("lsof".into());
         let id = app.next_id();
-        app.stack.push(ViewState::new(id, name, Box::new(t), None));
+        app.stack.push(ViewState::new_system(id, name, Box::new(t)));
         Ok(())
     }
     fn to_str(&self) -> String { self.pid.map(|p| format!("lsof {}", p)).unwrap_or("lsof".into()) }
@@ -90,7 +91,7 @@ impl Command for Journalctl {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         let t = journalctl(self.n)?;
         let id = app.next_id();
-        app.stack.push(ViewState::new(id, "journalctl", Box::new(t), None));
+        app.stack.push(ViewState::new_system(id, "journalctl", Box::new(t)));
         Ok(())
     }
     fn to_str(&self) -> String { format!("journalctl {}", self.n) }

@@ -342,6 +342,17 @@ impl ViewState {
         v
     }
 
+    /// Create system view (ps, tcp, mounts, etc) - registers with sqlite for filtering/sorting
+    pub fn new_system(id: usize, name: impl Into<String>, data: BoxTable) -> Self {
+        let n = name.into();
+        let prql = "from df".to_string();
+        // Register with sqlite for SQL queries (like folder)
+        let path = crate::dynload::register_table(id, data.as_ref());
+        let mut v = Self::base(id, n, ViewKind::Table, prql, data);
+        v.filename = path;  // "memory:id" for plugin routing
+        v
+    }
+
     /// Create filtered parquet view (lazy - all ops go to disk with WHERE)
     pub fn new_filtered(id: usize, name: impl Into<String>, path: impl Into<String>, c: Vec<String>, flt: impl Into<String>, count: usize, parent_prql: &str, filter_expr: &str) -> Self {
         let p = path.into();
