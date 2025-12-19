@@ -3,12 +3,19 @@
 
 use crate::table::{Cell, ColType, Table, BoxTable};
 use libloading::{Library, Symbol};
-use std::ffi::{CString, CStr};
+use std::ffi::{CString, CStr, c_char};
 use std::sync::OnceLock;
 use tv_plugin_api::*;
 
 static POLARS: OnceLock<Plugin> = OnceLock::new();
-static SQLITE: OnceLock<Plugin> = OnceLock::new();
+static SQLITE: OnceLock<SqlitePlugin> = OnceLock::new();
+
+/// Sqlite plugin with register/unregister for memory tables
+pub struct SqlitePlugin {
+    plugin: Plugin,
+    register: extern "C" fn(usize, *const *const c_char, *const u8, *const *const CCell, usize, usize),
+    unregister: extern "C" fn(usize),
+}
 
 /// Load polars plugin (for file paths)
 pub fn load_polars(path: &str) -> anyhow::Result<()> {
@@ -19,9 +26,36 @@ pub fn load_polars(path: &str) -> anyhow::Result<()> {
 
 /// Load sqlite plugin (for memory:id paths)
 pub fn load_sqlite(path: &str) -> anyhow::Result<()> {
-    let p = Plugin::load(path)?;
+    let p = SqlitePlugin::load(path)?;
     SQLITE.set(p).map_err(|_| anyhow::anyhow!("sqlite plugin already loaded"))?;
     Ok(())
+}
+
+unsafe impl Send for SqlitePlugin {}
+unsafe impl Sync for SqlitePlugin {}
+
+impl SqlitePlugin {
+    /// Load sqlite plugin with register/unregister symbols
+    pub fn load(path: &str) -> anyhow::Result<Self> {
+        let lib = unsafe { Library::new(path) }?;
+        let init: Symbol<extern "C" fn() -> PluginVtable> = unsafe { lib.get(b"tv_plugin_init") }?;
+        let reg: Symbol<extern "C" fn(usize, *const *const c_char, *const u8, *const *const CCell, usize, usize)> =
+            unsafe { lib.get(b"tv_register") }?;
+        let unreg: Symbol<extern "C" fn(usize)> = unsafe { lib.get(b"tv_unregister") }?;
+        let vt = init();
+        if vt.version != PLUGIN_API_VERSION {
+            anyhow::bail!("plugin version {} != {}", vt.version, PLUGIN_API_VERSION);
+        }
+        // Keep function pointers before moving lib
+        let register = *reg;
+        let unregister = *unreg;
+        Ok(Self { plugin: Plugin { _lib: lib, vt }, register, unregister })
+    }
+
+    /// Query (delegate to inner plugin)
+    pub fn query(&self, sql: &str, path: &str) -> Option<PluginTable<'_>> { self.plugin.query(sql, path) }
+    pub fn fetch(&self, path: &str, offset: usize, limit: usize) -> Option<PluginTable<'_>> { self.plugin.fetch(path, offset, limit) }
+    pub fn count(&self, path: &str) -> usize { self.plugin.count(path) }
 }
 
 /// Load plugin from path (legacy - loads polars)
@@ -30,9 +64,66 @@ pub fn load(path: &str) -> anyhow::Result<()> { load_polars(path) }
 /// Get polars plugin
 pub fn get() -> Option<&'static Plugin> { POLARS.get() }
 
+/// Get sqlite plugin
+pub fn get_sqlite() -> Option<&'static SqlitePlugin> { SQLITE.get() }
+
 /// Get plugin for path (routes memory: to sqlite, files to polars)
 pub fn get_for(path: &str) -> Option<&'static Plugin> {
-    if path.starts_with("memory:") { SQLITE.get() } else { POLARS.get() }
+    if path.starts_with("memory:") { SQLITE.get().map(|s| &s.plugin) } else { POLARS.get() }
+}
+
+/// Register in-memory table with sqlite plugin for querying
+/// Returns path "memory:id" for later queries
+pub fn register_table(id: usize, t: &dyn Table) -> Option<String> {
+    let p = SQLITE.get()?;
+    let cols = t.cols();
+    let rows = t.rows();
+
+    // Convert names to C strings
+    let names: Vec<CString> = (0..cols).map(|c| CString::new(t.col_name(c).unwrap_or_default()).unwrap()).collect();
+    let name_ptrs: Vec<*const c_char> = names.iter().map(|s| s.as_ptr()).collect();
+
+    // Convert types (0=str, 1=int, 2=float)
+    let types: Vec<u8> = (0..cols).map(|c| match t.col_type(c) {
+        ColType::Int => 1, ColType::Float => 2, _ => 0
+    }).collect();
+
+    // Convert cells to CCell format
+    let mut cell_data: Vec<Vec<CCell>> = Vec::with_capacity(rows);
+    let mut strings: Vec<Vec<CString>> = Vec::with_capacity(rows); // keep alive
+    for r in 0..rows {
+        let mut row_cells = Vec::with_capacity(cols);
+        let mut row_strs = Vec::new();
+        for c in 0..cols {
+            let ccell = match t.cell(r, c) {
+                Cell::Null => CCell::default(),
+                Cell::Bool(b) => CCell { typ: CellType::Bool, i: b as i64, f: 0.0, s: std::ptr::null_mut() },
+                Cell::Int(n) => CCell { typ: CellType::Int, i: n, f: 0.0, s: std::ptr::null_mut() },
+                Cell::Float(f) => CCell { typ: CellType::Float, i: 0, f, s: std::ptr::null_mut() },
+                Cell::Str(s) | Cell::Date(s) | Cell::Time(s) | Cell::DateTime(s) => {
+                    let cs = CString::new(s).unwrap_or_default();
+                    let ptr = cs.as_ptr() as *mut c_char;
+                    row_strs.push(cs);
+                    CCell { typ: CellType::Str, i: 0, f: 0.0, s: ptr }
+                }
+            };
+            row_cells.push(ccell);
+        }
+        cell_data.push(row_cells);
+        strings.push(row_strs);
+    }
+
+    // Create row pointers
+    let row_ptrs: Vec<*const CCell> = cell_data.iter().map(|r| r.as_ptr()).collect();
+
+    // Register with sqlite
+    (p.register)(id, name_ptrs.as_ptr(), types.as_ptr(), row_ptrs.as_ptr(), rows, cols);
+    Some(format!("memory:{}", id))
+}
+
+/// Unregister table from sqlite plugin
+pub fn unregister_table(id: usize) {
+    if let Some(p) = SQLITE.get() { (p.unregister)(id); }
 }
 
 /// Plugin wrapper

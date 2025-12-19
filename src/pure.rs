@@ -1,12 +1,26 @@
 //! Pure functions - no I/O, no state mutation
 //! These functions only compute and return values
 
-/// Combine filter clauses with AND
+/// Convert custom ~= operator to SQL LIKE
+/// `col ~= 'pattern'` → `col LIKE '%pattern%'`
+#[must_use]
+pub fn to_sql_like(expr: &str) -> String {
+    if let Some((col, pat)) = expr.split_once(" ~= ") {
+        let col = col.trim();
+        let pat = pat.trim().trim_matches('\'').trim_matches('"');
+        format!("{} LIKE '%{}%'", col, pat)
+    } else {
+        expr.to_string()
+    }
+}
+
+/// Combine filter clauses with AND, converting ~= to LIKE
 #[must_use]
 pub fn combine_filters(prev: Option<&str>, new: &str) -> String {
+    let new_sql = to_sql_like(new);
     match prev {
-        Some(p) => format!("({}) AND ({})", p, new),
-        None => new.to_string(),
+        Some(p) => format!("({}) AND ({})", p, new_sql),
+        None => new_sql,
     }
 }
 
@@ -97,8 +111,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_to_sql_like() {
+        assert_eq!(to_sql_like("path ~= 'numeric'"), "path LIKE '%numeric%'");
+        assert_eq!(to_sql_like("x > 5"), "x > 5");  // passthrough
+    }
+
+    #[test]
     fn test_combine_filters_none() {
         assert_eq!(combine_filters(None, "x > 5"), "x > 5");
+    }
+
+    #[test]
+    fn test_combine_filters_like() {
+        assert_eq!(combine_filters(None, "path ~= 'foo'"), "path LIKE '%foo%'");
     }
 
     #[test]

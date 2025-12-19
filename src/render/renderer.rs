@@ -74,12 +74,11 @@ impl Renderer {
                 // Fetch 10k rows centered around current position via plugin
                 let start = r0.saturating_sub(CACHE_SIZE / 4);
                 dbg_log(&format!("fetch parquet start={} rows={} filter={:?}", start, CACHE_SIZE, view.filter));
-                if let Some(plugin) = dynload::get() {
+                if let Some(plugin) = dynload::get_for(path) {  // route by path
                     let w = view.filter.as_deref().unwrap_or("TRUE");
                     if let Some(t) = plugin.fetch_where(path, w, start, CACHE_SIZE) {
-                        let fetched = t.rows();  // Table trait method
                         view.data = dynload::to_box_table(&t);
-                        view.cache.fetch = Some((start, start + fetched));
+                        view.cache.fetch = Some((start, start + t.rows()));
                     }
                 }
             }

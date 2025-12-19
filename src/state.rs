@@ -4,9 +4,17 @@ use std::collections::HashSet;
 /// Reserved rows in viewport (header + footer_header + status)
 pub const RESERVED_ROWS: usize = 3;
 
-/// Convert SQL filter to PRQL filter (= to ==, preserving !=, >=, <=, ~=)
+/// Convert SQL filter to PRQL filter
+/// - = to == (preserving !=, >=, <=)
+/// - ~= 'pat' to s"col LIKE '%pat%'" (PRQL raw SQL)
 fn sql_to_prql_filter(sql: &str) -> String {
-    // Replace standalone = with ==, but preserve !=, >=, <=, ~=
+    // First handle ~= (contains pattern match) - convert to PRQL s-string with SQL LIKE
+    if let Some((col, pat)) = sql.split_once(" ~= ") {
+        let col = col.trim();
+        let pat = pat.trim().trim_matches('\'').trim_matches('"');
+        return format!("s\"{} LIKE '%{}%'\"", col, pat);
+    }
+    // Replace standalone = with ==, but preserve !=, >=, <=
     let mut r = String::with_capacity(sql.len() + 10);
     let chars: Vec<char> = sql.chars().collect();
     let n = chars.len();
@@ -14,10 +22,9 @@ fn sql_to_prql_filter(sql: &str) -> String {
     while i < n {
         let c = chars[i];
         if c == '=' {
-            // Check if preceded by !, <, >, ~
             let prev = if i > 0 { chars[i - 1] } else { ' ' };
-            if prev == '!' || prev == '<' || prev == '>' || prev == '~' {
-                r.push(c);  // keep as-is (part of !=, <=, >=, ~=)
+            if prev == '!' || prev == '<' || prev == '>' {
+                r.push(c);  // keep as-is (part of !=, <=, >=)
             } else {
                 r.push_str("==");  // replace = with ==
             }
@@ -344,17 +351,21 @@ impl ViewState {
         Self::base(id, "correlation", ViewKind::Corr, prql, data)
     }
 
-    /// Create folder view (ls/lr)
+    /// Create folder view (ls/lr) - registers data with sqlite for querying
     pub fn new_folder(id: usize, name: impl Into<String>, data: BoxTable) -> Self {
         let n = name.into();
-        let prql = format!("from sys.{}", n);
-        Self::base(id, n, ViewKind::Folder, prql, data)
+        let prql = "from df".to_string();
+        // Register with sqlite for SQL queries
+        let path = crate::dynload::register_table(id, data.as_ref());
+        let mut v = Self::base(id, n, ViewKind::Folder, prql, data);
+        v.filename = path;  // "memory:id" for plugin routing
+        v
     }
 
     /// Create filtered parquet view (lazy - all ops go to disk with WHERE)
     pub fn new_filtered(id: usize, name: impl Into<String>, path: impl Into<String>, c: Vec<String>, flt: impl Into<String>, count: usize, parent_prql: &str, filter_expr: &str) -> Self {
         let p = path.into();
-        // Convert SQL = to PRQL == (but preserve !=, >=, <=)
+        // Convert filter to PRQL syntax (= to ==, ~= to s"LIKE")
         let prql_expr = sql_to_prql_filter(filter_expr);
         let prql = format!("{} | filter {}", parent_prql, prql_expr);
         let src = ViewSource::Parquet { path: p.clone(), rows: count, cols: c.clone() };
@@ -591,7 +602,7 @@ mod tests {
     #[test]
     fn test_prql_folder() {
         let v = ViewState::new_folder(0, "ls", empty());
-        assert_eq!(v.prql, "from sys.ls");
+        assert_eq!(v.prql, "from df"); // folder now uses sqlite, path is "memory:id"
     }
 
     #[test]

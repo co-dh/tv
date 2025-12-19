@@ -64,13 +64,14 @@ impl Command for Filter {
         let combined = pure::combine_filters(v.filter.as_deref(), &self.expr);
         let name = pure::filter_name(&v.name, &self.expr);
         let cols = v.cols.clone();
-        // Estimate row count (actual count on fetch via plugin)
         let count = v.rows();
+        // All views (parquet, folder, csv) use lazy PRQL filter
         app.stack.push(crate::state::ViewState::new_filtered(id, name, path, cols, combined, count, &parent_prql, &self.expr));
         Ok(())
     }
     fn to_str(&self) -> String { format!("filter {}", self.expr) }
 }
+
 
 /// Select columns (lazy - appends to PRQL chain)
 /// Select columns - supports column list or raw PRQL select expression

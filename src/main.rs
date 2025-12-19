@@ -368,7 +368,7 @@ fn wait_bg_meta(_app: &mut AppContext) {
 fn fetch_lazy(view: &mut state::ViewState) {
     if let state::ViewSource::Parquet { ref path, .. } = view.source {
         let offset = view.state.r0;
-        if let Some(plugin) = dynload::get() {
+        if let Some(plugin) = dynload::get_for(path) {  // route by path
             let w = view.filter.as_deref().unwrap_or("TRUE");
             if let Some(t) = plugin.fetch_where(path, w, offset, 50) {
                 view.data = dynload::to_box_table(&t);
@@ -392,7 +392,7 @@ fn print(app: &mut AppContext) {
         let prql = &view.prql;
         if !prql.is_empty() && !path.is_empty() {
             if let Some(sql) = compile_prql(prql) {
-                if let Some(plugin) = dynload::get() {
+                if let Some(plugin) = dynload::get_for(&path) {
                     if let Some(t) = plugin.query(&sql, &path) {
                         use table::Table;
                         println!("=== {} ({} rows) ===", view.name, t.rows());
@@ -522,6 +522,8 @@ fn parse(line: &str, app: &mut AppContext) -> Option<Box<dyn command::Command>> 
 
 /// Dispatch action to view-specific plugin handler
 fn dispatch(app: &mut AppContext, action: &str) -> bool {
+    // Fetch lazy data before dispatch (plugin may need it)
+    if let Some(v) = app.view_mut() { fetch_lazy(v); }
     let name = match app.view() { Some(v) => v.name.clone(), None => return false };
     // mem::take to avoid borrow conflict: plugins.handle needs &mut app
     let plugins = std::mem::take(&mut app.plugins);
