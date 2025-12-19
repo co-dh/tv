@@ -615,7 +615,7 @@ mod tests {
         use ratatui::Terminal;
         use crate::state::{ViewState, ViewKind};
         use std::collections::HashSet;
-        use crate::theme::Theme;
+        use crate::util::theme::Theme;
 
         // Load sqlite plugin for test
         let _ = crate::data::dynload::load_sqlite("./target/release/libtv_sqlite.so");
@@ -674,7 +674,7 @@ mod tests {
         use crate::command::Command;
         use crate::app::AppContext;
         use std::collections::HashSet;
-        use crate::theme::Theme;
+        use crate::util::theme::Theme;
 
         // Load sqlite plugin
         let _ = crate::data::dynload::load_sqlite("./target/release/libtv_sqlite.so");
@@ -736,7 +736,7 @@ mod tests {
         use crate::command::Command;
         use crate::app::AppContext;
         use std::collections::HashSet;
-        use crate::theme::Theme;
+        use crate::util::theme::Theme;
 
         // Load sqlite plugin
         let _ = crate::data::dynload::load_sqlite("./target/release/libtv_sqlite.so");
@@ -798,7 +798,7 @@ mod tests {
         use crate::state::{ViewState, ViewKind};
         use crate::app::AppContext;
         use std::collections::HashSet;
-        use crate::theme::Theme;
+        use crate::util::theme::Theme;
 
         // Load sqlite plugin
         let _ = crate::data::dynload::load_sqlite("./target/release/libtv_sqlite.so");
