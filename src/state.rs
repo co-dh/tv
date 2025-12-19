@@ -5,6 +5,44 @@ use std::collections::HashSet;
 /// Reserved rows in viewport (header + footer_header + status)
 pub const RESERVED_ROWS: usize = 3;
 
+// ── Newtypes for type safety ────────────────────────────────────────────────
+
+/// Row index newtype - prevents mixing with column indices
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Row(pub usize);
+
+impl Row {
+    #[inline] pub fn get(self) -> usize { self.0 }
+    #[inline] pub fn saturating_sub(self, n: usize) -> Self { Self(self.0.saturating_sub(n)) }
+}
+
+impl std::ops::Add<usize> for Row {
+    type Output = Self;
+    fn add(self, n: usize) -> Self { Self(self.0 + n) }
+}
+
+impl std::fmt::Display for Row {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { write!(f, "{}", self.0) }
+}
+
+/// Column index newtype - prevents mixing with row indices
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Col(pub usize);
+
+impl Col {
+    #[inline] pub fn get(self) -> usize { self.0 }
+    #[inline] pub fn saturating_sub(self, n: usize) -> Self { Self(self.0.saturating_sub(n)) }
+}
+
+impl std::ops::Add<usize> for Col {
+    type Output = Self;
+    fn add(self, n: usize) -> Self { Self(self.0 + n) }
+}
+
+impl std::fmt::Display for Col {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { write!(f, "{}", self.0) }
+}
+
 /// View kind for type-safe dispatch
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
