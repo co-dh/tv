@@ -204,3 +204,12 @@
 - Select/Xkey commands update col_names for parquet views
 - MetaEnter uses col_names to find column index (not dataframe)
 - Cache cleared on column changes to force re-fetch
+
+## Rust Idioms Refactoring
+- Rename backend module to source (reflects data source pattern)
+- Move util functions (is_numeric, commify, unquote) to src/utils.rs
+- Add #[must_use] to pure functions (path, rows, cols, key_cols, etc.)
+- Replace imperative loops with iterator chains (extend, filter_map, flat_map)
+- Use Rust idioms: if let, let-else, matches!, Option combinators (and_then, filter, ok)
+- Use ? operator more aggressively for Result/Option propagation
+- Use for with by_ref() instead of peek + unwrap patterns

@@ -135,7 +135,7 @@ pub fn load(path: &str, id: usize) -> Result<LoadResult> {
     if df.height() == 0 { return Err(anyhow!("File is empty")); }
     let partial = bg_rx.is_some();
     Ok(LoadResult {
-        view: ViewState::new_gz(id, path.into(), df, Some(path.into()), path.into(), partial),
+        view: ViewState::new_gz(id, path, df, Some(path.into()), path, partial),
         bg_loader: bg_rx,
     })
 }

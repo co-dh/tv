@@ -125,7 +125,8 @@ impl ViewState {
     }
 
     /// Base view with default values (all Options None, all flags false)
-    fn base(id: usize, name: String, df: DataFrame) -> Self {
+    fn base(id: usize, name: impl Into<String>, df: DataFrame) -> Self {
+        let name = name.into();
         Self {
             id, name, dataframe: df, state: TableState::new(), history: Vec::new(),
             filename: None, show_row_numbers: false, parent_id: None, parent_rows: None, parent_name: None, freq_col: None,
@@ -136,37 +137,39 @@ impl ViewState {
     }
 
     /// Create standard in-memory view (CSV, filtered results, etc.)
-    pub fn new(id: usize, name: String, df: DataFrame, filename: Option<String>) -> Self {
+    pub fn new(id: usize, name: impl Into<String>, df: DataFrame, filename: Option<String>) -> Self {
         Self { filename, ..Self::base(id, name, df) }
     }
 
     /// Create lazy parquet view (no in-memory dataframe, all ops go to disk)
-    pub fn new_parquet(id: usize, name: String, path: String, rows: usize, cols: Vec<String>) -> Self {
+    pub fn new_parquet(id: usize, name: impl Into<String>, path: impl Into<String>, rows: usize, cols: Vec<String>) -> Self {
+        let path = path.into();
         Self { filename: Some(path.clone()), disk_rows: Some(rows), parquet_path: Some(path), col_names: cols, ..Self::base(id, name, DataFrame::empty()) }
     }
 
     /// Create gzipped CSV view (may be partial if memory limit hit)
-    pub fn new_gz(id: usize, name: String, df: DataFrame, filename: Option<String>, gz: String, partial: bool) -> Self {
-        Self { filename, gz_source: Some(gz), partial, ..Self::base(id, name, df) }
+    pub fn new_gz(id: usize, name: impl Into<String>, df: DataFrame, filename: Option<String>, gz: impl Into<String>, partial: bool) -> Self {
+        Self { filename, gz_source: Some(gz.into()), partial, ..Self::base(id, name, df) }
     }
 
     /// Create child view (freq/meta) with parent info
-    pub fn new_child(id: usize, name: String, df: DataFrame, pid: usize, prows: usize, pname: String) -> Self {
-        Self { parent_id: Some(pid), parent_rows: Some(prows), parent_name: Some(pname), ..Self::base(id, name, df) }
+    pub fn new_child(id: usize, name: impl Into<String>, df: DataFrame, pid: usize, prows: usize, pname: impl Into<String>) -> Self {
+        Self { parent_id: Some(pid), parent_rows: Some(prows), parent_name: Some(pname.into()), ..Self::base(id, name, df) }
     }
 
     /// Create freq view with parent info
-    pub fn new_freq(id: usize, name: String, df: DataFrame, pid: usize, prows: usize, pname: String, col: String) -> Self {
-        Self { parent_id: Some(pid), parent_rows: Some(prows), parent_name: Some(pname), freq_col: Some(col), ..Self::base(id, name, df) }
+    pub fn new_freq(id: usize, name: impl Into<String>, df: DataFrame, pid: usize, prows: usize, pname: impl Into<String>, col: impl Into<String>) -> Self {
+        Self { parent_id: Some(pid), parent_rows: Some(prows), parent_name: Some(pname.into()), freq_col: Some(col.into()), ..Self::base(id, name, df) }
     }
 
     /// Create filtered parquet view (lazy - all ops go to disk with WHERE)
-    pub fn new_filtered(id: usize, name: String, path: String, cols: Vec<String>, filter: String, count: usize) -> Self {
-        Self { filename: Some(path.clone()), disk_rows: Some(count), parquet_path: Some(path), col_names: cols, filter_clause: Some(filter), ..Self::base(id, name, DataFrame::empty()) }
+    pub fn new_filtered(id: usize, name: impl Into<String>, path: impl Into<String>, cols: Vec<String>, filter: impl Into<String>, count: usize) -> Self {
+        let path = path.into();
+        Self { filename: Some(path.clone()), disk_rows: Some(count), parquet_path: Some(path), col_names: cols, filter_clause: Some(filter.into()), ..Self::base(id, name, DataFrame::empty()) }
     }
 
     /// Add command to history
-    pub fn add_hist(&mut self, cmd: String) { self.history.push(cmd); }
+    pub fn add_hist(&mut self, cmd: impl Into<String>) { self.history.push(cmd.into()); }
     /// Row count: disk_rows for parquet, else dataframe height
     #[must_use]
     pub fn rows(&self) -> usize { self.disk_rows.unwrap_or_else(|| self.dataframe.height()) }
@@ -283,9 +286,9 @@ mod tests {
         use polars::prelude::*;
         let df = DataFrame::default();
         let mut stack = StateStack::new();
-        stack.push(ViewState::new(0, "view1".into(), df.clone(), None));
-        stack.push(ViewState::new(1, "view2".into(), df.clone(), None));
-        stack.push(ViewState::new(2, "view3".into(), df, None));
+        stack.push(ViewState::new(0, "view1", df.clone(), None));
+        stack.push(ViewState::new(1, "view2", df.clone(), None));
+        stack.push(ViewState::new(2, "view3", df, None));
 
         let names = stack.names();
         assert_eq!(names, vec!["view1", "view2", "view3"]);

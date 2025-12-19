@@ -84,7 +84,7 @@ impl Command for Correlation {
         let corr_df = DataFrame::new(columns)?;
 
         let id = app.next_id();
-        app.stack.push(ViewState::new(id, "correlation".into(), corr_df, None));
+        app.stack.push(ViewState::new(id, "correlation", corr_df, None));
         Ok(())
     }
     fn to_str(&self) -> String { "corr".into() }
@@ -124,7 +124,7 @@ mod tests {
         }.unwrap();
 
         let id = app.next_id();
-        app.stack.push(ViewState::new(id, "test".into(), df, None));
+        app.stack.push(ViewState::new(id, "test", df, None));
         Correlation { selected_cols: vec![] }.exec(&mut app).unwrap();
         let corr = app.view().unwrap();
         assert_eq!(corr.name, "correlation");

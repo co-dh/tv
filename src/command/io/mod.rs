@@ -44,8 +44,7 @@ impl Command for Save {
         let is_parquet = !matches!(path.extension().and_then(|s| s.to_str()), Some("csv"));
 
         // Streaming save for gz source -> parquet (re-reads from disk)
-        if is_parquet && view.gz_source.is_some() {
-            let gz = view.gz_source.clone().unwrap();
+        if let Some(gz) = view.gz_source.clone().filter(|_| is_parquet) {
             let raw = app.raw_save;
             app.msg(format!("Streaming {} to parquet{}...", gz, if raw { " (raw)" } else { "" }));
             app.bg_saver = Some(gz::stream_to_parquet(&gz, path, raw));

@@ -218,12 +218,12 @@ fn split_cmds(s: &str) -> Vec<String> {
 /// Any <...> is a special key. Use <lt>/<gt> for literal angle brackets.
 fn parse_keys(s: &str) -> Vec<String> {
     let mut keys = Vec::new();
-    let mut chars = s.chars().peekable();
+    let mut chars = s.chars();
     while let Some(c) = chars.next() {
         if c == '<' {
             let mut key = String::from("<");
-            while let Some(&ch) = chars.peek() {
-                key.push(chars.next().unwrap());
+            for ch in chars.by_ref() {
+                key.push(ch);
                 if ch == '>' { break; }
             }
             keys.push(key);
@@ -538,9 +538,9 @@ fn find_match(app: &mut AppContext, forward: bool) {
             let cur = view.state.cr;
             let pos = if forward { m.iter().find(|&&i| i > cur) } else { m.iter().rev().find(|&&i| i < cur) };
             if let Some(&p) = pos { view.state.cr = p; view.state.visible(); }
-            else { app.msg("No more matches".into()); }
+            else { app.msg("No more matches"); }
         }
-    } else { app.msg("No search active".into()); }
+    } else { app.msg("No search active"); }
 }
 
 /// Convert KeyEvent to Kakoune-style key name for keymap lookup
@@ -650,19 +650,17 @@ fn handle_cmd(app: &mut AppContext, cmd: &str) -> Result<bool> {
         "next_match" => find_match(app, true),
         "prev_match" => find_match(app, false),
         "search_cell" => {
-            if let Some(view) = app.view() {
-                if let Some(col_name) = view.col_name(view.state.cc) {
-                    if let Some(col) = view.dataframe.get_columns().get(view.state.cc) {
-                        if let Ok(value) = col.get(view.state.cr) {
-                            let is_str = matches!(col.dtype(), polars::prelude::DataType::String);
-                            let val = unquote(&value.to_string());
-                            let expr = if is_str { format!("{} = '{}'", col_name, val) } else { format!("{} = {}", col_name, val) };
-                            app.search.col_name = None;
-                            app.search.value = Some(expr.clone());
-                            app.msg(format!("Search: {}", expr));
-                        }
-                    }
-                }
+            if let Some(expr) = app.view().and_then(|v| {
+                let col_name = v.col_name(v.state.cc)?;
+                let col = v.dataframe.get_columns().get(v.state.cc)?;
+                let value = col.get(v.state.cr).ok()?;
+                let is_str = matches!(col.dtype(), polars::prelude::DataType::String);
+                let val = unquote(&value.to_string());
+                Some(if is_str { format!("{} = '{}'", col_name, val) } else { format!("{} = {}", col_name, val) })
+            }) {
+                app.search.col_name = None;
+                app.search.value = Some(expr.clone());
+                app.msg(format!("Search: {}", expr));
             }
         }
         // Column operations (freq, sort, derive handled by keyhandler)
@@ -743,7 +741,7 @@ fn handle_cmd(app: &mut AppContext, cmd: &str) -> Result<bool> {
             }
         }
         "next_bookmark" => {
-            if app.bookmarks.is_empty() { app.msg("No bookmarks".into()); }
+            if app.bookmarks.is_empty() { app.msg("No bookmarks"); }
             else if let Some(row) = app.bookmarks.iter()
                 .find(|&&r| r > app.view().map(|v| v.state.cr).unwrap_or(0)).copied()
                 .or_else(|| app.bookmarks.first().copied())

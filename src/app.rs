@@ -186,7 +186,7 @@ impl AppContext {
     }
 
     /// Set status message
-    pub fn msg(&mut self, s: String) { self.message = s; }
+    pub fn msg(&mut self, s: impl Into<String>) { self.message = s.into(); }
     /// Set error message
     pub fn err(&mut self, e: impl std::fmt::Display) { self.message = format!("Error: {}", e); }
     /// Set "no table" message

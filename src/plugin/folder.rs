@@ -134,7 +134,7 @@ impl Command for DelFiles {
                     }
                 }
             }
-            _ => app.msg("Cancelled".into()),
+            _ => app.msg("Cancelled"),
         }
         Ok(())
     }

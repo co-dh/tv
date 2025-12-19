@@ -22,7 +22,7 @@ impl Source for Polars {
         if path.contains('*') || path.contains('?') {
             let df = load_glob(path, MAX_PREVIEW)?;
             if df.height() == 0 { return Err(anyhow!("No data found")); }
-            return Ok(LoadResult { view: ViewState::new(id, path.into(), df, None), bg_loader: None });
+            return Ok(LoadResult { view: ViewState::new(id, path, df, None), bg_loader: None });
         }
         let p = Path::new(path);
         if !p.exists() { return Err(anyhow!("File not found: {}", path)); }
@@ -30,12 +30,12 @@ impl Source for Polars {
             Some("csv") => {
                 let df = load_csv(p)?;
                 if df.height() == 0 { return Err(anyhow!("File is empty")); }
-                Ok(LoadResult { view: ViewState::new(id, path.into(), df, Some(path.into())), bg_loader: None })
+                Ok(LoadResult { view: ViewState::new(id, path, df, Some(path.into())), bg_loader: None })
             }
             Some("parquet") => {
                 let (rows, cols) = self.metadata(path)?;
                 if rows == 0 { return Err(anyhow!("File is empty")); }
-                Ok(LoadResult { view: ViewState::new_parquet(id, path.into(), path.into(), rows, cols), bg_loader: None })
+                Ok(LoadResult { view: ViewState::new_parquet(id, path, path, rows, cols), bg_loader: None })
             }
             Some(ext) => Err(anyhow!("Unsupported: {}", ext)),
             None => Err(anyhow!("Unknown file type")),

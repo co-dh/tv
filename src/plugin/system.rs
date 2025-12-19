@@ -58,7 +58,7 @@ impl Command for SysCmd {
             SysCmd::Cargo => ("cargo", cargo()?),
         };
         let id = app.next_id();
-        app.stack.push(ViewState::new(id, name.into(), df, None));
+        app.stack.push(ViewState::new(id, name, df, None));
         Ok(())
     }
     fn to_str(&self) -> String {
@@ -91,7 +91,7 @@ impl Command for Journalctl {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         let df = journalctl(self.n)?;
         let id = app.next_id();
-        app.stack.push(ViewState::new(id, "journalctl".into(), df, None));
+        app.stack.push(ViewState::new(id, "journalctl", df, None));
         Ok(())
     }
     fn to_str(&self) -> String { format!("journalctl {}", self.n) }

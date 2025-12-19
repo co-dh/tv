@@ -132,12 +132,11 @@ pub fn apply_schema(df: DataFrame, schema: &Schema) -> (DataFrame, Option<String
 
     for col in df.get_columns() {
         let name = col.name();
-        let target = schema.get(name);
-        if target.is_none() || col.dtype() == target.unwrap() {
+        // Skip if no target type or already correct type
+        let Some(target) = schema.get(name).filter(|&t| col.dtype() != t) else {
             cols.push(col.clone());
             continue;
-        }
-        let target = target.unwrap();
+        };
 
         // Try epoch conversion: String → i64 → Datetime
         if matches!(target, DataType::Datetime(_, _)) && col.dtype() == &DataType::String {

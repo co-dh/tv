@@ -56,7 +56,7 @@ fn sel_cols(app: &AppContext, reverse: bool) -> Option<Vec<String>> {
 /// Push meta view onto stack
 fn push_meta(app: &mut AppContext, df: DataFrame, pid: usize, prows: usize, pname: String, pcol: usize, sep: Option<usize>) {
     let id = app.next_id();
-    let mut v = ViewState::new_child(id, "metadata".into(), df, pid, prows, pname);
+    let mut v = ViewState::new_child(id, "metadata", df, pid, prows, pname);
     v.state.cr = pcol;
     if let Some(s) = sep { v.col_separator = Some(s); }
     app.stack.push(v);
