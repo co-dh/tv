@@ -16,6 +16,8 @@
 - use sum type
 - use prql to implement views, so filter just append filter to current prql, sel is also append to prql.
 - prql is essential to the design, do not replace it with sql without approval.
+- use sqlite's virtual table for in memory table, like from ls, lr, and other other system source.
+-
 
 # Architecture
 

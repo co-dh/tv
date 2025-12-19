@@ -806,7 +806,7 @@ fn do_filter(app: &mut AppContext) -> Result<()> {
         Some((hints(v.data.as_ref(), &col_name, v.state.cr, file), col_name, is_str, header))
     });
     if let Some((hint_list, col_name, is_str, header)) = info {
-        let expr_opt = picker::fzf_filter(hint_list, "WHERE> ", &col_name, is_str, Some(&header));
+        let expr_opt = picker::fzf_filter(hint_list, &col_name, is_str, Some(&header));
         app.needs_redraw = true;
         if let Ok(Some(expr)) = expr_opt {
             run(app, Box::new(Filter { expr }));

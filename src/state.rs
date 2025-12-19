@@ -4,36 +4,16 @@ use std::collections::HashSet;
 /// Reserved rows in viewport (header + footer_header + status)
 pub const RESERVED_ROWS: usize = 3;
 
-/// Convert SQL filter to PRQL filter
-/// - = to == (preserving !=, >=, <=)
-/// - ~= 'pat' to s"col LIKE '%pat%'" (PRQL raw SQL)
-fn sql_to_prql_filter(sql: &str) -> String {
-    // First handle ~= (contains pattern match) - convert to PRQL s-string with SQL LIKE
-    if let Some((col, pat)) = sql.split_once(" ~= ") {
+/// Convert ~= to PRQL s-string with SQL LIKE (for backward compat)
+/// Input is already PRQL syntax from fzf, just handle legacy ~= operator
+fn to_prql_filter(expr: &str) -> String {
+    if let Some((col, pat)) = expr.split_once(" ~= ") {
         let col = col.trim();
         let pat = pat.trim().trim_matches('\'').trim_matches('"');
-        return format!("s\"{} LIKE '%{}%'\"", col, pat);
+        format!("s\"{} LIKE '%{}%'\"", col, pat)
+    } else {
+        expr.to_string()
     }
-    // Replace standalone = with ==, but preserve !=, >=, <=
-    let mut r = String::with_capacity(sql.len() + 10);
-    let chars: Vec<char> = sql.chars().collect();
-    let n = chars.len();
-    let mut i = 0;
-    while i < n {
-        let c = chars[i];
-        if c == '=' {
-            let prev = if i > 0 { chars[i - 1] } else { ' ' };
-            if prev == '!' || prev == '<' || prev == '>' {
-                r.push(c);  // keep as-is (part of !=, <=, >=)
-            } else {
-                r.push_str("==");  // replace = with ==
-            }
-        } else {
-            r.push(c);
-        }
-        i += 1;
-    }
-    r
 }
 
 // ── Grouped structs to reduce ViewState field count ─────────────────────────
@@ -365,8 +345,8 @@ impl ViewState {
     /// Create filtered parquet view (lazy - all ops go to disk with WHERE)
     pub fn new_filtered(id: usize, name: impl Into<String>, path: impl Into<String>, c: Vec<String>, flt: impl Into<String>, count: usize, parent_prql: &str, filter_expr: &str) -> Self {
         let p = path.into();
-        // Convert filter to PRQL syntax (= to ==, ~= to s"LIKE")
-        let prql_expr = sql_to_prql_filter(filter_expr);
+        // Convert ~= to s"LIKE" for PRQL (input already PRQL from fzf)
+        let prql_expr = to_prql_filter(filter_expr);
         let prql = format!("{} | filter {}", parent_prql, prql_expr);
         let src = ViewSource::Parquet { path: p.clone(), rows: count, cols: c.clone() };
         Self { filename: Some(p), source: src, filter: Some(flt.into()), cols: c, ..Self::base(id, name, ViewKind::Table, prql, Self::empty_table()) }

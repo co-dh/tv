@@ -45,26 +45,29 @@ pub fn fzf_multi_header(items: Vec<String>, prompt: &str, header: Option<&str>) 
     Ok((sels, query))
 }
 
-/// fzf for filter - returns SQL expression based on selection
-/// - 1 item from hints → col = 'value'
-/// - N items from hints → col IN ('a', 'b')
-/// - else → raw SQL
-pub fn fzf_filter(hints: Vec<String>, prompt: &str, col: &str, is_str: bool, header: Option<&str>) -> Result<Option<String>> {
-    let (sels, query) = fzf_multi_header(hints.clone(), prompt, header)?;
+/// fzf for filter - returns PRQL filter expression
+/// - 1 item from hints → `col` == 'value'
+/// - N items from hints → `col` == 'a' || `col` == 'b'
+/// - else → raw PRQL expression
+/// Examples shown: col == 'x', col > 5, s"col LIKE '%pat%'"
+pub fn fzf_filter(hints: Vec<String>, col: &str, is_str: bool, header: Option<&str>) -> Result<Option<String>> {
+    // Build prompt with PRQL examples
+    let prompt = format!("PRQL: `{}` == 'x' | > 5 | s\"LIKE '%'\" > ", col);
+    let (sels, query) = fzf_multi_header(hints.clone(), &prompt, header)?;
     // Check how many selections are from hints
     let from_hints: Vec<&String> = sels.iter().filter(|s| hints.contains(s)).collect();
     let expr = if from_hints.len() == 1 {
-        // Single hint selected → equality
+        // Single hint → PRQL equality
         let v = &from_hints[0];
-        if is_str { format!("\"{}\" = '{}'", col, v) } else { format!("\"{}\" = {}", col, v) }
+        if is_str { format!("`{}` == '{}'", col, v) } else { format!("`{}` == {}", col, v) }
     } else if from_hints.len() > 1 {
-        // Multiple hints → IN clause
-        let vals: Vec<String> = from_hints.iter().map(|v| {
-            if is_str { format!("'{}'", v) } else { v.to_string() }
+        // Multiple hints → PRQL OR chain
+        let clauses: Vec<String> = from_hints.iter().map(|v| {
+            if is_str { format!("`{}` == '{}'", col, v) } else { format!("`{}` == {}", col, v) }
         }).collect();
-        format!("\"{}\" IN ({})", col, vals.join(", "))
+        format!("({})", clauses.join(" || "))
     } else if !query.is_empty() {
-        // No hint match, use query as raw SQL
+        // Raw PRQL expression
         query
     } else {
         return Ok(None);  // Esc pressed

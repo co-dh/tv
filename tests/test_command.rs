@@ -145,8 +145,8 @@ fn test_pivot_requires_xkey() {
 
 #[test]
 fn test_filter_then_sort_then_select() {
-    // filter city='NYC', sort value, select name,value
-    let out = run_keys("<backslash>city = 'NYC'<ret>[sname,value<ret>", "tests/data/full.csv");
+    // filter city=='NYC' (PRQL syntax), sort value, select name,value
+    let out = run_keys("<backslash>city == 'NYC'<ret>[sname,value<ret>", "tests/data/full.csv");
     assert!(out.contains("(3 rows)"), "Filter+sort+select chain: {}", out);
 }
 
