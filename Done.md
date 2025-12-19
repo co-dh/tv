@@ -251,3 +251,14 @@
 - `{parent} | meta/corr/pivot` for derived views
 - `from sys.ls/ps` for system views
 - Unit tests for all PRQL constructors
+
+## Stdlib Author Suggestions Implemented
+- RESERVED_ROWS const for magic number 3
+- visible_rows() method on TableState
+- #[non_exhaustive] on ViewKind enum
+- #[inline] hints for hot paths (rows, cols, cur, len, is_empty)
+- Display impl for ViewKind and ViewState
+- Index and IntoIterator for StateStack
+- is_empty() on StateStack (clippy lint)
+- thiserror dependency and TvError enum (NoTable, ColumnNotFound, etc.)
+- Row/Col newtypes for future type safety refactoring
