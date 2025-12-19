@@ -114,3 +114,46 @@ pub extern "C" fn tv_cell(h: TableHandle, row: usize, col: usize) -> CCell {
 pub extern "C" fn tv_str_free(p: *mut c_char) {
     unsafe { free_c_str(p); }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn test_parquet_time_roundtrip() {
+        let pq = "../../tmp/tv_pq_time_test.parquet";
+        fs::create_dir_all("../../tmp").ok();
+
+        let ns: Vec<i64> = vec![3600_000_000_000, 7200_000_000_000, 10800_000_000_000];
+        let time_series = Series::new("event_time".into(), ns)
+            .cast(&DataType::Time).unwrap();
+        let mut df = DataFrame::new(vec![time_series.into()]).unwrap();
+
+        ParquetWriter::new(fs::File::create(pq).unwrap())
+            .finish(&mut df).unwrap();
+
+        let loaded = ParquetReader::new(fs::File::open(pq).unwrap())
+            .finish().unwrap();
+
+        assert!(matches!(loaded.column("event_time").unwrap().dtype(), DataType::Time),
+            "Time col should remain Time: {:?}", loaded.column("event_time").unwrap().dtype());
+        fs::remove_file(pq).ok();
+    }
+
+    #[test]
+    fn test_csv_query() {
+        let csv = "../../tmp/tv_csv_test.csv";
+        fs::create_dir_all("../../tmp").ok();
+        fs::write(csv, "a,b\n1,x\n2,y\n3,z").unwrap();
+
+        let sql = std::ffi::CString::new("SELECT * FROM df").unwrap();
+        let path = std::ffi::CString::new(csv).unwrap();
+        let h = tv_query(sql.as_ptr(), path.as_ptr());
+        assert!(!h.is_null(), "Query should return result");
+        assert_eq!(tv_result_rows(h), 3);
+        assert_eq!(tv_result_cols(h), 2);
+        tv_result_free(h);
+        fs::remove_file(csv).ok();
+    }
+}
