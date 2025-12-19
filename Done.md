@@ -215,3 +215,5 @@
 - Use for with by_ref() instead of peek + unwrap patterns
 - Use impl Into<String> for flexible API (ViewState constructors, app.msg)
 - Add ViewKind enum for type-safe view dispatch (Table, Meta, Freq, Corr, Folder, Pivot)
+- ratatui Tabs widget already in use for view stack tabs
+- Status bar uses efficient direct buffer manipulation (no dedicated ratatui widget needed)
