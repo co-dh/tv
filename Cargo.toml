@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/tv-plugin-api", "crates/tv-polars"]
+members = [".", "crates/tv-plugin-api", "crates/tv-polars", "crates/tv-sqlite"]
 
 [package]
 name = "tv"
@@ -14,14 +14,11 @@ edition = "2024"
 [dependencies]
 tv-plugin-api = { path = "crates/tv-plugin-api" }
 libloading = "0.8"
-polars = { version = "0.52", default-features = false, features = ["lazy", "csv", "parquet", "sql", "new_streaming", "pivot", "dtype-struct", "dtype-array", "dtype-i8", "dtype-i16", "dtype-u8", "dtype-u16", "temporal", "rows"] }
-polars-ops = { version = "0.52", features = ["cov"] }
 prqlc = "0.13"
 ratatui = "0.30.0-beta.0"
 anyhow = "1.0"
 thiserror = "2.0"
 chrono = "0.4"
 dirs = "6"
-rusqlite = { version = "0.32", features = ["vtab", "bundled"] }
 nix = { version = "0.30", features = ["fs", "process"] }
 serde_json = "1.0"

@@ -1,14 +1,11 @@
 //! Utility functions shared across modules.
 
-use polars::prelude::DataType;
+use crate::table::ColType;
 
-/// Check if DataType is numeric (int/uint/float)
+/// Check if ColType is numeric (int/float)
 #[must_use]
-pub fn is_numeric(dt: &DataType) -> bool {
-    matches!(dt,
-        DataType::Int8 | DataType::Int16 | DataType::Int32 | DataType::Int64 |
-        DataType::UInt8 | DataType::UInt16 | DataType::UInt32 | DataType::UInt64 |
-        DataType::Float32 | DataType::Float64)
+pub fn is_numeric(ct: &ColType) -> bool {
+    matches!(ct, ColType::Int | ColType::Float)
 }
 
 /// Format number with commas (1234567 -> "1,234,567")

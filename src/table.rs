@@ -1,5 +1,5 @@
-//! Table abstraction - separates TUI from data backend (polars)
-//! TUI code should only use this trait, never polars directly.
+//! Table abstraction - separates TUI from data backend
+//! TUI code should only use this trait, never backend directly.
 
 /// Cell value for display
 #[derive(Clone, Debug)]
@@ -52,7 +52,7 @@ impl ColType {
     }
 }
 
-/// Table data abstraction - implemented by backend (polars)
+/// Table data abstraction - implemented by backend
 pub trait Table: Send + Sync {
     /// Number of rows
     fn rows(&self) -> usize;
@@ -106,7 +106,7 @@ impl SimpleTable {
         Self { names: vec![], types: vec![], data: vec![] }
     }
 
-    /// Append rows from another table (for gz streaming)
+    /// Append rows from another table (for streaming)
     pub fn append(&mut self, other: &dyn Table) {
         for r in 0..other.rows() {
             let row: Vec<Cell> = (0..other.cols()).map(|c| other.cell(r, c)).collect();
@@ -114,7 +114,7 @@ impl SimpleTable {
         }
     }
 
-    /// Build table from columns (columnar layout, like DataFrame::new)
+    /// Build table from columns (columnar layout)
     pub fn from_cols(cols: Vec<Col>) -> Self {
         if cols.is_empty() { return Self::empty(); }
         let n_rows = cols[0].len();
@@ -174,116 +174,6 @@ impl Table for SimpleTable {
     }
 }
 
-/// Convert polars DataFrame to BoxTable
-pub fn df_to_table(df: polars::prelude::DataFrame) -> BoxTable {
-    use polars::prelude::*;
-    let names: Vec<String> = df.get_column_names().iter().map(|s| s.to_string()).collect();
-    let types: Vec<ColType> = df.get_columns().iter().map(|c| match c.dtype() {
-        DataType::Boolean => ColType::Bool,
-        DataType::Int8 | DataType::Int16 | DataType::Int32 | DataType::Int64 |
-        DataType::UInt8 | DataType::UInt16 | DataType::UInt32 | DataType::UInt64 => ColType::Int,
-        DataType::Float32 | DataType::Float64 => ColType::Float,
-        DataType::Date => ColType::Date,
-        DataType::Time => ColType::Time,
-        DataType::Datetime(_, _) => ColType::DateTime,
-        _ => ColType::Str,
-    }).collect();
-    let n_rows = df.height();
-    let data: Vec<Vec<Cell>> = (0..n_rows).map(|r| {
-        df.get_columns().iter().map(|c| {
-            c.get(r).ok().map(|v| match v {
-                AnyValue::Null => Cell::Null,
-                AnyValue::Boolean(b) => Cell::Bool(b),
-                AnyValue::Int8(n) => Cell::Int(n as i64),
-                AnyValue::Int16(n) => Cell::Int(n as i64),
-                AnyValue::Int32(n) => Cell::Int(n as i64),
-                AnyValue::Int64(n) => Cell::Int(n),
-                AnyValue::UInt8(n) => Cell::Int(n as i64),
-                AnyValue::UInt16(n) => Cell::Int(n as i64),
-                AnyValue::UInt32(n) => Cell::Int(n as i64),
-                AnyValue::UInt64(n) => Cell::Int(n as i64),
-                AnyValue::Float32(f) => Cell::Float(f as f64),
-                AnyValue::Float64(f) => Cell::Float(f),
-                AnyValue::Date(d) => Cell::Date(format!("{}", chrono::NaiveDate::from_num_days_from_ce_opt(d + 719163).unwrap_or_default())),
-                AnyValue::Time(t) => Cell::Time(format!("{:02}:{:02}:{:02}", t / 3_600_000_000_000, (t / 60_000_000_000) % 60, (t / 1_000_000_000) % 60)),
-                AnyValue::Datetime(ts, tu, _) => {
-                    let secs = match tu { TimeUnit::Nanoseconds => ts / 1_000_000_000, TimeUnit::Microseconds => ts / 1_000_000, TimeUnit::Milliseconds => ts / 1_000 };
-                    Cell::DateTime(chrono::DateTime::from_timestamp(secs, 0).map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string()).unwrap_or_default())
-                }
-                _ => Cell::Str(v.to_string()),
-            }).unwrap_or(Cell::Null)
-        }).collect()
-    }).collect();
-    Box::new(SimpleTable { names, types, data })
-}
-
-/// Convert any Table to polars DataFrame (for save, SQL operations)
-pub fn table_to_df(t: &dyn Table) -> polars::prelude::DataFrame {
-    use polars::prelude::*;
-    let cols: Vec<Column> = (0..t.cols()).map(|c| {
-        let name = t.col_name(c).unwrap_or_default();
-        match t.col_type(c) {
-            ColType::Int => {
-                let vals: Vec<i64> = (0..t.rows()).map(|r| match t.cell(r, c) {
-                    Cell::Int(n) => n, _ => 0
-                }).collect();
-                Series::new(name.into(), vals).into()
-            }
-            ColType::Float => {
-                let vals: Vec<f64> = (0..t.rows()).map(|r| match t.cell(r, c) {
-                    Cell::Float(f) => f, Cell::Int(n) => n as f64, _ => 0.0
-                }).collect();
-                Series::new(name.into(), vals).into()
-            }
-            ColType::Bool => {
-                let vals: Vec<bool> = (0..t.rows()).map(|r| match t.cell(r, c) {
-                    Cell::Bool(b) => b, _ => false
-                }).collect();
-                Series::new(name.into(), vals).into()
-            }
-            _ => {
-                let vals: Vec<String> = (0..t.rows()).map(|r| t.cell(r, c).format(10)).collect();
-                Series::new(name.into(), vals).into()
-            }
-        }
-    }).collect();
-    DataFrame::new(cols).unwrap_or_default()
-}
-
-/// Convert SimpleTable to polars DataFrame (for backward compatibility)
-#[allow(dead_code)]
-pub fn simple_to_df(t: &SimpleTable) -> polars::prelude::DataFrame {
-    use polars::prelude::*;
-    let cols: Vec<Column> = (0..t.cols()).map(|c| {
-        let name = t.names.get(c).cloned().unwrap_or_default();
-        match t.types.get(c).unwrap_or(&ColType::Str) {
-            ColType::Int => {
-                let vals: Vec<i64> = t.data.iter().map(|r| match r.get(c) {
-                    Some(Cell::Int(n)) => *n, _ => 0
-                }).collect();
-                Series::new(name.into(), vals).into()
-            }
-            ColType::Float => {
-                let vals: Vec<f64> = t.data.iter().map(|r| match r.get(c) {
-                    Some(Cell::Float(f)) => *f, Some(Cell::Int(n)) => *n as f64, _ => 0.0
-                }).collect();
-                Series::new(name.into(), vals).into()
-            }
-            ColType::Bool => {
-                let vals: Vec<bool> = t.data.iter().map(|r| match r.get(c) {
-                    Some(Cell::Bool(b)) => *b, _ => false
-                }).collect();
-                Series::new(name.into(), vals).into()
-            }
-            _ => {
-                let vals: Vec<String> = t.data.iter().map(|r| r.get(c).map(|c| c.format(10)).unwrap_or_default()).collect();
-                Series::new(name.into(), vals).into()
-            }
-        }
-    }).collect();
-    DataFrame::new(cols).unwrap_or_default()
-}
-
 /// Statistics for a column (used by meta view and status bar)
 #[derive(Clone, Debug, Default)]
 pub struct ColStats {
@@ -318,43 +208,4 @@ impl ColStats {
             }
         } else { String::new() }
     }
-}
-
-/// Backend trait - data source operations (polars implements this)
-#[allow(dead_code)]
-pub trait Backend: Send + Sync {
-    /// Load file, return table + optional background loader
-    fn load(&self, path: &str, id: usize) -> anyhow::Result<LoadResult>;
-    /// Fetch rows from lazy source
-    fn fetch(&self, path: &str, offset: usize, limit: usize) -> anyhow::Result<BoxTable>;
-    /// Fetch with WHERE clause
-    fn fetch_where(&self, path: &str, filter: &str, offset: usize, limit: usize) -> anyhow::Result<BoxTable>;
-    /// Fetch specific columns
-    fn fetch_cols(&self, path: &str, cols: &[String], filter: &str, offset: usize, limit: usize) -> anyhow::Result<BoxTable>;
-    /// Count rows
-    fn count(&self, path: &str) -> anyhow::Result<usize>;
-    /// Count with WHERE
-    fn count_where(&self, path: &str, filter: &str) -> anyhow::Result<usize>;
-    /// Frequency table
-    fn freq(&self, path: &str, cols: &[String], filter: &str) -> anyhow::Result<BoxTable>;
-    /// Column stats for meta view
-    fn stats(&self, path: &str) -> anyhow::Result<Vec<ColStats>>;
-    /// Schema (column names and types)
-    fn schema(&self, path: &str) -> anyhow::Result<Vec<(String, String)>>;
-    /// Sort and take top N
-    fn sort_head(&self, path: &str, col: &str, desc: bool, limit: usize) -> anyhow::Result<BoxTable>;
-    /// Filter and limit
-    fn filter(&self, path: &str, expr: &str, limit: usize) -> anyhow::Result<BoxTable>;
-    /// Save table to file
-    fn save(&self, table: &dyn Table, path: &std::path::Path) -> anyhow::Result<()>;
-}
-
-/// Result of loading a file
-#[allow(dead_code)]
-pub struct LoadResult {
-    pub table: BoxTable,
-    pub rows: usize,          // total rows (may differ from table.rows() for lazy)
-    pub cols: Vec<String>,    // column names
-    pub is_lazy: bool,        // true for parquet (data on disk)
-    pub path: Option<String>, // source path for lazy
 }

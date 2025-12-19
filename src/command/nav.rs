@@ -116,33 +116,12 @@ impl Command for SelAll {
     fn record(&self) -> bool { false }
 }
 
-/// Select rows matching SQL WHERE expression
+/// Select rows matching SQL WHERE expression (stub - needs plugin)
 pub struct SelRows { pub expr: String }
 impl Command for SelRows {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
-        use polars::prelude::*;
-        use crate::table::table_to_df;
-        let view = app.req()?;
-        let df = table_to_df(view.data.as_ref());
-        // Find matching row indices
-        let mut ctx = polars::sql::SQLContext::new();
-        let with_idx = df.lazy().with_row_index("__idx__", None);
-        ctx.register("df", with_idx);
-        let matches: Vec<usize> = ctx.execute(&format!("SELECT __idx__ FROM df WHERE {}", self.expr))
-            .and_then(|lf| lf.collect())
-            .map(|result| {
-                result.column("__idx__").ok()
-                    .and_then(|c| c.idx().ok())
-                    .map(|idx| idx.into_iter().filter_map(|v| v.map(|i| i as usize)).collect())
-                    .unwrap_or_default()
-            })
-            .unwrap_or_default();
-
-        let count = matches.len();
-        if let Some(view) = app.view_mut() {
-            view.selected_rows.extend(matches);
-        }
-        app.msg(format!("Selected {} row(s)", count));
+        // TODO: implement via plugin for SQL filtering
+        app.msg("SelRows not yet implemented without polars");
         Ok(())
     }
     fn to_str(&self) -> String { format!("sel_rows {}", self.expr) }

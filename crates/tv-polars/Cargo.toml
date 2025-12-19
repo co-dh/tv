@@ -1,0 +1,12 @@
+[package]
+name = "tv-polars"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+tv-plugin-api = { path = "../tv-plugin-api" }
+polars = { version = "0.52", default-features = false, features = ["lazy", "csv", "parquet", "sql", "new_streaming", "pivot", "dtype-struct", "dtype-array", "dtype-i8", "dtype-i16", "dtype-u8", "dtype-u16", "temporal", "rows"] }
+prqlc = "0.13"

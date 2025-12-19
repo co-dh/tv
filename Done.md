@@ -262,3 +262,31 @@
 - is_empty() on StateStack (clippy lint)
 - thiserror dependency and TvError enum (NoTable, ColumnNotFound, etc.)
 - Row/Col newtypes for future type safety refactoring
+
+## ViewState Refactoring (28 → 16 fields)
+- Created ViewSource enum: Memory | Gz { path, partial } | Parquet { path, rows, cols }
+- Created ParentInfo struct: { id, rows, name, freq_col } - for meta/freq views
+- Created ViewCache struct: { stats, meta, fetch } - for cached computations
+- Grouped related fields to reduce ViewState complexity
+- source field replaces: gz_source, parquet_path, partial, disk_rows
+- parent field replaces: parent_id, parent_rows, parent_name, freq_col
+- cache field replaces: stats_cache, meta_cache, fetch_cache
+- filter field replaces: filter_clause
+- cols field: current column list (after select/xkey)
+- Renamed source() method to backend() to avoid field/method confusion
+- All tests passing
+
+## TUI/Backend Separation (Table Trait)
+- Created `src/table.rs` with Table trait abstraction (Cell, ColType, Table, Backend traits)
+- Created `src/backend/polars_impl.rs` with PolarsTable implementing Table trait
+- Added `as_table()` and `col_stats()` methods to ViewState
+- Renderer methods now use Table trait instead of DataFrame:
+  - `render_headers_xs(table: &dyn Table)` - column headers
+  - `render_row_xs(table: &dyn Table)` - data rows
+  - `render_header_footer(table: &dyn Table)` - footer header
+  - `format_cell(table: &dyn Table)` - cell value formatting
+  - `col_width(table: &dyn Table)` - column width calculation
+- Moved column_stats computation to PolarsTable::col_stats()
+- ColStats struct with format() method for status bar display
+- Renderer no longer imports `polars::prelude::*` directly
+- All tests passing

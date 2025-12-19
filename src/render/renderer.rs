@@ -1,6 +1,6 @@
 use crate::app::AppContext;
-use crate::source::{Source, Polars};
-use crate::table::{Cell, Table, df_to_table};
+use crate::dynload;
+use crate::table::{Cell, Table};
 use crate::utils::commify;
 use crate::state::{TableState, ViewKind, ViewSource, ViewState};
 use crate::theme::Theme;
@@ -70,15 +70,16 @@ impl Renderer {
             // Check if visible range is within cache
             let in_cache = view.cache.fetch.map(|(s, e)| r0 >= s && rend <= e).unwrap_or(false);
             if !in_cache {
-                // Fetch 100k rows centered around current position
-                let start = r0.saturating_sub(CACHE_SIZE / 4);  // 25k before
+                // Fetch 10k rows centered around current position via plugin
+                let start = r0.saturating_sub(CACHE_SIZE / 4);
                 dbg_log(&format!("fetch parquet start={} rows={} filter={:?}", start, CACHE_SIZE, view.filter));
-                let w = view.filter.as_deref().unwrap_or("TRUE");
-                let df = Polars.fetch_sel(path, &view.cols, w, start, CACHE_SIZE);
-                if let Ok(df) = df {
-                    let fetched = df.height();
-                    view.data = df_to_table(df);
-                    view.cache.fetch = Some((start, start + fetched));
+                if let Some(plugin) = dynload::get() {
+                    let w = view.filter.as_deref().unwrap_or("TRUE");
+                    if let Some(t) = plugin.fetch_where(path, w, start, CACHE_SIZE) {
+                        let fetched = t.rows();  // Table trait method
+                        view.data = dynload::to_box_table(&t);
+                        view.cache.fetch = Some((start, start + fetched));
+                    }
                 }
             }
             // Return offset: df row 0 = cache start
@@ -559,17 +560,20 @@ fn to_rcolor(c: ratatui::crossterm::style::Color) -> RColor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backend::PolarsTable;
+    use crate::table::{SimpleTable, ColType, Cell as TCell};
     use crate::state::TableState;
-    use polars::prelude::*;
 
     #[test]
     fn test_null_not_commified() {
-        let df = df! {
-            "int_col" => &[Some(1000000i64), None, Some(2000000i64)],
-            "float_col" => &[Some(1234.567f64), None, Some(9876.543f64)],
-        }.unwrap();
-        let table = PolarsTable::new(df);
+        let table = SimpleTable::new(
+            vec!["int_col".into(), "float_col".into()],
+            vec![ColType::Int, ColType::Float],
+            vec![
+                vec![TCell::Int(1000000), TCell::Float(1234.567)],
+                vec![TCell::Null, TCell::Null],
+                vec![TCell::Int(2000000), TCell::Float(9876.543)],
+            ]
+        );
 
         let int_null = Renderer::test_format_cell(&table, 0, 1, 3);
         assert_eq!(int_null, "null", "Integer null should be 'null', not 'n,ull'");
@@ -587,11 +591,14 @@ mod tests {
     #[test]
     fn test_last_col_width_not_extended() {
         // Last column should NOT fill rest of screen - looks weird for right-aligned numbers
-        let df = df! {
-            "name" => &["apple", "banana"],
-            "price" => &[100i64, 200i64],
-        }.unwrap();
-        let table = PolarsTable::new(df);
+        let table = SimpleTable::new(
+            vec!["name".into(), "price".into()],
+            vec![ColType::Str, ColType::Int],
+            vec![
+                vec![TCell::Str("apple".into()), TCell::Int(100)],
+                vec![TCell::Str("banana".into()), TCell::Int(200)],
+            ]
+        );
         let state = TableState { viewport: (25, 120), ..Default::default() };
 
         // Get natural widths for both columns

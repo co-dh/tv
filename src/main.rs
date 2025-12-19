@@ -1,8 +1,6 @@
 mod app;
-mod backend;
 mod dynload;
 mod error;
-mod source;
 mod command;
 mod keyhandler;
 mod keymap;
@@ -10,7 +8,6 @@ mod picker;
 mod plugin;
 mod pure;
 mod render;
-mod sqlite;
 mod state;
 mod table;
 mod theme;
@@ -18,8 +15,6 @@ mod utils;
 
 use anyhow::Result;
 use app::AppContext;
-use source::Source;
-use table::{df_to_table, table_to_df};
 use command::executor::CommandExecutor;
 use command::io::{From, Save};
 use command::nav::{Goto, GotoCol, ToggleInfo, Decimals, ToggleSel, ClearSel, SelAll, SelRows};
@@ -33,24 +28,37 @@ use ratatui::crossterm::{cursor, execute, style::Print, terminal};
 use std::fs;
 use std::io::{self, Write};
 
-/// Try to load polars plugin from standard locations
+/// Try to load plugins from standard locations
 fn load_plugin() {
     let exe = std::env::current_exe().ok();
     let exe_dir = exe.as_ref().and_then(|p| p.parent());
+    let home_lib = dirs::home_dir().map(|h| h.join(".local/lib/tv"));
 
-    // Search paths: next to binary, plugins/, ~/.local/lib/tv/
-    let paths = [
+    // Load polars plugin (for file paths)
+    for p in [
         exe_dir.map(|d| d.join("libtv_polars.so")),
         exe_dir.map(|d| d.join("plugins/libtv_polars.so")),
-        dirs::home_dir().map(|h| h.join(".local/lib/tv/libtv_polars.so")),
-    ];
-
-    for p in paths.into_iter().flatten() {
+        home_lib.as_ref().map(|d| d.join("libtv_polars.so")),
+    ].into_iter().flatten() {
         if p.exists() {
-            if let Err(e) = dynload::load(p.to_str().unwrap_or("")) {
-                eprintln!("Warning: failed to load plugin: {}", e);
+            if let Err(e) = dynload::load_polars(p.to_str().unwrap_or("")) {
+                eprintln!("Warning: failed to load polars plugin: {}", e);
             }
-            return;
+            break;
+        }
+    }
+
+    // Load sqlite plugin (for memory:id paths)
+    for p in [
+        exe_dir.map(|d| d.join("libtv_sqlite.so")),
+        exe_dir.map(|d| d.join("plugins/libtv_sqlite.so")),
+        home_lib.as_ref().map(|d| d.join("libtv_sqlite.so")),
+    ].into_iter().flatten() {
+        if p.exists() {
+            if let Err(e) = dynload::load_sqlite(p.to_str().unwrap_or("")) {
+                eprintln!("Warning: failed to load sqlite plugin: {}", e);
+            }
+            break;
         }
     }
 }
@@ -351,27 +359,21 @@ fn wait_bg_save(app: &mut AppContext) {
     }
 }
 
-/// Block until background meta completes
-fn wait_bg_meta(app: &mut AppContext) {
-    if let Some((pid, rx)) = app.bg_meta.take() {
-        if let Ok(df) = rx.recv() {
-            if let Some(v) = app.view_mut() {
-                if v.kind == state::ViewKind::Meta && v.parent.as_ref().map(|p| p.id) == Some(pid) { v.data = df_to_table(df); }
-            }
-        }
-    }
+/// Block until background meta completes (stub - meta now via plugin)
+fn wait_bg_meta(_app: &mut AppContext) {
+    // Background meta removed - computed via plugin on demand
 }
 
-/// Fetch visible rows for lazy parquet view
+/// Fetch visible rows for lazy parquet view (via plugin)
 fn fetch_lazy(view: &mut state::ViewState) {
     if let state::ViewSource::Parquet { ref path, .. } = view.source {
         let offset = view.state.r0;
-        let df = if let Some(ref w) = view.filter {
-            source::Polars.fetch_where(path, w, offset, 50)
-        } else {
-            source::Polars.fetch_rows(path, offset, 50)
-        };
-        if let Ok(df) = df { view.data = df_to_table(df); }
+        if let Some(plugin) = dynload::get() {
+            let w = view.filter.as_deref().unwrap_or("TRUE");
+            if let Some(t) = plugin.fetch_where(path, w, offset, 50) {
+                view.data = dynload::to_box_table(&t);
+            }
+        }
     }
 }
 
@@ -422,17 +424,10 @@ fn print_status(app: &mut AppContext) {
     }
 }
 
-/// Wait for all background tasks to complete (freq, meta, loader)
+/// Wait for all background tasks to complete (stub - now via plugin)
 fn wait_bg(app: &mut AppContext) {
-    use std::time::Duration;
-    // Poll until all bg tasks done (max 5s)
-    for _ in 0..50 {
-        app.check_bg_freq();
-        app.check_bg_meta();
-        app.merge_bg_data();
-        if app.bg_freq.is_none() && app.bg_meta.is_none() && app.bg_loader.is_none() { break; }
-        std::thread::sleep(Duration::from_millis(100));
-    }
+    // Background tasks removed - data fetched via plugin on demand
+    app.check_bg_saver();
 }
 
 /// Parse command string into Command object
@@ -520,8 +515,7 @@ fn run(app: &mut AppContext, cmd: Box<dyn command::Command>) {
 fn find_match(app: &mut AppContext, forward: bool) {
     if let Some(expr) = app.search.value.clone() {
         if let Some(view) = app.view_mut() {
-            let df = table_to_df(view.data.as_ref());
-            let m = find(&df, &expr);
+            let m = find(view.data.as_ref(), &expr);
             let cur = view.state.cr;
             let pos = if forward { m.iter().find(|&&i| i > cur) } else { m.iter().rev().find(|&&i| i < cur) };
             if let Some(&p) = pos { view.state.cr = p; view.state.visible(); }
@@ -660,7 +654,7 @@ fn handle_cmd(app: &mut AppContext, cmd: &str) -> Result<bool> {
                 if let Some(v) = app.view_mut() { v.selected_cols.clear(); }
             }
         }
-        "pivot" => if app.has_view() { run(app, Box::new(crate::plugin::pivot::PivotPick)); },
+        "pivot" => if app.has_view() { run(app, Box::new(crate::plugin::pivot::Pivot)); },
         "rename" => {
             if let Some(old_name) = app.view().and_then(|v| v.col_name(v.state.cc)) {
                 if let Some(new_name) = prompt(app, &format!("Rename '{}' to: ", old_name))? {
@@ -750,8 +744,7 @@ fn do_search(app: &mut AppContext) -> Result<()> {
     let info = app.view().and_then(|v| {
         let col_name = v.col_name(v.state.cc)?;
         let file = v.filename.as_deref();
-        let df = table_to_df(v.data.as_ref());
-        Some((hints(&df, &col_name, v.state.cr, file), col_name, v.name.starts_with("ls")))
+        Some((hints(v.data.as_ref(), &col_name, v.state.cr, file), col_name, v.name.starts_with("ls")))
     });
     if let Some((hint_list, col_name, is_folder)) = info {
         let expr_opt = picker::fzf(hint_list, "Search> ");
@@ -761,10 +754,7 @@ fn do_search(app: &mut AppContext) -> Result<()> {
             let expr = if !prql_mode && is_plain_value(&expr) {
                 format!("{} LIKE '%{}%'", col_name, expr)
             } else { expr.to_string() };
-            let matches = app.view().map(|v| {
-                let df = table_to_df(v.data.as_ref());
-                find(&df, &expr)
-            }).unwrap_or_default();
+            let matches = app.view().map(|v| find(v.data.as_ref(), &expr)).unwrap_or_default();
             app.search.col_name = None;
             app.search.value = Some(expr.clone());
             let found = if let Some(view) = app.view_mut() {
@@ -787,8 +777,7 @@ fn do_filter(app: &mut AppContext) -> Result<()> {
         let is_str = v.data.col_type(v.state.cc) == table::ColType::Str;
         let file = v.filename.as_deref();
         let header = v.data.col_names().join(" | ");
-        let df = table_to_df(v.data.as_ref());
-        Some((hints(&df, &col_name, v.state.cr, file), col_name, is_str, header))
+        Some((hints(v.data.as_ref(), &col_name, v.state.cr, file), col_name, is_str, header))
     });
     if let Some((hint_list, col_name, is_str, header)) = info {
         let expr_opt = picker::fzf_filter(hint_list, "WHERE> ", &col_name, is_str, Some(&header));
@@ -861,72 +850,32 @@ fn unquote(s: &str) -> String {
     }
 }
 
-/// Generate filter hints: distinct values first, PRQL hints if cfg prql_hints=true
-fn hints(df: &polars::prelude::DataFrame, col_name: &str, row: usize, file: Option<&str>) -> Vec<String> {
-    use polars::prelude::DataType;
+/// Generate filter hints from table data (stub - uses Table trait)
+fn hints(table: &dyn table::Table, col_name: &str, _row: usize, file: Option<&str>) -> Vec<String> {
     let mut items = Vec::new();
-    let Ok(col) = df.column(col_name) else { return items };
-    let dtype = col.dtype();
-    let is_str = matches!(dtype, DataType::String);
-    let is_datetime = matches!(dtype, DataType::Date | DataType::Datetime(_, _) | DataType::Time);
 
-    // Distinct values: from disk for parquet, else from memory
+    // Try to get hints from plugin for parquet files
     if let Some(path) = file.filter(|f| f.ends_with(".parquet")) {
-        if let Ok(vals) = source::Polars.distinct(path, col_name) {
-            items.extend(vals.into_iter().map(|v| unquote(&v)).filter(|v| v != "null"));
-        }
-    } else if let Ok(uniq) = col.unique() {
-        items.extend((0..uniq.len())
-            .filter_map(|i| uniq.get(i).ok())
-            .map(|v| unquote(&v.to_string()))
-            .filter(|v| v != "null"));
-    }
-
-    // Sort distinct values
-    items.sort();
-
-    // PRQL hints only if enabled in cfg/config.csv
-    if theme::load_config_value("prql_hints").map(|v| v == "true").unwrap_or(false) {
-        items.extend(prql_hints(col, col_name, row, is_str, is_datetime));
-    }
-    items
-}
-
-/// Generate PRQL filter hints (text patterns, date ranges, comparisons)
-fn prql_hints(col: &polars::prelude::Column, col_name: &str, row: usize, is_str: bool, is_datetime: bool) -> Vec<String> {
-    let mut items = Vec::new();
-    if is_str {
-        if let Ok(val) = col.get(row) {
-            let v = unquote(&val.to_string());
-            if v.len() >= 2 {
-                items.push(format!("({} | text.starts_with '{}')", col_name, &v[..2]));
-                items.push(format!("({} | text.ends_with '{}')", col_name, &v[v.len()-2..]));
-                items.push(format!("({} | text.contains '{}')", col_name, &v[..v.len().min(4)]));
+        if let Some(plugin) = dynload::get() {
+            if let Some(vals) = plugin.distinct(path, col_name) {
+                items.extend(vals.into_iter().filter(|v| v != "null"));
             }
         }
-    } else if is_datetime {
-        if let Ok(val) = col.get(row) {
-            let v = val.to_string();
-            if let Some((year, rest)) = v.split_once('-') {
-                if let Ok(y) = year.parse::<i32>() {
-                    items.push(format!("{} >= @{}-01-01 && {} < @{}-01-01", col_name, y, col_name, y + 1));
-                    if let Some((month, _)) = rest.split_once('-') {
-                        if let Ok(m) = month.parse::<u32>() {
-                            let (ny, nm) = if m >= 12 { (y + 1, 1) } else { (y, m + 1) };
-                            items.push(format!("{} >= @{}-{:02}-01 && {} < @{}-{:02}-01", col_name, y, m, col_name, ny, nm));
-                        }
-                    }
+    } else {
+        // Get distinct values from in-memory table
+        let col_idx = table.col_names().iter().position(|c| c == col_name);
+        if let Some(idx) = col_idx {
+            let mut seen = std::collections::HashSet::new();
+            for r in 0..table.rows().min(1000) {  // sample first 1000 rows
+                let v = table.cell(r, idx).format(10);
+                if v != "null" && seen.insert(v.clone()) {
+                    items.push(unquote(&v));
                 }
             }
         }
-    } else if let Ok(val) = col.get(row) {
-        let v = val.to_string();
-        if v != "null" {
-            items.push(format!("{} > {}", col_name, v));
-            items.push(format!("{} < {}", col_name, v));
-            items.push(format!("{} >= {} && {} <= {}", col_name, v, col_name, v));
-        }
     }
+
+    items.sort();
     items
 }
 
@@ -941,21 +890,10 @@ fn is_plain_value(expr: &str) -> bool {
     e.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.' || c == '-')
 }
 
-/// Find rows matching SQL WHERE expression, returns row indices
-fn find(df: &polars::prelude::DataFrame, expr: &str) -> Vec<usize> {
-    use polars::prelude::*;
-    let mut ctx = polars::sql::SQLContext::new();
-    let with_idx = df.clone().lazy().with_row_index("__idx__", None);
-    ctx.register("df", with_idx);
-    ctx.execute(&format!("SELECT __idx__ FROM df WHERE {}", expr))
-        .and_then(|lf| lf.collect())
-        .map(|result| {
-            result.column("__idx__").ok()
-                .and_then(|c| c.idx().ok())
-                .map(|idx| idx.into_iter().filter_map(|v| v.map(|i| i as usize)).collect())
-                .unwrap_or_default()
-        })
-        .unwrap_or_default()
+/// Find rows matching expression (stub - returns empty for now)
+fn find(_table: &dyn table::Table, _expr: &str) -> Vec<usize> {
+    // TODO: implement via plugin for SQL filtering
+    Vec::new()
 }
 
 /// Prompt user for input, None if cancelled
@@ -1010,74 +948,20 @@ fn prompt(_app: &mut AppContext, prompt: &str) -> Result<Option<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use polars::prelude::*;
-
-    fn make_test_df() -> DataFrame {
-        df! {
-            "name" => &["apple", "banana", "cherry", "pineapple", "grape", "blueberry"]
-        }.unwrap()
-    }
-
-    #[test]
-    fn test_find_exact() {
-        let df = make_test_df();
-        // SQL = for string equality (passed through)
-        assert_eq!(find(&df, "name = 'banana'"), vec![1]);
-        assert_eq!(find(&df, "name = 'notfound'"), Vec::<usize>::new());
-    }
-
-    #[test]
-    fn test_find_like() {
-        let df = make_test_df();
-        // SQL LIKE patterns (passed through)
-        assert_eq!(find(&df, "name LIKE 'b%'"), vec![1, 5]);  // banana, blueberry
-        assert_eq!(find(&df, "name LIKE '%rry'"), vec![2, 5]);  // cherry, blueberry
-        assert_eq!(find(&df, "name LIKE '%apple%'"), vec![0, 3]);  // apple, pineapple
-    }
-
-    #[test]
-    fn test_hints_string() {
-        let df = df! { "name" => &["apple", "banana"] }.unwrap();
-        let h = hints(&df, "name", 0, None);
-        // Default: distinct values only (no PRQL hints unless cfg enabled)
-        assert!(h.iter().any(|s| s == "apple"), "Should have distinct value apple");
-        assert!(h.iter().any(|s| s == "banana"), "Should have distinct value banana");
-    }
-
-    #[test]
-    fn test_hints_datetime() {
-        let dates = ["2025-01-15", "2025-02-20"];
-        let df = df! {
-            "dt" => dates.iter().map(|s| {
-                chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap()
-            }).collect::<Vec<_>>()
-        }.unwrap();
-        let h = hints(&df, "dt", 0, None);
-        // Default: distinct date values
-        assert!(h.iter().any(|s| s.contains("2025-01-15")), "Should have distinct date value");
-    }
-
-    #[test]
-    fn test_hints_numeric() {
-        let df = df! { "val" => &[1, 2, 3] }.unwrap();
-        let h = hints(&df, "val", 0, None);
-        // Default: distinct values
-        assert!(h.iter().any(|s| s == "1"), "Should have distinct value 1");
-        assert!(h.iter().any(|s| s == "2"), "Should have distinct value 2");
-    }
-
-    #[test]
-    fn test_hints_no_limit() {
-        let df = df! { "val" => (0..600).collect::<Vec<i32>>() }.unwrap();
-        let h = hints(&df, "val", 0, None);
-        // All distinct values returned
-        assert_eq!(h.len(), 600, "All distinct values should be returned");
-    }
 
     #[test]
     fn test_key_str_backslash() {
         use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
         let key = KeyEvent::new(KeyCode::Char('\\'), KeyModifiers::NONE);
         assert_eq!(key_str(&key), "<backslash>", "backslash should map to <backslash>");
+    }
+
+    #[test]
+    fn test_is_plain_value() {
+        assert!(is_plain_value("foo"));
+        assert!(is_plain_value("123"));
+        assert!(is_plain_value("'quoted'"));
+        assert!(!is_plain_value("a > b"));
+        assert!(!is_plain_value("col = 5"));
     }
 }

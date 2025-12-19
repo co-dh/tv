@@ -1,17 +1,13 @@
-//! Meta view plugin - data profile/metadata statistics
+//! Meta view plugin - data profile/metadata statistics (stub)
 
 use crate::app::AppContext;
-use crate::table::{df_to_table, table_to_df};
-use crate::utils::{is_numeric, unquote};
+use crate::utils::unquote;
 use crate::command::Command;
 use crate::command::executor::CommandExecutor;
 use crate::command::transform::Xkey;
 use crate::command::view::Pop;
 use crate::plugin::Plugin;
-use crate::state::ViewState;
-use crate::ser;
 use anyhow::{anyhow, Result};
-use polars::prelude::*;
 
 pub struct MetaPlugin;
 
@@ -30,310 +26,75 @@ impl Plugin for MetaPlugin {
     }
 
     fn parse(&self, cmd: &str, _arg: &str) -> Option<Box<dyn Command>> {
-        match cmd { "meta" | "metadata" => Some(Box::new(Metadata)), _ => None }
+        match cmd {
+            "meta" | "metadata" => Some(Box::new(Metadata)),
+            "meta_enter" => Some(Box::new(MetaEnterCmd)),
+            _ => None,
+        }
     }
 }
 
-/// Get column names from selected rows (first column values)
-fn sel_cols(app: &AppContext, reverse: bool) -> Option<Vec<String>> {
-    app.view().and_then(|v| {
-        let mut rows: Vec<usize> = if v.selected_rows.is_empty() {
-            vec![v.state.cr]
-        } else {
-            v.selected_rows.iter().copied().collect()
-        };
-        if reverse { rows.sort_by(|a, b| b.cmp(a)); } else { rows.sort(); }
-        let names: Vec<String> = rows.iter()
-            .map(|&r| v.data.cell(r, 0).format(10))
-            .filter(|s| !s.is_empty() && s != "null")
-            .map(|s| unquote(&s))
-            .collect();
-        if names.is_empty() { None } else { Some(names) }
-    })
+/// Get selected column names from meta view
+fn sel_cols(app: &AppContext, allow_all: bool) -> Option<Vec<String>> {
+    let v = app.view()?;
+    let name_idx = v.data.col_names().iter().position(|c| c == "column")?;
+    let rows: Vec<usize> = if v.selected_rows.is_empty() {
+        if allow_all { (0..v.data.rows()).collect() } else { vec![v.state.cr] }
+    } else { v.selected_rows.iter().copied().collect() };
+    Some(rows.iter().filter_map(|&r| {
+        let s = v.data.cell(r, name_idx).format(10);
+        if s.is_empty() || s == "null" { None } else { Some(unquote(&s)) }
+    }).collect())
 }
 
-// === Commands ===
-
-/// Push meta view onto stack
-fn push_meta(app: &mut AppContext, df: DataFrame, pid: usize, prows: usize, pname: String, pcol: usize, sep: Option<usize>, parent_prql: &str) {
-    let id = app.next_id();
-    let mut v = ViewState::new_meta(id, df_to_table(df), pid, prows, pname, parent_prql);
-    v.state.cr = pcol;
-    if let Some(s) = sep { v.col_separator = Some(s); }
-    app.stack.push(v);
-}
-
-/// Metadata command - shows column statistics (null%, distinct, min, max, median, sigma)
+/// Metadata command - show column stats (stub - needs plugin)
 pub struct Metadata;
 
 impl Command for Metadata {
-    fn exec(&mut self, app: &mut AppContext) -> Result<()> {
-        // Block meta while gz is still loading
-        if app.is_loading() { return Err(anyhow!("Wait for loading to complete")); }
-        let (parent_id, parent_col, parent_rows, parent_name, parent_prql, has_cache, df, col_sep, is_pq, col_names, schema) = {
-            let view = app.req()?;
-            let is_pq = view.source.is_parquet();
-            let df = table_to_df(view.data.as_ref());
-            let (cols, schema) = if is_pq {
-                let path = view.path().to_string();
-                (view.backend().cols(&path)?, view.backend().schema(&path)?)
-            } else {
-                use crate::source::{Source, Memory};
-                let src = Memory(&df);
-                (src.cols("")?, src.schema("")?)
-            };
-            (view.id, view.state.cc, view.rows(), view.name.clone(), view.prql.clone(),
-             view.cache.meta.is_some(), df, view.col_separator, is_pq, cols, schema)
-        };
-        let key_cols: Vec<String> = col_sep.map(|sep| col_names[..sep].to_vec()).unwrap_or_default();
-
-        // Check cache (only for non-grouped)
-        if key_cols.is_empty() && has_cache {
-            // Use cached table - convert back to df for push_meta
-            let cached_df = app.req()?.cache.meta.as_ref().map(|t| table_to_df(t));
-            if let Some(df) = cached_df {
-                push_meta(app, df, parent_id, parent_rows, parent_name, parent_col, None, &parent_prql);
-                return Ok(());
-            }
-        }
-
-        // Grouped stats need in-memory df
-        if !key_cols.is_empty() {
-            let types: Vec<String> = df.dtypes().iter().map(|dt| format!("{:?}", dt)).collect();
-            let placeholder = placeholder_df(col_names, types)?;
-            push_meta(app, placeholder, parent_id, parent_rows, parent_name, parent_col, Some(key_cols.len()), &parent_prql);
-            let (tx, rx) = std::sync::mpsc::channel();
-            std::thread::spawn(move || { if let Ok(r) = grp_stats(&df, &key_cols) { let _ = tx.send(r); } });
-            app.bg_meta = Some((parent_id, rx));
-            return Ok(());
-        }
-
-        // Non-grouped: unified LazyFrame path (parquet or in-memory)
-        let types: Vec<String> = schema.iter().map(|(_, dt)| dt.clone()).collect();
-        let placeholder = placeholder_df(col_names, types)?;
-        push_meta(app, placeholder, parent_id, parent_rows, parent_name, parent_col, None, &parent_prql);
-        let (tx, rx) = std::sync::mpsc::channel();
-        if is_pq {
-            let ppath = app.req()?.path().to_string();
-            std::thread::spawn(move || { if let Ok(r) = lf_stats_path(&ppath) { let _ = tx.send(r); } });
-        } else {
-            std::thread::spawn(move || { if let Ok(r) = lf_stats(&df) { let _ = tx.send(r); } });
-        }
-        app.bg_meta = Some((parent_id, rx));
-        Ok(())
+    fn exec(&mut self, _app: &mut AppContext) -> Result<()> {
+        // TODO: implement via plugin
+        Err(anyhow!("Metadata not yet implemented without polars"))
     }
-    fn to_str(&self) -> String { "meta".into() }
+    fn to_str(&self) -> String { "meta".to_string() }
 }
 
-/// Enter from meta view - pops meta, moves cursor to selected column (or xkey if multi-select)
+/// Meta Enter: pop meta view and select column in parent
 pub struct MetaEnter { pub col_names: Vec<String> }
 
 impl Command for MetaEnter {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
-        let _ = CommandExecutor::exec(app, Box::new(Pop));  // pop meta view
-        if self.col_names.len() == 1 {  // single col: move cursor
-            if let Some(v) = app.view_mut() {
-                // Use cols field if set, else data cols
-                let cols = if v.cols.is_empty() { v.data.col_names() } else { v.cols.clone() };
-                if let Some(idx) = cols.iter().position(|c| c == &self.col_names[0]) {
-                    v.state.cc = idx;
-                }
-            }
-        } else {
-            let _ = CommandExecutor::exec(app, Box::new(Xkey { col_names: self.col_names.clone() }));
+        CommandExecutor::exec(app, Box::new(Pop))?;
+        if !self.col_names.is_empty() {
+            CommandExecutor::exec(app, Box::new(Xkey { col_names: self.col_names.clone() }))?;
         }
         Ok(())
     }
-    fn to_str(&self) -> String { "meta_enter".into() }
+    fn to_str(&self) -> String { "meta_enter".to_string() }
     fn record(&self) -> bool { false }
 }
 
-/// Delete columns from parent table (selected rows in meta view = columns to delete)
+/// Meta Delete: pop and delete columns
 pub struct MetaDelete { pub col_names: Vec<String> }
 
 impl Command for MetaDelete {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
-        let n = self.col_names.len();
-        if let Some(pid) = app.view().and_then(|v| v.parent.as_ref().map(|p| p.id)) {
-            if let Some(parent) = app.stack.find_mut(pid) {
-                // Adjust col_separator if deleting key columns
-                if let Some(sep) = parent.col_separator {
-                    let cols = if parent.cols.is_empty() { parent.data.col_names() } else { parent.cols.clone() };
-                    let adj = self.col_names.iter().filter(|c| cols.iter().position(|x| x == *c).map(|i| i < sep).unwrap_or(false)).count();
-                    parent.col_separator = Some(sep.saturating_sub(adj));
-                }
-                // Init cols from data if empty, then remove deleted columns
-                if parent.cols.is_empty() { parent.cols = parent.data.col_names(); }
-                parent.cols.retain(|c| !self.col_names.contains(c));
-                // Clear cache to force re-fetch with new column list
-                parent.cache.fetch = None;
-                // For in-memory views, also drop from data
-                if !parent.source.is_parquet() {
-                    let mut df = table_to_df(parent.data.as_ref());
-                    for c in &self.col_names { let _ = df.drop_in_place(c); }
-                    parent.data = df_to_table(df);
-                }
-            }
+        CommandExecutor::exec(app, Box::new(Pop))?;
+        if !self.col_names.is_empty() {
+            CommandExecutor::exec(app, Box::new(crate::command::transform::DelCol { col_names: self.col_names.clone() }))?;
         }
-        let _ = CommandExecutor::exec(app, Box::new(Pop));
-        app.msg(format!("{} columns deleted", n));
         Ok(())
     }
-    fn to_str(&self) -> String { format!("meta_delete {}", self.col_names.join(",")) }
+    fn to_str(&self) -> String { "meta_delete".to_string() }
     fn record(&self) -> bool { false }
 }
 
-// === Stats computation ===
+/// Meta Enter command (parseable)
+pub struct MetaEnterCmd;
 
-use crate::source::{sql, df_cols};
-
-/// Build stats DataFrame from column vectors
-fn stats_df(cols: Vec<String>, types: Vec<String>, nulls: Vec<String>, dists: Vec<String>,
-            mins: Vec<String>, maxs: Vec<String>, meds: Vec<String>, sigs: Vec<String>) -> Result<DataFrame> {
-    Ok(DataFrame::new(vec![
-        ser!("column", cols), ser!("type", types), ser!("null%", nulls), ser!("distinct", dists),
-        ser!("min", mins), ser!("max", maxs), ser!("median", meds), ser!("sigma", sigs),
-    ])?)
-}
-
-/// Build placeholder stats DataFrame (with "..." for pending values)
-fn placeholder_df(cols: Vec<String>, types: Vec<String>) -> Result<DataFrame> {
-    let n = cols.len();
-    stats_df(cols, types, vec!["...".into(); n], vec!["...".into(); n],
-             vec!["...".into(); n], vec!["...".into(); n], vec!["...".into(); n], vec!["...".into(); n])
-}
-
-/// Column stats result from SQL query
-struct ColStats { nulls: f64, distinct: u32, min: String, max: String, mean: String, std: String }
-
-/// Compute stats for one column using SQL (works for both in-memory and lazy parquet)
-fn col_stats(lf: LazyFrame, col: &str, n: f64, is_num: bool) -> ColStats {
-    // SQL query - skip AVG/STDDEV for non-numeric columns (causes SQL error)
-    let q = if is_num {
-        format!(r#"SELECT COUNT(*) - COUNT("{}") as nulls, COUNT(DISTINCT "{}") as dist,
-            MIN("{}") as min, MAX("{}") as max, AVG("{}") as mean, STDDEV("{}") as std FROM df"#,
-            col, col, col, col, col, col)
-    } else {
-        format!(r#"SELECT COUNT(*) - COUNT("{}") as nulls, COUNT(DISTINCT "{}") as dist,
-            MIN("{}") as min, MAX("{}") as max FROM df"#, col, col, col, col)
-    };
-    let df = sql(lf, &q).ok();
-    let get = |c: &str| df.as_ref().and_then(|d| d.column(c).ok()?.get(0).ok()).map(|v| fmt(&v)).unwrap_or_default();
-    let nulls = df.as_ref().and_then(|d| d.column("nulls").ok()?.get(0).ok()?.try_extract::<u32>().ok()).unwrap_or(0) as f64;
-    let distinct = df.as_ref().and_then(|d| d.column("dist").ok()?.get(0).ok()?.try_extract::<u32>().ok()).unwrap_or(0);
-    ColStats {
-        nulls: 100.0 * nulls / n, distinct,
-        min: get("min"), max: get("max"),
-        mean: if is_num { get("mean") } else { String::new() },
-        std: if is_num { get("std") } else { String::new() },
+impl Command for MetaEnterCmd {
+    fn exec(&mut self, app: &mut AppContext) -> Result<()> {
+        let cols = sel_cols(app, false).unwrap_or_default();
+        MetaEnter { col_names: cols }.exec(app)
     }
-}
-
-
-/// Check if type string is numeric (for parquet schema)
-fn is_numeric_str(s: &str) -> bool {
-    matches!(s, "Int8"|"Int16"|"Int32"|"Int64"|"UInt8"|"UInt16"|"UInt32"|"UInt64"|"Float32"|"Float64")
-}
-
-/// Compute stats from in-memory DataFrame via LazyFrame + SQL
-fn lf_stats(df: &DataFrame) -> Result<DataFrame> {
-    let cols = df_cols(df);
-    let dtypes = df.dtypes();
-    let types: Vec<String> = dtypes.iter().map(|dt| format!("{:?}", dt)).collect();
-    let n = df.height() as f64;
-    let (mut nulls, mut mins, mut maxs, mut dists, mut meds, mut sigs) = (vec![], vec![], vec![], vec![], vec![], vec![]);
-    for (i, c) in cols.iter().enumerate() {
-        let s = col_stats(df.clone().lazy(), c, n, is_numeric(&dtypes[i]));
-        nulls.push(format!("{:.1}", s.nulls)); dists.push(format!("{}", s.distinct));
-        mins.push(s.min); maxs.push(s.max); meds.push(s.mean); sigs.push(s.std);
-    }
-    stats_df(cols, types, nulls, dists, mins, maxs, meds, sigs)
-}
-
-/// Compute grouped column statistics - stats per unique key combination
-/// Used when xkey columns are set; shows stats for each group separately
-fn grp_stats(df: &DataFrame, keys: &[String]) -> Result<DataFrame> {
-    let all = df_cols(df);
-    let non_keys: Vec<&String> = all.iter().filter(|c| !keys.contains(c)).collect();
-
-    // Get unique key combinations
-    let unique = df.clone().lazy()
-        .select(keys.iter().map(|c| col(c)).collect::<Vec<_>>())
-        .unique(None, UniqueKeepStrategy::First)
-        .sort(keys.iter().map(|s| s.as_str()).collect::<Vec<_>>(), SortMultipleOptions::default())
-        .collect()?;
-
-    // Build key columns (repeated for each non-key column)
-    let mut result: Vec<Column> = Vec::new();
-    for k in keys {
-        let mut vals = Vec::new();
-        for r in 0..unique.height() {
-            for _ in &non_keys { vals.push(unique.column(k).ok().and_then(|c| c.get(r).ok()).map(|v| fmt(&v)).unwrap_or_default()); }
-        }
-        result.push(ser!(k.as_str(), vals));
-    }
-
-    // Compute stats per group per column using SQL
-    let (mut names, mut types, mut nulls, mut dists, mut mins, mut maxs, mut meds, mut sigs) =
-        (vec![], vec![], vec![], vec![], vec![], vec![], vec![], vec![]);
-
-    for r in 0..unique.height() {
-        // Build filter for this key combo
-        let filter = keys.iter().fold(lit(true), |acc, k| {
-            let v = unique.column(k).unwrap().get(r).unwrap();
-            acc.and(col(k).eq(lit(Scalar::new(unique.column(k).unwrap().dtype().clone(), v.into_static()))))
-        });
-        let grp = df.clone().lazy().filter(filter).collect()?;
-        let n = grp.height() as f64;
-
-        for &c in &non_keys {
-            let dt = grp.column(c)?.dtype().clone();
-            let s = col_stats(grp.clone().lazy(), c, n, is_numeric(&dt));
-            names.push(c.clone()); types.push(format!("{:?}", dt));
-            nulls.push(format!("{:.1}", s.nulls)); dists.push(format!("{}", s.distinct));
-            mins.push(s.min); maxs.push(s.max); meds.push(s.mean); sigs.push(s.std);
-        }
-    }
-
-    result.extend([
-        ser!("column", names), ser!("type", types), ser!("null%", nulls), ser!("distinct", dists),
-        ser!("min", mins), ser!("max", maxs), ser!("median", meds), ser!("sigma", sigs),
-    ]);
-    Ok(DataFrame::new(result)?)
-}
-
-/// Compute stats from parquet path via LazyFrame + SQL (column-by-column to avoid OOM)
-fn lf_stats_path(path: &str) -> Result<DataFrame> {
-    use crate::source::{Source, Polars};
-    use polars::prelude::{ScanArgsParquet, PlPath};
-    use std::io::Write;
-    let t0 = std::time::Instant::now();
-    let _ = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/tv.debug.log")
-        .and_then(|mut f| writeln!(f, "[lf_stats_path] START {}", path));
-
-    let schema = Polars.schema(path)?;
-    let (rows, _) = Polars.metadata(path)?;
-    let cols: Vec<String> = schema.iter().map(|(name, _)| name.clone()).collect();
-    let types: Vec<String> = schema.iter().map(|(_, dt)| dt.clone()).collect();
-    let n = rows as f64;
-    let (mut nulls, mut mins, mut maxs, mut dists, mut meds, mut sigs) = (vec![], vec![], vec![], vec![], vec![], vec![]);
-    for (i, c) in cols.iter().enumerate() {
-        let lf = LazyFrame::scan_parquet(PlPath::new(path), ScanArgsParquet::default())?;
-        let s = col_stats(lf, c, n, is_numeric_str(&types[i]));
-        nulls.push(format!("{:.1}", s.nulls)); dists.push(format!("{}", s.distinct));
-        mins.push(s.min); maxs.push(s.max); meds.push(s.mean); sigs.push(s.std);
-    }
-    let _ = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/tv.debug.log")
-        .and_then(|mut f| writeln!(f, "[lf_stats_path] DONE {:.2}s {} cols", t0.elapsed().as_secs_f64(), cols.len()));
-    stats_df(cols, types, nulls, dists, mins, maxs, meds, sigs)
-}
-
-/// Format AnyValue to string, trimming quotes
-fn fmt(v: &AnyValue) -> String {
-    match v {
-        AnyValue::Null => String::new(),
-        AnyValue::Float64(f) => format!("{:.2}", f),
-        AnyValue::Float32(f) => format!("{:.2}", f),
-        _ => { let s = v.to_string(); if s == "null" { String::new() } else { unquote(&s) } }
-    }
+    fn to_str(&self) -> String { "meta_enter".to_string() }
 }

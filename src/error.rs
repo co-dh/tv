@@ -24,9 +24,6 @@ pub enum TvError {
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
 
-    #[error("polars: {0}")]
-    Polars(#[from] polars::error::PolarsError),
-
     #[error("{0}")]
     Other(String),
 }

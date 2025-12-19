@@ -1,12 +1,12 @@
+//! Application context - global state, view stack, background tasks
+
 use crate::error::TvError;
 use crate::keymap::KeyMap;
 use crate::plugin::Registry;
-use crate::state::{StateStack, ViewKind, ViewSource, ViewState};
-use crate::table::{df_to_table, SimpleTable};
+use crate::state::{StateStack, ViewState};
 use crate::theme::Theme;
 use crate::render::Renderer;
 use anyhow::Result;
-use polars::prelude::DataFrame;
 use ratatui::crossterm::event::{self, Event, KeyEvent};
 use ratatui::DefaultTerminal;
 use std::fs::OpenOptions;
@@ -34,11 +34,8 @@ pub struct AppContext {
     pub keymap: KeyMap,            // key bindings
     pub theme: Theme,              // color theme
     pub plugins: Registry,         // plugin registry
-    pub bg_loader: Option<Receiver<crate::source::gz::GzChunk>>,  // background gz loader
     pub bg_saver: Option<Receiver<String>>,      // background save status
     pub raw_save: bool,            // --raw: skip type detection on save
-    pub bg_meta: Option<(usize, Receiver<DataFrame>)>,  // (parent_id, meta stats receiver)
-    pub bg_freq: Option<(usize, Receiver<DataFrame>)>,  // (freq_view_id, freq agg receiver)
     pub needs_redraw: bool,  // force full redraw (after leaving alternate screen)
     pub needs_center: bool,  // center cursor after viewport update (for search)
 }
@@ -62,11 +59,8 @@ impl Default for AppContext {
             keymap: KeyMap::default(),
             theme: Theme::load_active(),
             plugins: Registry::new(std::path::Path::new("cfg/plugins.csv")),
-            bg_loader: None,
             bg_saver: None,
             raw_save: false,
-            bg_meta: None,
-            bg_freq: None,
             needs_redraw: false,
             needs_center: false,
         }
@@ -75,54 +69,8 @@ impl Default for AppContext {
 
 impl AppContext {
 
-    /// Check if background loading is in progress
-    pub fn is_loading(&self) -> bool { self.bg_loader.is_some() }
-
-    /// Merge any available background data into current view
-    pub fn merge_bg_data(&mut self) {
-        use std::sync::mpsc::TryRecvError;
-        use crate::source::gz::GzChunk;
-        let Some(rx) = &self.bg_loader else { return };
-
-        // Collect all available chunks (non-blocking)
-        let mut chunks: Vec<GzChunk> = Vec::new();
-        loop {
-            match rx.try_recv() {
-                Ok(chunk) => chunks.push(chunk),
-                Err(TryRecvError::Empty) => break,
-                Err(TryRecvError::Disconnected) => {
-                    self.bg_loader = None;
-                    break;
-                }
-            }
-        }
-
-        if chunks.is_empty() { return; }
-
-        // Merge into current view (append rows to SimpleTable)
-        if let Some(view) = self.stack.cur_mut() {
-            let old_rows = view.data.rows();
-            // Build combined table from current + chunks
-            let mut combined = SimpleTable::new(
-                view.data.col_names(),
-                (0..view.data.cols()).map(|c| view.data.col_type(c)).collect(),
-                (0..view.data.rows()).map(|r|
-                    (0..view.data.cols()).map(|c| view.data.cell(r, c)).collect()
-                ).collect()
-            );
-            for chunk in chunks {
-                match chunk {
-                    Some(df) => { let t = df_to_table(df); combined.append(t.as_ref()); }
-                    None => {  // EOF - mark gz as fully loaded
-                        if let ViewSource::Gz { partial, .. } = &mut view.source { *partial = false; }
-                    }
-                }
-            }
-            view.data = Box::new(combined);
-            let new_rows = view.data.rows();
-            if new_rows > old_rows { view.state.col_widths.clear(); }
-        }
-    }
+    /// Check if background loading is in progress (stub - will use plugin)
+    pub fn is_loading(&self) -> bool { false }
 
     /// Check for background save status updates
     pub fn check_bg_saver(&mut self) {
@@ -134,57 +82,6 @@ impl AppContext {
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => { self.bg_saver = None; break; }
             }
-        }
-    }
-
-    /// Check for background meta stats and update view
-    pub fn check_bg_meta(&mut self) {
-        use std::sync::mpsc::TryRecvError;
-        let Some((parent_id, ref rx)) = self.bg_meta else { return };
-        match rx.try_recv() {
-            Ok(meta_df) => {
-                let t = df_to_table(meta_df);
-                // Convert to SimpleTable (cache needs concrete type)
-                let st = SimpleTable::new(
-                    t.col_names(),
-                    (0..t.cols()).map(|c| t.col_type(c)).collect(),
-                    (0..t.rows()).map(|r| (0..t.cols()).map(|c| t.cell(r, c)).collect()).collect()
-                );
-                // Update current meta view if it's the one we're computing for
-                if let Some(view) = self.stack.cur_mut() {
-                    if view.kind == ViewKind::Meta && view.parent.as_ref().map(|p| p.id) == Some(parent_id) {
-                        view.data = Box::new(st.clone());
-                        view.state.col_widths.clear();
-                    }
-                }
-                // Cache in parent
-                if let Some(parent) = self.stack.find_mut(parent_id) {
-                    parent.cache.meta = Some(st);
-                }
-                self.bg_meta = None;
-            }
-            Err(TryRecvError::Empty) => {}
-            Err(TryRecvError::Disconnected) => { self.bg_meta = None; }
-        }
-    }
-
-    /// Check for background freq aggregates and update view
-    pub fn check_bg_freq(&mut self) {
-        use std::sync::mpsc::TryRecvError;
-        let Some((freq_id, ref rx)) = self.bg_freq else { return };
-        match rx.try_recv() {
-            Ok(freq_df) => {
-                // Update freq view if it's the one we're computing for
-                if let Some(view) = self.stack.cur_mut() {
-                    if view.id == freq_id {
-                        view.data = df_to_table(freq_df);
-                        view.state.col_widths.clear();
-                    }
-                }
-                self.bg_freq = None;
-            }
-            Err(TryRecvError::Empty) => {}
-            Err(TryRecvError::Disconnected) => { self.bg_freq = None; }
         }
     }
 
@@ -293,9 +190,6 @@ impl AppContext {
 
     /// Update: process background tasks
     fn update(&mut self) {
-        self.merge_bg_data();
         self.check_bg_saver();
-        self.check_bg_meta();
-        self.check_bg_freq();
     }
 }

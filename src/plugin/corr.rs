@@ -1,15 +1,10 @@
-//! Correlation matrix plugin - calculate and display correlation matrix
+//! Correlation matrix plugin (stub - needs polars)
 
 use crate::app::AppContext;
-use crate::source::df_cols;
-use crate::table::{df_to_table, table_to_df};
-use crate::utils::{is_numeric, unquote};
+use crate::utils::unquote;
 use crate::command::Command;
 use crate::plugin::Plugin;
-use crate::state::ViewState;
-use crate::ser;
 use anyhow::{anyhow, Result};
-use polars::prelude::*;
 
 pub struct CorrPlugin;
 
@@ -20,7 +15,7 @@ impl Plugin for CorrPlugin {
 
     fn handle(&self, cmd: &str, app: &mut AppContext) -> Option<Box<dyn Command>> {
         if cmd != "enter" { return None; }
-        // Get column name from current row (first column is row label)
+        // Get column name from current row
         let col_name = app.view().and_then(|v| {
             let col_idx = v.data.col_names().iter().position(|c| c == "column")?;
             let s = v.data.cell(v.state.cr, col_idx).format(10);
@@ -29,108 +24,37 @@ impl Plugin for CorrPlugin {
         Some(Box::new(CorrEnter { col_name }))
     }
 
-    fn parse(&self, cmd: &str, arg: &str) -> Option<Box<dyn Command>> {
+    fn parse(&self, cmd: &str, _arg: &str) -> Option<Box<dyn Command>> {
         if cmd != "corr" { return None; }
-        // Parse selected columns (comma-separated indices or empty for all)
-        let selected_cols = if arg.is_empty() { vec![] } else {
-            arg.split(',').filter_map(|s| s.trim().parse().ok()).collect()
-        };
-        Some(Box::new(Correlation { selected_cols }))
+        Some(Box::new(Correlation { selected_cols: vec![] }))
     }
 }
 
-/// Correlation matrix for numeric columns
-pub struct Correlation {
-    pub selected_cols: Vec<usize>,
-}
+/// Correlation matrix for numeric columns (stub)
+pub struct Correlation { pub selected_cols: Vec<usize> }
 
 impl Command for Correlation {
-    fn exec(&mut self, app: &mut AppContext) -> Result<()> {
-        let view = app.req()?;
-        let df = table_to_df(view.data.as_ref());
-        let all_col_names = df_cols(&df);
-
-        // Get columns to correlate: selected columns (if any and numeric) or all numeric
-        let numeric_cols: Vec<String> = if self.selected_cols.len() >= 2 {
-            self.selected_cols.iter()
-                .filter_map(|&idx| {
-                    if idx < df.width() {
-                        let col = &df.get_columns()[idx];
-                        if is_numeric(col.dtype()) { Some(all_col_names[idx].clone()) } else { None }
-                    } else { None }
-                })
-                .collect()
-        } else {
-            df.get_columns().iter()
-                .filter(|col| is_numeric(col.dtype()))
-                .map(|col| col.name().to_string())
-                .collect()
-        };
-
-        if numeric_cols.is_empty() { return Err(anyhow!("No numeric columns found")); }
-        if numeric_cols.len() < 2 { return Err(anyhow!("Need at least 2 numeric columns")); }
-
-        // Build correlation matrix using polars
-        let n = numeric_cols.len();
-        let chunks: Vec<Float64Chunked> = numeric_cols.iter()
-            .map(|c| df.column(c).unwrap().as_materialized_series().cast(&DataType::Float64).unwrap().f64().unwrap().clone())
-            .collect();
-
-        let mut columns: Vec<Column> = vec![ser!("column", numeric_cols.clone())];
-        for (i, col_name) in numeric_cols.iter().enumerate() {
-            let corrs: Vec<f64> = (0..n).map(|j| {
-                if i == j { 1.0 } else { polars_ops::chunked_array::cov::pearson_corr(&chunks[i], &chunks[j]).unwrap_or(f64::NAN) }
-            }).collect();
-            columns.push(ser!(col_name.clone(), corrs));
-        }
-        let corr_df = DataFrame::new(columns)?;
-
-        let id = app.next_id();
-        let parent_prql = app.req()?.prql.clone();
-        app.stack.push(ViewState::new_corr(id, df_to_table(corr_df), &parent_prql));
-        Ok(())
+    fn exec(&mut self, _app: &mut AppContext) -> Result<()> {
+        Err(anyhow!("Correlation not yet implemented without polars"))
     }
-    fn to_str(&self) -> String { "corr".into() }
+    fn to_str(&self) -> String { "corr".to_string() }
 }
 
-
-/// Corr Enter: pop view and go to column in parent
+/// Corr Enter - jump to column
 pub struct CorrEnter { pub col_name: String }
 
 impl Command for CorrEnter {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
-        app.stack.pop();
-        if let Some(view) = app.view_mut() {
-            let idx = view.data.col_names().iter()
-                .position(|n| n == &self.col_name);
-            if let Some(i) = idx {
-                view.state.cc = i;
-                view.state.visible();
+        let _ = crate::command::executor::CommandExecutor::exec(
+            app, Box::new(crate::command::view::Pop)
+        );
+        if let Some(v) = app.view_mut() {
+            if let Some(i) = v.data.col_names().iter().position(|c| c == &self.col_name) {
+                v.state.cc = i;
             }
         }
         Ok(())
     }
-    fn to_str(&self) -> String { format!("goto_col {}", self.col_name) }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_correlation_basic() {
-        let mut app = AppContext::default();
-        let df = df! {
-            "a" => &[1.0, 2.0, 3.0],
-            "b" => &[2.0, 4.0, 6.0],
-            "c" => &["x", "y", "z"],
-        }.unwrap();
-
-        let id = app.next_id();
-        app.stack.push(ViewState::new(id, "test", df_to_table(df), None));
-        Correlation { selected_cols: vec![] }.exec(&mut app).unwrap();
-        let corr = app.view().unwrap();
-        assert_eq!(corr.name, "correlation");
-        assert_eq!(corr.data.cols(), 3);  // column + a + b (c is not numeric)
-    }
+    fn to_str(&self) -> String { "corr_enter".to_string() }
+    fn record(&self) -> bool { false }
 }

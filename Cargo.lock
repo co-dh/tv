@@ -4375,11 +4375,8 @@ dependencies = [
  "dirs",
  "libloading",
  "nix 0.30.1",
- "polars",
- "polars-ops",
  "prqlc",
  "ratatui",
- "rusqlite",
  "serde_json",
  "thiserror 2.0.17",
  "tv-plugin-api",
@@ -4395,6 +4392,14 @@ version = "0.1.0"
 dependencies = [
  "polars",
  "prqlc",
+ "tv-plugin-api",
+]
+
+[[package]]
+name = "tv-sqlite"
+version = "0.1.0"
+dependencies = [
+ "rusqlite",
  "tv-plugin-api",
 ]
 

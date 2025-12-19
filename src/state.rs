@@ -1,4 +1,3 @@
-use crate::source::{Source, Polars};
 use crate::table::{BoxTable, ColStats, SimpleTable, Cell};
 use std::collections::HashSet;
 
@@ -231,11 +230,6 @@ impl Clone for ViewState {
 }
 
 impl ViewState {
-    /// Get backend source for this view (only for parquet/lazy sources)
-    pub fn backend(&self) -> Box<dyn Source + '_> {
-        Box::new(Polars)  // all disk ops go through Polars source
-    }
-
     /// Get data path (parquet/gz file or empty for in-memory)
     #[must_use]
     pub fn path(&self) -> &str { self.source.path().unwrap_or("") }
