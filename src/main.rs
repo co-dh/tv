@@ -18,7 +18,7 @@ use app::AppContext;
 use command::executor::CommandExecutor;
 use command::io::{From, Save};
 use command::nav::{Goto, GotoCol, ToggleInfo, Decimals, ToggleSel, ClearSel, SelAll, SelRows};
-use command::transform::{Agg, Cast, DelCol, Derive, Filter, RenameCol, Select, Sort, Take, ToTime, Xkey};
+use command::transform::{Agg, DelCol, Derive, Filter, RenameCol, Select, Sort, Take, ToTime, Xkey};
 use command::view::{Dup, Pop, Swap};
 use plugin::corr::Correlation;
 use plugin::meta::Metadata;
@@ -789,17 +789,9 @@ fn do_filter(app: &mut AppContext) -> Result<()> {
     Ok(())
 }
 
-/// Type conversion ($)
+/// Type conversion ($) - stub, use PRQL derive for casting
 fn do_convert(app: &mut AppContext) -> Result<()> {
-    let col_name = app.view().and_then(|v| v.col_name(v.state.cc));
-    if let Some(col_name) = col_name {
-        let types = vec!["String".into(), "Int64".into(), "Float64".into(), "Boolean".into()];
-        let result = picker::fzf(types, "Convert to: ");
-        app.needs_redraw = true;
-        if let Ok(Some(dtype)) = result {
-            run(app, Box::new(Cast { col_name, dtype }));
-        }
-    }
+    app.msg("Use derive for type conversion (PRQL syntax)");
     Ok(())
 }
 

@@ -238,17 +238,6 @@ impl Command for ToTime {
     fn to_str(&self) -> String { format!("to_time {}", self.col_name) }
 }
 
-/// Cast column to new type - placeholder (needs plugin)
-pub struct Cast { pub col_name: String, pub dtype: String }
-
-impl Command for Cast {
-    fn exec(&mut self, _app: &mut AppContext) -> Result<()> {
-        // TODO: implement via plugin
-        Err(anyhow!("Cast not yet implemented without polars"))
-    }
-    fn to_str(&self) -> String { format!("cast {} {}", self.col_name, self.dtype) }
-}
-
 /// Derive (copy) a column - lazy PRQL
 pub struct Derive { pub col_name: String }
 
