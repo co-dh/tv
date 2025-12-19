@@ -2,7 +2,17 @@
 
 use polars::prelude::*;
 use std::ffi::c_char;
+use std::sync::Mutex;
 use tv_plugin_api::*;
+
+/// Cache: (path, sql) -> DataFrame
+static CACHE: Mutex<Option<CacheEntry>> = Mutex::new(None);
+
+struct CacheEntry {
+    path: String,
+    sql: String,
+    df: Box<DataFrame>,
+}
 
 static NAME: &[u8] = b"polars\0";
 
@@ -23,27 +33,45 @@ pub extern "C" fn tv_plugin_init() -> PluginVtable {
     }
 }
 
-/// Execute SQL on file
+/// Execute SQL on file (cached)
 #[unsafe(no_mangle)]
 pub extern "C" fn tv_query(sql: *const c_char, path: *const c_char) -> TableHandle {
     if sql.is_null() || path.is_null() { return std::ptr::null_mut(); }
     let sql = unsafe { from_c_str(sql) };
     let path = unsafe { from_c_str(path) };
 
+    // Check cache
+    if let Ok(guard) = CACHE.lock() {
+        if let Some(ref e) = *guard {
+            if e.path == path && e.sql == sql {
+                return e.df.as_ref() as *const DataFrame as TableHandle;
+            }
+        }
+    }
+
+    // Execute query
     let lf = if path.ends_with(".parquet") {
         LazyFrame::scan_parquet(PlPath::new(&path), Default::default()).ok()
     } else if path.ends_with(".csv") {
         CsvReadOptions::default()
             .with_has_header(true)
-            .try_into_reader_with_file_path(Some(path.into()))
+            .try_into_reader_with_file_path(Some(path.clone().into()))
             .and_then(|r| r.finish())
             .map(|df| df.lazy())
             .ok()
     } else { None };
 
-    lf.and_then(|lf| exec_sql(lf, &sql).ok())
-      .map(|d| Box::into_raw(Box::new(d)) as TableHandle)
-      .unwrap_or(std::ptr::null_mut())
+    let df = lf.and_then(|lf| exec_sql(lf, &sql).ok());
+    if let Some(df) = df {
+        // Store in cache
+        if let Ok(mut guard) = CACHE.lock() {
+            let entry = CacheEntry { path, sql, df: Box::new(df) };
+            let ptr = entry.df.as_ref() as *const DataFrame as TableHandle;
+            *guard = Some(entry);
+            return ptr;
+        }
+    }
+    std::ptr::null_mut()
 }
 
 fn exec_sql(lf: LazyFrame, sql: &str) -> PolarsResult<DataFrame> {
@@ -52,9 +80,10 @@ fn exec_sql(lf: LazyFrame, sql: &str) -> PolarsResult<DataFrame> {
     ctx.execute(sql)?.collect()
 }
 
+/// No-op: cache owns the DataFrame
 #[unsafe(no_mangle)]
-pub extern "C" fn tv_result_free(h: TableHandle) {
-    if !h.is_null() { unsafe { drop(Box::from_raw(h as *mut DataFrame)); } }
+pub extern "C" fn tv_result_free(_h: TableHandle) {
+    // Cache owns df, don't free
 }
 
 #[unsafe(no_mangle)]
