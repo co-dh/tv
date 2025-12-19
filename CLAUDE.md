@@ -13,43 +13,65 @@
 
 ```
 src/
-├── main.rs (1079)     # Entry, event loop, key handling, command picker, -c flag
-├── keyhandler.rs (111)# Key → command translation (resolves context)
-├── app.rs (199)       # AppContext: global state, view stack, plugins
-├── state.rs (282)     # ViewState, ViewStack, cursor/viewport state
-├── keymap.rs (301)    # Kakoune-style keybindings (tab → key → cmd)
-├── picker.rs (154)    # fzf integration for fuzzy selection
-├── theme.rs (120)     # Config loading, colors
-│
-├── backend/           # Data sources (trait Backend)
-│   ├── mod.rs (126)   #   Backend trait + sql() helper
-│   ├── polars.rs (188)#   Lazy parquet via SQL (streaming, disk-based)
-│   ├── memory.rs (121)#   In-memory DataFrame (CSV)
-│   └── gz.rs (293)    #   Gzipped CSV (decompress to memory)
+├── main.rs            # Entry, event loop, key handling, command picker, -c flag
+├── keyhandler.rs      # Key → command translation (resolves context)
+├── app.rs             # AppContext: global state, view stack
+├── state.rs           # ViewState, ViewStack, cursor/viewport, PRQL chain
+├── keymap.rs          # Kakoune-style keybindings (tab → key → cmd)
+├── picker.rs          # fzf integration for fuzzy selection
+├── theme.rs           # Config loading, colors
+├── dynload.rs         # Plugin loader (C ABI), wraps .so in Rust API
+├── table.rs           # Table trait, Cell/ColType, SimpleTable
 │
 ├── command/           # Command pattern
-│   ├── mod.rs (15)    #   Command trait
-│   ├── executor.rs(19)#   CommandExecutor
-│   ├── transform.rs(336)# Filter, Sort, Take, Select, Derive, etc.
-│   ├── nav.rs (149)   #   Goto, GotoCol, Page navigation
-│   ├── view.rs (47)   #   Pop, Swap, Dup
-│   └── io/            #   From (load), Save
-│       ├── mod.rs (61)
-│       └── convert.rs(212)# Type conversions
+│   ├── mod.rs         #   Command trait
+│   ├── executor.rs    #   CommandExecutor
+│   ├── transform.rs   #   Filter, Sort, Take, Select - all lazy PRQL
+│   ├── nav.rs         #   Goto, GotoCol, Page navigation
+│   ├── view.rs        #   Pop, Swap, Dup
+│   └── io/mod.rs      #   From (load via plugin), Save
 │
-├── plugin/            # View-specific handlers
-│   ├── mod.rs (94)    #   Plugin trait, PluginManager
-│   ├── meta.rs (326)  #   Metadata view (col_stats via SQL)
-│   ├── freq.rs (157)  #   Frequency distribution
-│   ├── folder.rs (170)#   ls/lr file browser
-│   ├── corr.rs (137)  #   Correlation matrix
-│   └── system.rs (452)#   OS commands (ps, pacman, systemctl, etc.)
+├── plugin/            # View-specific handlers (internal)
+│   ├── mod.rs         #   Plugin trait, Registry
+│   ├── meta.rs        #   Metadata view (via dynload plugin)
+│   ├── freq.rs        #   Frequency distribution (via dynload plugin)
+│   ├── folder.rs      #   ls/lr file browser
+│   ├── corr.rs        #   Correlation matrix (stub)
+│   ├── pivot.rs       #   Pivot table (stub)
+│   └── system.rs      #   OS commands (ps, pacman, systemctl, etc.)
 │
-└── render/
-    ├── mod.rs (5)
-    ├── terminal.rs(27)#   Terminal init/restore
-    └── renderer.rs(624)# TUI rendering (ratatui), table layout
+├── render/
+│   ├── mod.rs
+│   ├── terminal.rs    #   Terminal init/restore
+│   └── renderer.rs    #   TUI rendering, lazy fetch via dynload
+│
+crates/
+├── tv-plugin-api/     # C ABI types (PluginVtable, CellValue, etc.)
+├── tv-polars/         # Polars plugin (~100MB .so) - parquet/CSV/gzip
+└── tv-sqlite/         # SQLite plugin (~2MB .so) - in-memory tables
 ```
+
+## Plugin Architecture
+```
+main.rs → dynload::get() → Plugin { vt: PluginVtable }
+                              ├── query(sql, path) → PluginTable
+                              ├── fetch(path, offset, limit)
+                              ├── fetch_where(path, filter, offset, limit)
+                              ├── count(path), count_where(path, filter)
+                              ├── freq(path, cols, filter)
+                              ├── distinct(path, col)
+                              └── schema(path)
+```
+
+## PRQL Chain
+All transforms are lazy PRQL that get appended to ViewState.prql:
+- Filter: `{prql} | filter {expr}`
+- Sort: `{prql} | sort {col}` or `{prql} | sort {-col}` (desc)
+- Select: `{prql} | select {col1, col2}`
+- Take: `{prql} | take {n}`
+- Derive: `{prql} | derive {new = old}`
+
+PRQL compiles to SQL for execution via plugin.
 
 ## Command Flow
 ```
@@ -68,21 +90,19 @@ KeyEvent → key_str() → keymap.get_command() → keyhandler::to_cmd() → par
 
 1. **View Stack** - Each operation pushes a new view (freq, filter, meta). `q` pops back.
 
-2. **Backends** - Unified trait for parquet (lazy/disk), CSV (memory), gzip:
-   - `fetch_rows(path, offset, limit)` - paginated reads
-   - `freq(path, col)` - column value distribution
-   - All use SQL via polars `SQLContext`
+2. **Lazy Loading** - Views store PRQL chain, data fetched on render via plugin
 
-3. **Commands** - Transform/navigate operations implement `Command` trait
+3. **Commands** - Transform operations implement Command trait, append to PRQL
 
-4. **Plugins** - Handle view-specific behavior (enter on folder opens file, enter on freq filters parent)
+4. **Plugins (internal)** - Handle view-specific behavior (enter on folder opens file)
 
 5. **Keymap** - Tab-based bindings (table/folder/freq/meta) with common fallback
 
 ## Design Principles
+- Main crate has no polars dependency - all data ops via plugin .so
 - Small CSV loads to memory, parquet stays on disk (lazy)
-- SQL for all queries (unify freq/freq_where, filter operations)
-- DRY: similar functions share code (e.g., freq is freq_where with empty condition)
+- PRQL for query chaining, compiles to SQL for plugin execution
+- DRY: similar functions share code (e.g., freq is freq_where with empty filter)
 
 ## Filter Logic (fzf)
 - fzf shows hints (column values), supports multi-select
@@ -101,7 +121,8 @@ KeyEvent → key_str() → keymap.get_command() → keyhandler::to_cmd() → par
 
 # Idea
 GPU? cache meta.
+
 # Todo
 - load tests/data/nyse/1.parquet M0D is not working, M1<ret> neither.
 - :cargo background fetch still leaks package descriptions to terminal (setsid not enough)
-- Put parquet code in a plugin .so (separate from core). Core can also talk to duckdb cli or kdb.
+- Add is_loading() to plugin interface so main crate knows if plugin is still loading
