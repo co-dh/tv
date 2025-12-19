@@ -213,3 +213,5 @@
 - Use Rust idioms: if let, let-else, matches!, Option combinators (and_then, filter, ok)
 - Use ? operator more aggressively for Result/Option propagation
 - Use for with by_ref() instead of peek + unwrap patterns
+- Use impl Into<String> for flexible API (ViewState constructors, app.msg)
+- Add ViewKind enum for type-safe view dispatch (Table, Meta, Freq, Corr, Folder, Pivot)
