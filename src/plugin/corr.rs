@@ -84,7 +84,7 @@ impl Command for Correlation {
         let corr_df = DataFrame::new(columns)?;
 
         let id = app.next_id();
-        app.stack.push(ViewState::new(id, "correlation", corr_df, None));
+        app.stack.push(ViewState::new_corr(id, corr_df));
         Ok(())
     }
     fn to_str(&self) -> String { "corr".into() }

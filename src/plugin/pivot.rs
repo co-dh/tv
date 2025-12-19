@@ -63,7 +63,7 @@ impl Command for PivotPick {
         let placeholder = placeholder_pivot(&keys, &pivot_col)?;
         let id = app.next_id();
         let name = format!("Pivot:{}", pivot_col);
-        let v = ViewState::new_child(id, name, placeholder, parent_id, 0, parent_name);
+        let v = ViewState::new_pivot(id, name, placeholder, parent_id, parent_name);
         app.stack.push(v);
 
         // Background pivot computation
@@ -107,7 +107,7 @@ impl Command for Pivot {
         let placeholder = placeholder_pivot(&keys, &self.pivot_col)?;
         let id = app.next_id();
         let name = format!("Pivot:{}", self.pivot_col);
-        let v = ViewState::new_child(id, name, placeholder, parent_id, 0, parent_name);
+        let v = ViewState::new_pivot(id, name, placeholder, parent_id, parent_name);
         app.stack.push(v);
 
         let pivot_col = self.pivot_col.clone();

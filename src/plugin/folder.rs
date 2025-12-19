@@ -96,7 +96,7 @@ impl Command for Ls {
         let df = if self.recursive { super::system::lr(&self.dir)? } else { super::system::ls(&self.dir)? };
         let id = app.next_id();
         let name = if self.recursive { format!("ls -r:{}", self.dir.display()) } else { format!("ls:{}", self.dir.display()) };
-        app.stack.push(ViewState::new(id, name, df, None));
+        app.stack.push(ViewState::new_folder(id, name, df));
         Ok(())
     }
     fn to_str(&self) -> String {

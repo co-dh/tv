@@ -1,7 +1,7 @@
 use crate::app::AppContext;
 use crate::source::{Source, Polars};
 use crate::utils::{commify, is_numeric};
-use crate::state::{TableState, ViewState};
+use crate::state::{TableState, ViewKind, ViewState};
 use crate::theme::Theme;
 use polars::prelude::*;
 use ratatui::prelude::*;
@@ -86,7 +86,7 @@ impl Renderer {
         } else { 0 };
         let df = &view.dataframe;
         let total_rows = view.rows();  // use disk_rows for parquet
-        let is_correlation = view.name == "correlation";
+        let is_correlation = view.kind == ViewKind::Corr;
 
         // Calculate column widths if needed
         if view.state.need_widths() {
@@ -549,7 +549,7 @@ impl Renderer {
 
         let sel_info = format!(" [sel={}]", view.selected_cols.len());
         let left = if !message.is_empty() { format!("{}{}", message, sel_info) }
-        else if view.name.starts_with("Freq:") || view.name == "metadata" {
+        else if matches!(view.kind, ViewKind::Freq | ViewKind::Meta) {
             // Show parent name and row count for Meta/Freq views
             let pn = view.parent_name.as_deref().unwrap_or("");
             let pr = view.parent_rows.map(|n| format!(" ({})", commify(&n.to_string()))).unwrap_or_default();

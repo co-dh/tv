@@ -2,6 +2,17 @@ use crate::source::{Source, Gz, Memory, Polars};
 use polars::prelude::*;
 use std::collections::HashSet;
 
+/// View kind for type-safe dispatch
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ViewKind {
+    Table,       // normal data table
+    Meta,        // metadata view
+    Freq,        // frequency distribution
+    Corr,        // correlation matrix
+    Folder,      // file browser (ls/lr)
+    Pivot,       // pivot table
+}
+
 /// Table cursor/viewport state
 #[derive(Clone, Debug)]
 pub struct TableState {
@@ -72,6 +83,7 @@ impl TableState {
 pub struct ViewState {
     pub id: usize,
     pub name: String,
+    pub kind: ViewKind,              // view type for dispatch
     pub dataframe: DataFrame,
     pub state: TableState,
     pub history: Vec<String>,
@@ -125,10 +137,10 @@ impl ViewState {
     }
 
     /// Base view with default values (all Options None, all flags false)
-    fn base(id: usize, name: impl Into<String>, df: DataFrame) -> Self {
+    fn base(id: usize, name: impl Into<String>, kind: ViewKind, df: DataFrame) -> Self {
         let name = name.into();
         Self {
-            id, name, dataframe: df, state: TableState::new(), history: Vec::new(),
+            id, name, kind, dataframe: df, state: TableState::new(), history: Vec::new(),
             filename: None, show_row_numbers: false, parent_id: None, parent_rows: None, parent_name: None, freq_col: None,
             selected_cols: HashSet::new(), selected_rows: HashSet::new(), gz_source: None,
             stats_cache: None, col_separator: None, meta_cache: None, partial: false, disk_rows: None, parquet_path: None, col_names: Vec::new(),
@@ -138,34 +150,49 @@ impl ViewState {
 
     /// Create standard in-memory view (CSV, filtered results, etc.)
     pub fn new(id: usize, name: impl Into<String>, df: DataFrame, filename: Option<String>) -> Self {
-        Self { filename, ..Self::base(id, name, df) }
+        Self { filename, ..Self::base(id, name, ViewKind::Table, df) }
     }
 
     /// Create lazy parquet view (no in-memory dataframe, all ops go to disk)
     pub fn new_parquet(id: usize, name: impl Into<String>, path: impl Into<String>, rows: usize, cols: Vec<String>) -> Self {
         let path = path.into();
-        Self { filename: Some(path.clone()), disk_rows: Some(rows), parquet_path: Some(path), col_names: cols, ..Self::base(id, name, DataFrame::empty()) }
+        Self { filename: Some(path.clone()), disk_rows: Some(rows), parquet_path: Some(path), col_names: cols, ..Self::base(id, name, ViewKind::Table, DataFrame::empty()) }
     }
 
     /// Create gzipped CSV view (may be partial if memory limit hit)
     pub fn new_gz(id: usize, name: impl Into<String>, df: DataFrame, filename: Option<String>, gz: impl Into<String>, partial: bool) -> Self {
-        Self { filename, gz_source: Some(gz.into()), partial, ..Self::base(id, name, df) }
+        Self { filename, gz_source: Some(gz.into()), partial, ..Self::base(id, name, ViewKind::Table, df) }
     }
 
-    /// Create child view (freq/meta) with parent info
-    pub fn new_child(id: usize, name: impl Into<String>, df: DataFrame, pid: usize, prows: usize, pname: impl Into<String>) -> Self {
-        Self { parent_id: Some(pid), parent_rows: Some(prows), parent_name: Some(pname.into()), ..Self::base(id, name, df) }
+    /// Create metadata view with parent info
+    pub fn new_meta(id: usize, df: DataFrame, pid: usize, prows: usize, pname: impl Into<String>) -> Self {
+        Self { parent_id: Some(pid), parent_rows: Some(prows), parent_name: Some(pname.into()), ..Self::base(id, "metadata", ViewKind::Meta, df) }
     }
 
     /// Create freq view with parent info
     pub fn new_freq(id: usize, name: impl Into<String>, df: DataFrame, pid: usize, prows: usize, pname: impl Into<String>, col: impl Into<String>) -> Self {
-        Self { parent_id: Some(pid), parent_rows: Some(prows), parent_name: Some(pname.into()), freq_col: Some(col.into()), ..Self::base(id, name, df) }
+        Self { parent_id: Some(pid), parent_rows: Some(prows), parent_name: Some(pname.into()), freq_col: Some(col.into()), ..Self::base(id, name, ViewKind::Freq, df) }
+    }
+
+    /// Create pivot view with parent info
+    pub fn new_pivot(id: usize, name: impl Into<String>, df: DataFrame, pid: usize, pname: impl Into<String>) -> Self {
+        Self { parent_id: Some(pid), parent_name: Some(pname.into()), ..Self::base(id, name, ViewKind::Pivot, df) }
+    }
+
+    /// Create correlation view
+    pub fn new_corr(id: usize, df: DataFrame) -> Self {
+        Self::base(id, "correlation", ViewKind::Corr, df)
+    }
+
+    /// Create folder view (ls/lr)
+    pub fn new_folder(id: usize, name: impl Into<String>, df: DataFrame) -> Self {
+        Self::base(id, name, ViewKind::Folder, df)
     }
 
     /// Create filtered parquet view (lazy - all ops go to disk with WHERE)
     pub fn new_filtered(id: usize, name: impl Into<String>, path: impl Into<String>, cols: Vec<String>, filter: impl Into<String>, count: usize) -> Self {
         let path = path.into();
-        Self { filename: Some(path.clone()), disk_rows: Some(count), parquet_path: Some(path), col_names: cols, filter_clause: Some(filter.into()), ..Self::base(id, name, DataFrame::empty()) }
+        Self { filename: Some(path.clone()), disk_rows: Some(count), parquet_path: Some(path), col_names: cols, filter_clause: Some(filter.into()), ..Self::base(id, name, ViewKind::Table, DataFrame::empty()) }
     }
 
     /// Add command to history
@@ -184,7 +211,7 @@ impl ViewState {
     }
     /// Check if view uses row selection (meta/freq) vs column selection (table)
     #[must_use]
-    pub fn is_row_sel(&self) -> bool { self.name == "metadata" || self.name.starts_with("Freq:") }
+    pub fn is_row_sel(&self) -> bool { matches!(self.kind, ViewKind::Meta | ViewKind::Freq) }
 }
 
 /// View stack - manages multiple views like browser tabs

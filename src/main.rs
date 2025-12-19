@@ -363,7 +363,7 @@ fn wait_bg_meta(app: &mut AppContext) {
     if let Some((pid, rx)) = app.bg_meta.take() {
         if let Ok(df) = rx.recv() {
             if let Some(v) = app.view_mut() {
-                if v.name == "metadata" && v.parent_id == Some(pid) { v.dataframe = df; }
+                if v.kind == state::ViewKind::Meta && v.parent_id == Some(pid) { v.dataframe = df; }
             }
         }
     }
@@ -571,12 +571,13 @@ fn key_str(key: &KeyEvent) -> String {
 
 /// Get current keymap tab based on view type
 fn cur_tab(app: &AppContext) -> &'static str {
-    app.view().map(|v| {
-        if v.name.starts_with("ls") { "folder" }
-        else if v.name.starts_with("Freq:") { "freq" }
-        else if v.name == "metadata" { "meta" }
-        else if v.name == "correlation" { "corr" }
-        else { "table" }
+    app.view().map(|v| match v.kind {
+        state::ViewKind::Folder => "folder",
+        state::ViewKind::Freq => "freq",
+        state::ViewKind::Meta => "meta",
+        state::ViewKind::Corr => "corr",
+        state::ViewKind::Pivot => "pivot",
+        state::ViewKind::Table => "table",
     }).unwrap_or("table")
 }
 

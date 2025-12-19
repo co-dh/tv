@@ -1,6 +1,6 @@
 use crate::keymap::KeyMap;
 use crate::plugin::Registry;
-use crate::state::{StateStack, ViewState};
+use crate::state::{StateStack, ViewKind, ViewState};
 use crate::theme::Theme;
 use anyhow::{anyhow, Result};
 use polars::prelude::DataFrame;
@@ -130,7 +130,7 @@ impl AppContext {
             Ok(meta_df) => {
                 // Update current meta view if it's the one we're computing for
                 if let Some(view) = self.stack.cur_mut() {
-                    if view.name == "metadata" && view.parent_id == Some(parent_id) {
+                    if view.kind == ViewKind::Meta && view.parent_id == Some(parent_id) {
                         view.dataframe = meta_df.clone();
                         view.state.col_widths.clear();
                     }
