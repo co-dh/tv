@@ -1,5 +1,5 @@
 use crate::app::AppContext;
-use crate::backend::df_cols;
+use crate::source::df_cols;
 use crate::command::Command;
 use anyhow::{anyhow, Result};
 use polars::prelude::*;
@@ -44,11 +44,11 @@ impl Command for Filter {
         let name = format!("{} & {}", v.name, self.expr);
         // Lazy for parquet (disk), materialized for in-memory
         if v.parquet_path.is_some() {
-            let count = v.backend().count_where(&path, &combined)?;
+            let count = v.source().count_where(&path, &combined)?;
             let cols = v.col_names.clone();
             app.stack.push(crate::state::ViewState::new_filtered(id, name, path, cols, combined, count));
         } else {
-            let filtered = v.backend().filter(&path, &combined, FILTER_LIMIT)?;
+            let filtered = v.source().filter(&path, &combined, FILTER_LIMIT)?;
             app.stack.push(crate::state::ViewState::new(id, name, filtered, v.filename.clone()));
         }
         Ok(())
@@ -82,7 +82,7 @@ impl Command for Sort {
         let sorted = {
             let v = app.req()?;
             let path = v.path().to_string();
-            v.backend().sort_head(&path, &self.col_name, self.descending, SORT_LIMIT)?
+            v.source().sort_head(&path, &self.col_name, self.descending, SORT_LIMIT)?
         };
         let v = app.req_mut()?;
         v.dataframe = sorted;
@@ -146,7 +146,7 @@ impl Command for FilterIn {
         let id = app.next_id();
         let v = app.req()?;
         let path = v.path().to_string();
-        let schema = v.backend().schema(&path)?;
+        let schema = v.source().schema(&path)?;
         let is_str = schema.iter().find(|(n, _)| n == &self.col)
             .map(|(_, t)| t.contains("String") || t.contains("Utf8")).unwrap_or(true);
         let vals = self.values.iter().map(|v| if is_str { format!("'{}'", v) } else { v.clone() }).collect::<Vec<_>>().join(",");
@@ -159,11 +159,11 @@ impl Command for FilterIn {
                 Some(prev) => format!("({}) AND ({})", prev, new_clause),
                 None => new_clause,
             };
-            let count = v.backend().count_where(&path, &combined)?;
+            let count = v.source().count_where(&path, &combined)?;
             let cols = v.col_names.clone();
             app.stack.push(crate::state::ViewState::new_filtered(id, name, path, cols, combined, count));
         } else {
-            let filtered = v.backend().filter(&path, &new_clause, FILTER_LIMIT)?;
+            let filtered = v.source().filter(&path, &new_clause, FILTER_LIMIT)?;
             let filename = v.filename.clone();
             app.stack.push(crate::state::ViewState::new(id, name, filtered, filename));
         }
@@ -190,7 +190,7 @@ impl Command for Xkey {
         // For in-memory, also reorder dataframe
         if v.parquet_path.is_none() { v.dataframe = v.dataframe.select(&order)?; }
         v.selected_cols.clear();
-        for i in 0..self.col_names.len() { v.selected_cols.insert(i); }
+        v.selected_cols.extend(0..self.col_names.len());
         v.state.cc = 0;
         v.state.col_widths.clear();
         v.col_separator = if self.col_names.is_empty() { None } else { Some(self.col_names.len()) };

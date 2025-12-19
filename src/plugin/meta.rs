@@ -1,7 +1,8 @@
 //! Meta view plugin - data profile/metadata statistics
 
 use crate::app::AppContext;
-use crate::backend::{is_numeric, unquote, df_cols};
+use crate::source::df_cols;
+use crate::utils::{is_numeric, unquote};
 use crate::command::Command;
 use crate::command::executor::CommandExecutor;
 use crate::command::transform::Xkey;
@@ -71,8 +72,8 @@ impl Command for Metadata {
         let (parent_id, parent_col, parent_rows, parent_name, cached, df, col_sep, pq_path, col_names, schema) = {
             let view = app.req()?;
             let path = view.path().to_string();
-            let cols = view.backend().cols(&path)?;
-            let schema = view.backend().schema(&path)?;
+            let cols = view.source().cols(&path)?;
+            let schema = view.source().schema(&path)?;
             (view.id, view.state.cc, view.rows(), view.name.clone(),
              view.meta_cache.clone(), view.dataframe.clone(), view.col_separator, view.parquet_path.clone(), cols, schema)
         };
@@ -171,7 +172,7 @@ impl Command for MetaDelete {
 
 // === Stats computation ===
 
-use crate::backend::sql;
+use crate::source::sql;
 
 /// Build stats DataFrame from column vectors
 fn stats_df(cols: Vec<String>, types: Vec<String>, nulls: Vec<String>, dists: Vec<String>,
@@ -290,7 +291,7 @@ fn grp_stats(df: &DataFrame, keys: &[String]) -> Result<DataFrame> {
 
 /// Compute stats from parquet path via LazyFrame + SQL (column-by-column to avoid OOM)
 fn lf_stats_path(path: &str) -> Result<DataFrame> {
-    use crate::backend::{Backend, Polars};
+    use crate::source::{Source, Polars};
     use polars::prelude::{ScanArgsParquet, PlPath};
     use std::io::Write;
     let t0 = std::time::Instant::now();

@@ -1,6 +1,6 @@
-//! Backend trait for data operations.
+//! Source trait for data operations.
 //!
-//! # Backends
+//! # Sources
 //! - `Polars`: Streaming engine for parquet files
 //! - `Memory`: In-memory DataFrame (ls, ps, csv)
 //! - `Gz`: Streaming gzipped CSV with memory limits
@@ -14,33 +14,11 @@ pub use memory::Memory;
 pub use gz::Gz;
 
 use crate::state::ViewState;
+use crate::utils::is_numeric;
 use anyhow::{anyhow, Result};
 use ::polars::prelude::*;
 use std::path::Path;
 use std::sync::mpsc::Receiver;
-
-/// Check if DataType is numeric (int/uint/float)
-pub fn is_numeric(dt: &DataType) -> bool {
-    matches!(dt,
-        DataType::Int8 | DataType::Int16 | DataType::Int32 | DataType::Int64 |
-        DataType::UInt8 | DataType::UInt16 | DataType::UInt32 | DataType::UInt64 |
-        DataType::Float32 | DataType::Float64)
-}
-
-/// Format number with commas (1234567 -> "1,234,567")
-pub fn commify(s: &str) -> String {
-    let mut r = String::with_capacity(s.len() + s.len() / 3);
-    for (i, c) in s.chars().rev().enumerate() {
-        if i > 0 && i % 3 == 0 { r.push(','); }
-        r.push(c);
-    }
-    r.chars().rev().collect()
-}
-
-/// Extract string value without quotes
-pub fn unquote(s: &str) -> String {
-    s.trim_matches('"').to_string()
-}
 
 /// Create Column from name and data (shorthand for Series::new().into())
 #[macro_export]
@@ -49,6 +27,7 @@ macro_rules! ser {
 }
 
 /// Get column names as Vec<String> from DataFrame
+#[must_use]
 pub fn df_cols(df: &DataFrame) -> Vec<String> {
     df.get_column_names().iter().map(|s| s.to_string()).collect()
 }
@@ -81,10 +60,10 @@ pub fn df_save(df: &DataFrame, path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Backend interface for data operations.
-/// All methods take a path (ignored by Memory/Gz backends).
+/// Source interface for data operations.
+/// All methods take a path (ignored by Memory/Gz sources).
 /// Only lf() is required - all other ops use SQL defaults.
-pub trait Backend: Send + Sync {
+pub trait Source: Send + Sync {
     /// Get LazyFrame for SQL operations (path ignored by Memory/Gz)
     fn lf(&self, path: &str) -> Result<LazyFrame>;
 
@@ -197,7 +176,7 @@ pub trait Backend: Send + Sync {
 
     /// Load file into ViewState (default: not supported)
     fn load(&self, _path: &str, _id: usize) -> Result<LoadResult> {
-        Err(anyhow!("Load not supported by this backend"))
+        Err(anyhow!("Load not supported by this source"))
     }
 }
 

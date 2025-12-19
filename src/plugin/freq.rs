@@ -2,7 +2,7 @@
 //! Combines: view detection, command handling, Frequency command
 
 use crate::app::AppContext;
-use crate::backend::unquote;
+use crate::utils::unquote;
 use crate::command::Command;
 use crate::command::executor::CommandExecutor;
 use crate::command::transform::FilterIn;
@@ -77,14 +77,14 @@ impl Command for Frequency {
                     .filter(|c| !self.col_names.contains(c))
                     .collect()
             };
-            let backend = view.backend();
+            let src = view.source();
             let p = view.path().to_string();
-            let cols = backend.cols(&p)?;
+            let cols = src.cols(&p)?;
             for c in &self.col_names {
                 if !cols.contains(c) { return Err(anyhow!("Column '{}' not found", c)); }
             }
             let w = view.filter_clause.as_deref().unwrap_or("TRUE");
-            let df = backend.freq_where(&p, &self.col_names, w)?;
+            let df = src.freq_where(&p, &self.col_names, w)?;
             let is_pq = view.parquet_path.is_some();
             let df_c = if !sel.is_empty() && !is_pq { Some(view.dataframe.clone()) } else { None };
             (view.id, view.rows(), view.name.clone(), p, view.key_cols(), view.filter_clause.clone(), sel, df, is_pq, df_c)
@@ -100,10 +100,10 @@ impl Command for Frequency {
         if !key_cols.is_empty() { new_view.col_separator = Some(key_cols.len()); }
         app.stack.push(new_view);
 
-        // Compute aggregates for selected columns (uses SQL backend)
+        // Compute aggregates for selected columns (uses SQL source)
         if !sel_cols.is_empty() {
             let w = filter.as_deref().unwrap_or("TRUE");
-            use crate::backend::{Backend, Polars, Memory};
+            use crate::source::{Source, Polars, Memory};
             let agg_result = if is_parquet {
                 Polars.freq_agg(&path, &self.col_names, w, &sel_cols)
             } else if let Some(ref df) = df_clone {

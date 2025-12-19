@@ -1,7 +1,8 @@
 //! Correlation matrix plugin - calculate and display correlation matrix
 
 use crate::app::AppContext;
-use crate::backend::{is_numeric, unquote, df_cols};
+use crate::source::df_cols;
+use crate::utils::{is_numeric, unquote};
 use crate::command::Command;
 use crate::plugin::Plugin;
 use crate::state::ViewState;

@@ -1,5 +1,5 @@
 mod app;
-mod backend;
+mod source;
 mod command;
 mod keyhandler;
 mod keymap;
@@ -8,10 +8,11 @@ mod plugin;
 mod render;
 mod state;
 mod theme;
+mod utils;
 
 use anyhow::Result;
 use app::AppContext;
-use backend::{Backend, df_cols};
+use source::{Source, df_cols};
 use command::executor::CommandExecutor;
 use command::io::{From, Save};
 use command::nav::{Goto, GotoCol, ToggleInfo, Decimals, ToggleSel, ClearSel, SelAll, SelRows};
@@ -373,9 +374,9 @@ fn fetch_lazy(view: &mut state::ViewState) {
     if let Some(ref path) = view.parquet_path {
         let offset = view.state.r0;
         let df = if let Some(ref w) = view.filter_clause {
-            backend::Polars.fetch_where(path, w, offset, 50)
+            source::Polars.fetch_where(path, w, offset, 50)
         } else {
-            backend::Polars.fetch_rows(path, offset, 50)
+            source::Polars.fetch_rows(path, offset, 50)
         };
         if let Ok(df) = df { view.dataframe = df; }
     }
@@ -797,7 +798,7 @@ fn do_filter(app: &mut AppContext) -> Result<()> {
         let is_str = v.dataframe.column(&col_name).ok()
             .map(|c| matches!(c.dtype(), polars::prelude::DataType::String)).unwrap_or(false);
         let file = v.filename.as_deref();
-        let header = backend::df_cols(&v.dataframe).join(" | ");
+        let header = source::df_cols(&v.dataframe).join(" | ");
         Some((hints(&v.dataframe, &col_name, v.state.cr, file), col_name, is_str, header))
     });
     if let Some((hint_list, col_name, is_str, header)) = info {
@@ -882,17 +883,14 @@ fn hints(df: &polars::prelude::DataFrame, col_name: &str, row: usize, file: Opti
 
     // Distinct values: from disk for parquet, else from memory
     if let Some(path) = file.filter(|f| f.ends_with(".parquet")) {
-        if let Ok(vals) = backend::Polars.distinct(path, col_name) {
+        if let Ok(vals) = source::Polars.distinct(path, col_name) {
             items.extend(vals.into_iter().map(|v| unquote(&v)).filter(|v| v != "null"));
         }
     } else if let Ok(uniq) = col.unique() {
-        for i in 0..uniq.len() {
-            if let Ok(v) = uniq.get(i) {
-                let val = unquote(&v.to_string());
-                if val == "null" { continue; }
-                items.push(val);
-            }
-        }
+        items.extend((0..uniq.len())
+            .filter_map(|i| uniq.get(i).ok())
+            .map(|v| unquote(&v.to_string()))
+            .filter(|v| v != "null"));
     }
 
     // Sort distinct values

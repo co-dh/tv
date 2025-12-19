@@ -1,4 +1,4 @@
-use crate::backend::{Backend, Gz, Memory, Polars};
+use crate::source::{Source, Gz, Memory, Polars};
 use polars::prelude::*;
 use std::collections::HashSet;
 
@@ -20,6 +20,7 @@ impl TableState {
     }
 
     /// Need width recalc if moved >1 page
+    #[must_use]
     pub fn need_widths(&self) -> bool {
         self.col_widths.is_empty() || self.cr.abs_diff(self.widths_row) > self.viewport.0.saturating_sub(2) as usize
     }
@@ -97,8 +98,8 @@ pub struct ViewState {
 }
 
 impl ViewState {
-    /// Get backend for this view (Polars for parquet, Gz for gzip, Memory for in-memory)
-    pub fn backend(&self) -> Box<dyn Backend + '_> {
+    /// Get source for this view (Polars for parquet, Gz for gzip, Memory for in-memory)
+    pub fn source(&self) -> Box<dyn Source + '_> {
         if self.parquet_path.is_some() {
             Box::new(Polars)
         } else if self.gz_source.is_some() {
@@ -109,11 +110,13 @@ impl ViewState {
     }
 
     /// Get data path (parquet file or empty for in-memory)
+    #[must_use]
     pub fn path(&self) -> &str {
         self.parquet_path.as_deref().unwrap_or("")
     }
 
     /// Get key columns (columns before separator)
+    #[must_use]
     pub fn key_cols(&self) -> Vec<String> {
         self.col_separator.map(|sep| {
             self.dataframe.get_column_names()[..sep].iter()
@@ -165,15 +168,19 @@ impl ViewState {
     /// Add command to history
     pub fn add_hist(&mut self, cmd: String) { self.history.push(cmd); }
     /// Row count: disk_rows for parquet, else dataframe height
+    #[must_use]
     pub fn rows(&self) -> usize { self.disk_rows.unwrap_or_else(|| self.dataframe.height()) }
     /// Column count: from col_names for parquet, else dataframe width
+    #[must_use]
     pub fn cols(&self) -> usize { if self.col_names.is_empty() { self.dataframe.width() } else { self.col_names.len() } }
     /// Get column name by index (works for both parquet and in-memory views)
+    #[must_use]
     pub fn col_name(&self, idx: usize) -> Option<String> {
         if !self.col_names.is_empty() { self.col_names.get(idx).cloned() }
         else { self.dataframe.get_column_names().get(idx).map(|s| s.to_string()) }
     }
     /// Check if view uses row selection (meta/freq) vs column selection (table)
+    #[must_use]
     pub fn is_row_sel(&self) -> bool { self.name == "metadata" || self.name.starts_with("Freq:") }
 }
 
@@ -191,12 +198,15 @@ impl StateStack {
     /// Pop top view (allows returning to empty state)
     pub fn pop(&mut self) -> Option<ViewState> { self.stack.pop() }
     /// Current view reference
+    #[must_use]
     pub fn cur(&self) -> Option<&ViewState> { self.stack.last() }
     /// Current view mutable reference
     pub fn cur_mut(&mut self) -> Option<&mut ViewState> { self.stack.last_mut() }
     /// Stack depth
+    #[must_use]
     pub fn len(&self) -> usize { self.stack.len() }
     /// Has any view
+    #[must_use]
     pub fn has_view(&self) -> bool { !self.stack.is_empty() }
     /// Find view by id
     pub fn find_mut(&mut self, id: usize) -> Option<&mut ViewState> { self.stack.iter_mut().find(|v| v.id == id) }
@@ -208,6 +218,7 @@ impl StateStack {
     }
 
     /// Get names of all views in stack
+    #[must_use]
     pub fn names(&self) -> Vec<String> {
         self.stack.iter().map(|v| v.name.clone()).collect()
     }

@@ -102,10 +102,10 @@ impl Command for SelAll {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         let msg = if let Some(v) = app.view_mut() {
             if v.is_row_sel() {
-                for i in 0..v.rows() { v.selected_rows.insert(i); }
+                v.selected_rows.extend(0..v.rows());
                 format!("Selected all {} row(s)", v.selected_rows.len())
             } else {
-                for i in 0..v.cols() { v.selected_cols.insert(i); }
+                v.selected_cols.extend(0..v.cols());
                 format!("Selected all {} column(s)", v.selected_cols.len())
             }
         } else { "No view".into() };
@@ -139,7 +139,7 @@ impl Command for SelRows {
 
         let count = matches.len();
         if let Some(view) = app.view_mut() {
-            for idx in matches { view.selected_rows.insert(idx); }
+            view.selected_rows.extend(matches);
         }
         app.msg(format!("Selected {} row(s)", count));
         Ok(())

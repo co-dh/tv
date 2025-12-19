@@ -1,6 +1,7 @@
-//! Gz backend - streaming gzipped CSV with memory limits.
+//! Gz source - streaming gzipped CSV with memory limits.
 //! Refuses expensive operations on partial (memory-limited) data.
-use super::{Backend, LoadResult, sql, commify};
+use super::{Source, LoadResult, sql};
+use crate::utils::commify;
 use crate::command::io::convert::{convert_epoch_cols, apply_schema, convert_types};
 use crate::state::ViewState;
 use super::polars::{detect_sep, parse_csv_buf};
@@ -17,7 +18,7 @@ const MIN_ROWS: usize = 1_000;
 const CHUNK_ROWS: usize = 100_000;
 const FIRST_CHUNK_ROWS: usize = 100_000;
 
-/// Gz backend: wraps DataFrame loaded from .csv.gz
+/// Gz source: wraps DataFrame loaded from .csv.gz
 /// - Refuses expensive ops (freq, filter) on partial data
 /// - partial = true means file hit memory limit, not fully loaded
 pub struct Gz<'a> {
@@ -35,8 +36,8 @@ impl Gz<'_> {
     }
 }
 
-/// Gz backend impl - uses SQL via lf() but blocks expensive ops when partial
-impl Backend for Gz<'_> {
+/// Gz source impl - uses SQL via lf() but blocks expensive ops when partial
+impl Source for Gz<'_> {
     /// LazyFrame from in-memory DataFrame
     fn lf(&self, _: &str) -> Result<LazyFrame> { Ok(self.df.clone().lazy()) }
 

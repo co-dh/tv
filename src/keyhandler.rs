@@ -13,7 +13,7 @@ pub fn to_cmd(app: &AppContext, cmd: &str) -> Option<String> {
             let sep = v.col_separator.unwrap_or(0);
             if sep > 0 {
                 // Use key columns for grouping
-                let cols = if v.col_names.is_empty() { crate::backend::df_cols(&v.dataframe) } else { v.col_names.clone() };
+                let cols = if v.col_names.is_empty() { crate::source::df_cols(&v.dataframe) } else { v.col_names.clone() };
                 Some(format!("freq {}", cols[..sep].join(",")))
             } else {
                 cur_col(app).map(|c| format!("freq {}", c))
@@ -88,7 +88,7 @@ fn cur_col(app: &AppContext) -> Option<String> {
 fn toggle_key(app: &AppContext) -> Option<String> {
     let v = app.view()?;
     let sep = v.col_separator.unwrap_or(0);
-    let cols = if v.col_names.is_empty() { crate::backend::df_cols(&v.dataframe) } else { v.col_names.clone() };
+    let cols = if v.col_names.is_empty() { crate::source::df_cols(&v.dataframe) } else { v.col_names.clone() };
 
     // Get columns to toggle: selected cols or current col
     let to_toggle: Vec<String> = if v.selected_cols.is_empty() {

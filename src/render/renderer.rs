@@ -1,5 +1,6 @@
 use crate::app::AppContext;
-use crate::backend::{Backend, Polars, commify};
+use crate::source::{Source, Polars};
+use crate::utils::{commify, is_numeric};
 use crate::state::{TableState, ViewState};
 use crate::theme::Theme;
 use polars::prelude::*;
@@ -293,7 +294,7 @@ impl Renderer {
 
             let start_x = x.max(0) as u16 + x_pos;
             // Right-align numeric columns
-            let is_num = crate::backend::is_numeric(df.get_columns()[col_idx].dtype());
+            let is_num = is_numeric(df.get_columns()[col_idx].dtype());
             let display = if is_num { format!("{:>width$}", value, width = col_width) }
                          else { format!("{:width$}", value, width = col_width) };
 

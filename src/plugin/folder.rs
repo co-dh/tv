@@ -1,7 +1,7 @@
 //! Folder view plugin - directory listing (ls [-r])
 
 use crate::app::AppContext;
-use crate::backend::unquote;
+use crate::utils::unquote;
 use crate::command::Command;
 use crate::command::io::From;
 use crate::plugin::Plugin;

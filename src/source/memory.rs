@@ -1,15 +1,15 @@
-//! Memory backend - in-memory DataFrame operations.
+//! Memory source - in-memory DataFrame operations.
 //! Used for OS commands (ls, ps, tcp), CSV files, and filtered results.
 //! Path parameter is ignored - data comes from stored DataFrame reference.
-use super::Backend;
+use super::Source;
 use anyhow::Result;
 use polars::prelude::*;
 
-/// Memory backend wrapping a DataFrame reference.
+/// Memory source wrapping a DataFrame reference.
 /// All trait defaults work via lf() - no custom overrides needed.
 pub struct Memory<'a>(pub &'a DataFrame);
 
-impl Backend for Memory<'_> {
+impl Source for Memory<'_> {
     fn lf(&self, _: &str) -> Result<LazyFrame> { Ok(self.0.clone().lazy()) }
 }
 

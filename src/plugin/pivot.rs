@@ -1,7 +1,7 @@
 //! Pivot table plugin - reshape data with row keys, pivot column, and aggregation
 
 use crate::app::AppContext;
-use crate::backend::df_cols;
+use crate::source::df_cols;
 use crate::command::Command;
 use crate::picker;
 use crate::plugin::Plugin;

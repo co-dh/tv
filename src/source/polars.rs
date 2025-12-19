@@ -1,15 +1,15 @@
-//! Polars backend - native streaming engine for parquet files.
+//! Polars source - native streaming engine for parquet files.
 //! All parquet operations (load, save, fetch, freq, filter, distinct, etc.)
-use super::{Backend, LoadResult};
+use super::{Source, LoadResult};
 use crate::state::ViewState;
 use anyhow::{anyhow, Result};
 use polars::prelude::*;
 use std::path::Path;
 
-/// Polars streaming backend. Zero-copy parquet access via LazyFrame.
+/// Polars streaming source. Zero-copy parquet access via LazyFrame.
 pub struct Polars;
 
-impl Backend for Polars {
+impl Source for Polars {
     /// LazyFrame from parquet scan
     fn lf(&self, path: &str) -> Result<LazyFrame> {
         LazyFrame::scan_parquet(PlPath::new(path), ScanArgsParquet::default()).map_err(|e| anyhow!("Scan: {}", e))
@@ -46,6 +46,7 @@ impl Backend for Polars {
 // ── CSV operations ──────────────────────────────────────────────────────────
 
 /// Detect separator by counting occurrences in header line
+#[must_use]
 pub fn detect_sep(line: &str) -> u8 {
     let seps = [(b'|', line.matches('|').count()),
                 (b'\t', line.matches('\t').count()),

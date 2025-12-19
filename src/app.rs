@@ -29,7 +29,7 @@ pub struct AppContext {
     pub keymap: KeyMap,            // key bindings
     pub theme: Theme,              // color theme
     pub plugins: Registry,         // plugin registry
-    pub bg_loader: Option<Receiver<crate::backend::gz::GzChunk>>,  // background gz loader
+    pub bg_loader: Option<Receiver<crate::source::gz::GzChunk>>,  // background gz loader
     pub bg_saver: Option<Receiver<String>>,      // background save status
     pub raw_save: bool,            // --raw: skip type detection on save
     pub bg_meta: Option<(usize, Receiver<DataFrame>)>,  // (parent_id, meta stats receiver)
@@ -77,7 +77,7 @@ impl AppContext {
     /// Merge any available background data into current view
     pub fn merge_bg_data(&mut self) {
         use std::sync::mpsc::TryRecvError;
-        use crate::backend::gz::GzChunk;
+        use crate::source::gz::GzChunk;
         let Some(rx) = &self.bg_loader else { return };
 
         // Collect all available chunks (non-blocking)

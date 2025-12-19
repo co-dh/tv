@@ -2,7 +2,7 @@
 pub mod convert;
 
 use crate::app::AppContext;
-use crate::backend::{gz, Backend, Polars};
+use crate::source::{gz, Source, Polars};
 use crate::command::Command;
 use anyhow::Result;
 use convert::convert_epoch_cols;
@@ -14,12 +14,12 @@ pub struct From {
 }
 
 impl Command for From {
-    /// Load file: dispatch to gz or Polars backend
+    /// Load file: dispatch to gz or Polars source
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         let p = &self.file_path;
         let id = app.next_id();
 
-        // Dispatch: .gz -> gz backend, else -> Polars backend
+        // Dispatch: .gz -> gz source, else -> Polars source
         let is_gz = Path::new(p).file_name().and_then(|s| s.to_str()).map(|s| s.ends_with(".gz")).unwrap_or(false);
         let result = if is_gz { gz::load(p, id) } else { Polars.load(p, id) }?;
 
@@ -37,7 +37,7 @@ pub struct Save {
 }
 
 impl Command for Save {
-    /// Save view to file: dispatch to backend.save or streaming gz
+    /// Save view to file: dispatch to source.save or streaming gz
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         let view = app.req()?;
         let path = Path::new(&self.file_path);
@@ -52,9 +52,9 @@ impl Command for Save {
             return Ok(());
         }
 
-        // Normal save via backend
+        // Normal save via source
         let df = if is_parquet { convert_epoch_cols(view.dataframe.clone()) } else { view.dataframe.clone() };
-        view.backend().save(&df, path)
+        view.source().save(&df, path)
     }
 
     fn to_str(&self) -> String { format!("save {}", self.file_path) }
