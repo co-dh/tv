@@ -242,3 +242,12 @@
 - App::update() - process background tasks
 - main() now calls app.run(&mut tui, on_key)
 - Simplified main.rs by ~40 lines
+
+## PRQL Query Tracking Per View
+- Each view stores its PRQL derivation chain in `prql` field
+- `from "filename"` for loaded CSV/parquet files
+- `{parent} | filter expr` for filtered views
+- `{parent} | group {cols} (aggregate {Cnt = count this})` for freq views
+- `{parent} | meta/corr/pivot` for derived views
+- `from sys.ls/ps` for system views
+- Unit tests for all PRQL constructors
