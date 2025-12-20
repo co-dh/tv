@@ -18,7 +18,7 @@ pub struct MetaPlugin;
 impl Plugin for MetaPlugin {
     fn name(&self) -> &str { "meta" }
     fn tab(&self) -> &str { "meta" }
-    fn matches(&self, name: &str) -> bool { name == "metadata" }
+    fn matches(&self, name: &str) -> bool { name == "meta" }
 
     fn handle(&self, cmd: &str, app: &mut AppContext) -> Option<Box<dyn Command>> {
         let col_names = sel_cols(app, cmd == "delete")?;

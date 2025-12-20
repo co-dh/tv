@@ -10,211 +10,66 @@ mod util;
 mod utils;
 
 use data::dynload;
-use input::{on_key, parse, handle_cmd, cur_tab, is_plain_value, fetch_lazy};
-use util::pure;
+use input::on_key;
 
 use anyhow::Result;
 use app::AppContext;
 use command::executor::CommandExecutor;
-use command::io::{From, Save};
-use command::nav::Goto;
-use command::transform::{Filter, RenameCol, Select};
-use std::fs;
+use command::io::From;
+use ratatui::backend::TestBackend;
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-/// Try to load plugins from standard locations
-fn load_plugin() {
-    let exe = std::env::current_exe().ok();
-    let exe_dir = exe.as_ref().and_then(|p| p.parent());
-    let home_lib = dirs::home_dir().map(|h| h.join(".local/lib/tv"));
 
-    // Load polars plugin (for file paths)
-    for p in [
-        exe_dir.map(|d| d.join("libtv_polars.so")),
-        exe_dir.map(|d| d.join("plugins/libtv_polars.so")),
-        home_lib.as_ref().map(|d| d.join("libtv_polars.so")),
-    ].into_iter().flatten() {
-        if p.exists() {
-            if let Err(e) = dynload::load_polars(p.to_str().unwrap_or("")) {
-                eprintln!("Warning: failed to load polars plugin: {}", e);
-            }
-            break;
-        }
-    }
-
-    // Load sqlite plugin (essential for memory:id paths)
-    let sqlite_paths: Vec<_> = [
-        exe_dir.map(|d| d.join("libtv_sqlite.so")),
-        exe_dir.map(|d| d.join("plugins/libtv_sqlite.so")),
-        home_lib.as_ref().map(|d| d.join("libtv_sqlite.so")),
-    ].into_iter().flatten().collect();
-
-    let mut loaded = false;
-    for p in &sqlite_paths {
-        if p.exists() {
-            if let Err(e) = dynload::load_sqlite(p.to_str().unwrap_or("")) {
-                eprintln!("Error: failed to load sqlite plugin from {:?}: {}", p, e);
-                std::process::exit(1);
-            }
-            loaded = true;
-            break;
-        }
-    }
-    if !loaded {
-        eprintln!("Error: sqlite plugin not found. Searched:");
-        for p in &sqlite_paths { eprintln!("  {:?}", p); }
-        std::process::exit(1);
-    }
-}
-
-/// Entry point: parse args, run TUI or batch mode
+/// Entry point: parse args, run TUI or key replay mode
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
 
-    // Try to load polars plugin (optional - falls back to built-in)
-    load_plugin();
+    // Load plugins from standard locations
+    dynload::load_plugins();
 
     // Parse flags first (before early returns)
     let raw_save = args.iter().any(|a| a == "--raw");
+    let file_arg = args.iter().skip(1).find(|a| !a.starts_with('-')).cloned();
 
-    // Check for --script argument
-    if let Some(idx) = args.iter().position(|a| a == "--script") {
-        if args.len() <= idx + 1 {
-            eprintln!("Usage: tv --script <script_file>");
-            std::process::exit(1);
-        }
-        return run_script(&args[idx + 1]);
-    }
-
-    // Check for --keys argument (key replay mode with immutable keymap)
+    // Check for --keys argument (key replay mode for testing)
     if let Some(idx) = args.iter().position(|a| a == "--keys") {
         if args.len() <= idx + 1 {
             eprintln!("Usage: tv --keys 'F<ret>' file.parquet");
             std::process::exit(1);
         }
         let file = args.get(idx + 2).map(|s| s.as_str());
-        return run_keys(&args[idx + 1], file);
-    }
-
-    // Check for -c argument (inline commands)
-    if let Some(idx) = args.iter().position(|a| a == "-c") {
-        if args.len() <= idx + 1 {
-            eprintln!("Usage: tv -c 'from data.csv filter x > 5'");
-            std::process::exit(1);
+        let keys = parse_keys(&args[idx + 1]);
+        let key_events: Vec<KeyEvent> = keys.iter().map(|s| str_to_key(s)).collect();
+        let mut app = make_app(file, raw_save);
+        let backend = TestBackend::new(120, 50);
+        let mut term = ratatui::Terminal::new(backend)?;
+        app.run_keys(&mut term, &key_events, on_key)?;
+        // Output buffer as string
+        for line in term.backend().buffer().content.chunks(120) {
+            let s: String = line.iter().map(|c| c.symbol()).collect();
+            println!("{}", s.trim_end());
         }
-        let file = args.get(idx + 2).map(|s| s.as_str());
-        return run_cmds(&args[idx + 1], file);
+        return Ok(());
     }
 
-    // Initialize ratatui terminal
+    // Initialize ratatui terminal and run TUI
     let mut tui = render::init()?;
-
-    // Get file path (first non-flag argument after program name)
-    let file_arg = args.iter().skip(1).find(|a| !a.starts_with('-'));
-
-    // Create app context
-    let mut app = if let Some(path) = file_arg {
-        let mut temp_app = AppContext::default();
-        temp_app.raw_save = raw_save;
-        match CommandExecutor::exec(&mut temp_app, Box::new(From { file_path: path.clone() })) {
-            Ok(_) => temp_app,
-            Err(e) => {
-                render::restore()?;
-                eprintln!("Error loading file: {}", e);
-                std::process::exit(1);
-            }
-        }
-    } else {
-        let mut temp_app = AppContext::default();
-        temp_app.raw_save = raw_save;
-        temp_app
-    };
-
-    // Elm Architecture: run loop with on_key handler
+    let mut app = make_app(file_arg.as_deref(), raw_save);
     app.run(&mut tui, on_key)?;
-
     render::restore()?;
     Ok(())
 }
 
-/// Run commands from iterator (pipe/batch mode)
-fn run_batch<I: Iterator<Item = String>>(lines: I) -> Result<()> {
+/// Create app context and load file if provided
+fn make_app(file: Option<&str>, raw_save: bool) -> AppContext {
     let mut app = AppContext::default();
-    app.viewport(50, 120);
-    'outer: for line in lines {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') { continue; }
-        for cmd_str in line.split('|').map(str::trim) {
-            if cmd_str.is_empty() { continue; }
-            if cmd_str == "quit" { break 'outer; }
-            if let Some(cmd) = parse(cmd_str, &mut app) {
-                if let Err(e) = CommandExecutor::exec(&mut app, cmd) {
-                    eprintln!("Error executing '{}': {}", cmd_str, e);
-                }
-            } else {
-                eprintln!("Unknown command: {}", cmd_str);
-            }
-        }
-    }
-    wait_bg_save(&mut app);
-    wait_bg_meta(&mut app);
-    print(&mut app);
-    Ok(())
-}
-
-/// Run script file (--script path)
-fn run_script(script_path: &str) -> Result<()> {
-    run_batch(fs::read_to_string(script_path)?.lines().map(String::from))
-}
-
-/// Run inline commands (-c "cmd1 cmd2")
-fn run_cmds(cmds: &str, file: Option<&str>) -> Result<()> {
-    let mut app = AppContext::default();
+    app.raw_save = raw_save;
     if let Some(path) = file {
         if let Err(e) = CommandExecutor::exec(&mut app, Box::new(From { file_path: path.to_string() })) {
             eprintln!("Error loading {}: {}", path, e);
         }
     }
-    app.viewport(50, 120);
-    for cmd_str in split_cmds(cmds) {
-        if cmd_str.is_empty() || cmd_str.starts_with('#') { continue; }
-        if cmd_str == "quit" { break; }
-        if let Some(cmd) = parse(&cmd_str, &mut app) {
-            if let Err(e) = CommandExecutor::exec(&mut app, cmd) {
-                eprintln!("Error: {}", e);
-            }
-        } else {
-            eprintln!("Unknown: {}", cmd_str);
-        }
-    }
-    wait_bg_save(&mut app);
-    wait_bg_meta(&mut app);
-    print(&mut app);
-    Ok(())
-}
-
-/// Split command string by newline or space, respecting quoted args
-fn split_cmds(s: &str) -> Vec<String> {
-    let mut cmds = Vec::new();
-    let mut cur = String::new();
-    let mut in_quote = false;
-    let mut quote_char = ' ';
-    for c in s.chars() {
-        if in_quote {
-            cur.push(c);
-            if c == quote_char { in_quote = false; }
-        } else if c == '\'' || c == '"' {
-            cur.push(c);
-            in_quote = true;
-            quote_char = c;
-        } else if c == '\n' {
-            if !cur.trim().is_empty() { cmds.push(cur.trim().to_string()); }
-            cur.clear();
-        } else {
-            cur.push(c);
-        }
-    }
-    if !cur.trim().is_empty() { cmds.push(cur.trim().to_string()); }
-    cmds
+    app
 }
 
 /// Parse Kakoune-style key sequence: "F<ret><down>" → ["F", "<ret>", "<down>"]
@@ -236,186 +91,44 @@ fn parse_keys(s: &str) -> Vec<String> {
     keys
 }
 
-/// Input mode for key player state machine
-#[derive(Clone, PartialEq)]
-enum InputMode { None, Search, Filter, Load, Save, Command, Goto, GotoCol, Select, Rename }
-
-/// Run key replay mode (--keys "F<ret>" file) - state machine with text input
-fn run_keys(keys: &str, file: Option<&str>) -> Result<()> {
-    let mut app = AppContext::default();
-    if let Some(path) = file {
-        if let Err(e) = CommandExecutor::exec(&mut app, Box::new(From { file_path: path.to_string() })) {
-            eprintln!("Error loading {}: {}", path, e);
+/// Convert key string to KeyEvent
+fn str_to_key(s: &str) -> KeyEvent {
+    let (code, mods) = match s {
+        "<ret>" => (KeyCode::Enter, KeyModifiers::NONE),
+        "<esc>" => (KeyCode::Esc, KeyModifiers::NONE),
+        "<up>" => (KeyCode::Up, KeyModifiers::NONE),
+        "<down>" => (KeyCode::Down, KeyModifiers::NONE),
+        "<left>" => (KeyCode::Left, KeyModifiers::NONE),
+        "<right>" => (KeyCode::Right, KeyModifiers::NONE),
+        "<home>" => (KeyCode::Home, KeyModifiers::NONE),
+        "<end>" => (KeyCode::End, KeyModifiers::NONE),
+        "<pageup>" => (KeyCode::PageUp, KeyModifiers::NONE),
+        "<pagedown>" => (KeyCode::PageDown, KeyModifiers::NONE),
+        "<tab>" => (KeyCode::Tab, KeyModifiers::NONE),
+        "<s-tab>" => (KeyCode::BackTab, KeyModifiers::NONE),
+        "<del>" => (KeyCode::Delete, KeyModifiers::NONE),
+        "<backspace>" => (KeyCode::Backspace, KeyModifiers::NONE),
+        "<space>" => (KeyCode::Char(' '), KeyModifiers::NONE),
+        "<backslash>" => (KeyCode::Char('\\'), KeyModifiers::NONE),
+        "<lt>" => (KeyCode::Char('<'), KeyModifiers::NONE),
+        "<gt>" => (KeyCode::Char('>'), KeyModifiers::NONE),
+        s if s.starts_with("<c-") && s.ends_with('>') => {
+            let c = s.chars().nth(3).unwrap_or('?');
+            (KeyCode::Char(c), KeyModifiers::CONTROL)
         }
-        wait_bg(&mut app);
-        // Fetch data for lazy views so navigation works
-        if let Some(view) = app.view_mut() {
-            if let Some(t) = view.path.as_ref()
-                .and_then(|p| dynload::get_for(p).map(|pl| (p, pl)))
-                .and_then(|(p, pl)| pure::compile_prql(&view.prql).and_then(|sql| pl.query(&sql, p)))
-            {
-                view.data = dynload::to_box_table(&t);
-            }
-        }
-    }
-    app.viewport(50, 120);
-    let mut mode = InputMode::None;
-    let mut buf = String::new();
-
-    for key in parse_keys(keys) {
-        if mode != InputMode::None {
-            if key == "<ret>" {
-                exec_input(&mut app, &mode, &buf);
-                mode = InputMode::None;
-                buf.clear();
-            } else if key == "<esc>" {
-                mode = InputMode::None;
-                buf.clear();
-            } else if key == "<backspace>" {
-                buf.pop();
-            } else if key == "<lt>" {
-                buf.push('<');
-            } else if key == "<gt>" {
-                buf.push('>');
-            } else if key == "<space>" {
-                buf.push(' ');
-            } else if !key.starts_with('<') {
-                buf.push_str(&key);
-            }
-        } else {
-            let tab = cur_tab(&app);
-            let cmd = app.keymap.get_command(tab, &key).map(|s| s.to_string());
-            if let Some(cmd) = cmd {
-                mode = match cmd.as_str() {
-                    "search" => InputMode::Search,
-                    "filter" => InputMode::Filter,
-                    "from" => InputMode::Load,
-                    "save" => InputMode::Save,
-                    "command" => InputMode::Command,
-                    "goto_row" => InputMode::Goto,
-                    "goto_col" => InputMode::GotoCol,
-                    "select_cols" => InputMode::Select,
-                    "rename" => InputMode::Rename,
-                    _ => { let _ = handle_cmd(&mut app, &cmd); InputMode::None }
-                };
-            } else {
-                eprintln!("No binding for key '{}' in tab '{}'", key, tab);
-            }
-        }
-    }
-    wait_bg_save(&mut app);
-    wait_bg_meta(&mut app);
-    print(&mut app);
-    Ok(())
-}
-
-/// Execute input mode command with accumulated text
-fn exec_input(app: &mut AppContext, mode: &InputMode, text: &str) {
-    match mode {
-        InputMode::Search => {
-            app.search.col_name = None;
-            app.search.value = Some(text.to_string());
-            input::find_match(app, true);
-        }
-        InputMode::Filter => {
-            let expr = if is_plain_value(text) {
-                if let Some(v) = app.view() {
-                    let col = v.col_name(v.state.cc).unwrap_or_default();
-                    let q = if v.data.col_type(v.state.cc) == data::table::ColType::Str { "'" } else { "" };
-                    format!("`{}` == {}{}{}", col, q, text, q)
-                } else { text.to_string() }
-            } else { text.to_string() };
-            input::run(app, Box::new(Filter { expr }));
-        }
-        InputMode::Load => {
-            input::run(app, Box::new(From { file_path: text.to_string() }));
-        }
-        InputMode::Save => {
-            input::run(app, Box::new(Save { file_path: text.to_string() }));
-        }
-        InputMode::Command => {
-            if let Some(cmd) = parse(text, app) {
-                let _ = CommandExecutor::exec(app, cmd);
-            }
-        }
-        InputMode::Goto => {
-            input::run(app, Box::new(Goto { arg: text.to_string() }));
-        }
-        InputMode::GotoCol => {
-            input::run(app, Box::new(command::nav::GotoCol { arg: text.to_string() }));
-        }
-        InputMode::Select => {
-            input::run(app, Box::new(Select { col_names: text.split(',').map(|s| s.trim().to_string()).collect() }));
-        }
-        InputMode::Rename => {
-            let old = app.view().and_then(|v| v.col_name(v.state.cc));
-            if let Some(old_name) = old {
-                input::run(app, Box::new(RenameCol { old_name, new_name: text.to_string() }));
-            }
-        }
-        InputMode::None => {}
-    }
-}
-
-/// Block until background save completes
-fn wait_bg_save(app: &mut AppContext) {
-    if let Some(rx) = app.bg_saver.take() {
-        for msg in rx { eprintln!("{}", msg); }
-    }
-}
-
-/// Block until background meta completes (stub - meta now via plugin)
-fn wait_bg_meta(_app: &mut AppContext) {}
-
-/// Wait for all background tasks to complete (stub - now via plugin)
-fn wait_bg(app: &mut AppContext) {
-    app.check_bg_saver();
-}
-
-/// Print view data - compiles PRQL to SQL and executes via plugin
-fn print(app: &mut AppContext) {
-    let Some(view) = app.view_mut() else { println!("No table loaded"); return };
-    let path = view.path.clone().unwrap_or_default();
-    let start = view.state.cr;
-
-    // Use take range for pagination
-    let prql = format!("{} | take {}..{}", view.prql, start + 1, start + 11);
-    let result = (!view.prql.is_empty() && !path.is_empty())
-        .then(|| pure::compile_prql(&prql))
-        .flatten()
-        .and_then(|sql| dynload::get_for(&path).and_then(|pl| pl.query(&sql, &path)));
-    if let Some(t) = result {
-        use data::table::Table;
-        // Get total via count query
-        let total = pure::compile_prql(&format!("{} | aggregate {{n = count this}}", view.prql))
-            .and_then(|sql| dynload::get_for(&path).and_then(|pl| pl.query(&sql, &path)))
-            .and_then(|ct| match ct.cell(0, 0) { data::table::Cell::Int(n) => Some(n as usize), _ => None })
-            .unwrap_or(t.rows());
-        println!("=== {} ({} rows) ===", view.name, total);
-        println!("{}", t.col_names().join(","));
-        for r in 0..t.rows() {
-            println!("{}", (0..t.cols()).map(|c| t.cell(r, c).format(10)).collect::<Vec<_>>().join(","));
-        }
-        return;
-    }
-    // Fallback: show cached data
-    println!("=== {} ({} rows) ===", view.name, view.rows());
-    fetch_lazy(view);
-    let cols = view.data.col_names();
-    println!("{}", cols.join(","));
-    let r0 = view.state.r0;
-    for r in r0..view.data.rows().min(r0 + 10) {
-        println!("{}", (0..cols.len()).map(|c| view.data.cell(r, c).format(10)).collect::<Vec<_>>().join(","));
-    }
+        s if s.len() == 1 => (KeyCode::Char(s.chars().next().unwrap()), KeyModifiers::NONE),
+        _ => (KeyCode::Null, KeyModifiers::NONE),
+    };
+    KeyEvent::new(code, mods)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use input::is_plain_value;
 
     #[test]
     fn test_key_str_backslash() {
-        use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
         let key = KeyEvent::new(KeyCode::Char('\\'), KeyModifiers::NONE);
         assert_eq!(input::handler::key_str(&key), "<backslash>", "backslash should map to <backslash>");
     }
@@ -427,5 +140,14 @@ mod tests {
         assert!(is_plain_value("'quoted'"));
         assert!(!is_plain_value("a > b"));
         assert!(!is_plain_value("col = 5"));
+    }
+
+    #[test]
+    fn test_str_to_key() {
+        assert_eq!(str_to_key("<ret>").code, KeyCode::Enter);
+        assert_eq!(str_to_key("<esc>").code, KeyCode::Esc);
+        assert_eq!(str_to_key("a").code, KeyCode::Char('a'));
+        assert_eq!(str_to_key("<c-x>").code, KeyCode::Char('x'));
+        assert!(str_to_key("<c-x>").modifiers.contains(KeyModifiers::CONTROL));
     }
 }

@@ -62,20 +62,15 @@ pub fn in_clause(col: &str, values: &[String], is_str: bool) -> String {
     values.iter().map(|v| format!("`{}` == {}{}{}", col, q, v, q)).collect::<Vec<_>>().join(" || ")
 }
 
-/// Build display name for IN filter
+/// Build display name for IN filter (PRQL-style command for tabs)
 #[must_use]
 pub fn filter_in_name(col: &str, values: &[String]) -> String {
     if values.len() == 1 {
-        format!("{}={}", col, values[0])
+        format!("filter `{}`==\"{}\"", col, values[0])
     } else {
-        format!("{}∈{{{}}}", col, values.len())
+        let conds = values.iter().map(|v| format!("`{}`==\"{}\"", col, v)).collect::<Vec<_>>().join(" || ");
+        format!("filter ({})", conds)
     }
-}
-
-/// Check if column type is string-like
-#[must_use]
-pub fn is_string_type(dtype: &str) -> bool {
-    dtype.contains("String") || dtype.contains("Utf8")
 }
 
 /// Reorder columns: keys first, then rest

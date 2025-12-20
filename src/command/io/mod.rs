@@ -20,11 +20,8 @@ impl Command for From {
         // Use plugin to load/query file
         let plugin = dynload::get().ok_or_else(|| anyhow!("polars plugin not loaded"))?;
 
-        // Get filename for display
-        let name = Path::new(p).file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or(p)
-            .to_string();
+        // Use command as view name (shown in tabs)
+        let name = format!("from {}", p);
 
         // Check if parquet for lazy loading
         let is_pq = p.ends_with(".parquet") || p.ends_with(".pq");

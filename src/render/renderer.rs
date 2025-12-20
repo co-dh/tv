@@ -50,7 +50,7 @@ impl Renderer {
     }
 
     /// Render table data
-    fn render_table(frame: &mut Frame, view: &mut ViewState, area: Rect, selected_cols: &HashSet<usize>, selected_rows: &HashSet<usize>, decimals: usize, theme: &Theme, show_tabs: bool) {
+    pub fn render_table(frame: &mut Frame, view: &mut ViewState, area: Rect, selected_cols: &HashSet<usize>, selected_rows: &HashSet<usize>, decimals: usize, theme: &Theme, show_tabs: bool) {
         // Fetch data via plugin using PRQL (compiled to SQL)
         let (rows_needed, start) = (area.height as usize + 100, view.state.r0);
         let path = view.path.clone();
@@ -515,15 +515,13 @@ impl Renderer {
         frame.render_widget(para, box_area);
     }
 
-    /// Render view stack as tabs
+    /// Render view stack as tabs (names are commands like "from file.csv", "freq a")
     fn render_tabs(frame: &mut Frame, names: &[String], area: Rect, theme: &Theme) {
         let row = area.height - 2;
         let tab_area = Rect::new(0, row, area.width, 1);
-        // Shorten names: extract filename, truncate to 20 chars
+        // Shorten: truncate to 25 chars (full command shown, optionally shorten path)
         let short: Vec<String> = names.iter().map(|s| {
-            let n = s.rsplit('/').next().unwrap_or(s);  // get filename
-            let n = n.split(':').next().unwrap_or(n);   // remove :suffix
-            if n.len() > 20 { format!("{}…", &n[..19]) } else { n.to_string() }
+            if s.len() > 25 { format!("{}…", &s[..24]) } else { s.clone() }
         }).collect();
         // Fill background
         let buf = frame.buffer_mut();

@@ -1,20 +1,23 @@
 //! Key play tests (interactive mode simulation)
 //! Key names follow Kakoune style: F<ret><down> (no commas)
 mod common;
-use common::run_keys;
+use common::{run_keys, tab_line};
 
 // === CSV (memory backend) key tests ===
 
 #[test]
-fn test_keys_csv_freq() {
+fn test_freq_a_in_tab_line() {
+    // F on column a creates freq view, tabs should show "freq a"
     let output = run_keys("F", "tests/data/basic.csv");
-    assert!(output.contains("Freq:a"), "F should show freq view: {}", output);
+    assert!(tab_line(&output).contains("│ freq a"), "tabs: {}", tab_line(&output));
 }
 
 #[test]
-fn test_keys_csv_freq_enter() {
+fn test_freq_enter_filters_parent_shows_filter_command() {
+    // F on column b creates freq, Enter selects first value (x), filters parent to 3 rows
     let output = run_keys("<right>F<ret>", "tests/data/basic.csv");
-    assert!(output.contains("b=x") || output.contains("(3 rows)"), "F<ret> should filter: {}", output);
+    assert!(tab_line(&output).contains("filter `b` == 'x'"), "tab: {}", tab_line(&output));
+    assert!(output.contains("0/3"), "should show 3 rows: {}", output);
 }
 
 #[test]

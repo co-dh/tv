@@ -208,3 +208,48 @@ pub fn to_box_table(pt: &PluginTable) -> BoxTable {
         .collect();
     Box::new(SimpleTable::new(names, types, data))
 }
+
+/// Load plugins from standard locations (exe dir, ~/.local/lib/tv)
+pub fn load_plugins() {
+    let exe = std::env::current_exe().ok();
+    let exe_dir = exe.as_ref().and_then(|p| p.parent());
+    let home_lib = dirs::home_dir().map(|h| h.join(".local/lib/tv"));
+
+    // Load polars plugin (optional)
+    for p in [
+        exe_dir.map(|d| d.join("libtv_polars.so")),
+        exe_dir.map(|d| d.join("plugins/libtv_polars.so")),
+        home_lib.as_ref().map(|d| d.join("libtv_polars.so")),
+    ].into_iter().flatten() {
+        if p.exists() {
+            if let Err(e) = load_polars(p.to_str().unwrap_or("")) {
+                eprintln!("Warning: failed to load polars plugin: {}", e);
+            }
+            break;
+        }
+    }
+
+    // Load sqlite plugin (required)
+    let sqlite_paths: Vec<_> = [
+        exe_dir.map(|d| d.join("libtv_sqlite.so")),
+        exe_dir.map(|d| d.join("plugins/libtv_sqlite.so")),
+        home_lib.as_ref().map(|d| d.join("libtv_sqlite.so")),
+    ].into_iter().flatten().collect();
+
+    let mut loaded = false;
+    for p in &sqlite_paths {
+        if p.exists() {
+            if let Err(e) = load_sqlite(p.to_str().unwrap_or("")) {
+                eprintln!("Error: failed to load sqlite plugin: {}", e);
+                std::process::exit(1);
+            }
+            loaded = true;
+            break;
+        }
+    }
+    if !loaded {
+        eprintln!("Error: sqlite plugin not found. Searched:");
+        for p in &sqlite_paths { eprintln!("  {:?}", p); }
+        std::process::exit(1);
+    }
+}

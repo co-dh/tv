@@ -46,7 +46,7 @@ impl Plugin for FreqPlugin {
     fn name(&self) -> &str { "freq" }
     fn tab(&self) -> &str { "freq" }
 
-    fn matches(&self, name: &str) -> bool { name.starts_with("Freq:") }
+    fn matches(&self, name: &str) -> bool { name.starts_with("freq ") }
 
     fn handle(&self, cmd: &str, app: &mut AppContext) -> Option<Box<dyn Command>> {
         match cmd {
@@ -105,9 +105,9 @@ impl Command for Frequency {
         let t = plugin.query(&sql, &path_str).ok_or_else(|| anyhow!("freq query failed"))?;
         let result = add_pct_bar(dynload::to_box_table(&t));
 
-        // Create freq view
+        // Create freq view (name = command shown in tabs)
         let id = app.next_id();
-        let name = format!("Freq:{}", self.col_names.join(","));
+        let name = format!("freq {}", self.col_names.join(" "));
         let freq_col = self.col_names.first().cloned().unwrap_or_default();
         let mut new_view = ViewState::new_freq(
             id, name, result, parent_id, parent_rows, parent_name, freq_col, &parent_prql, &self.col_names, path,

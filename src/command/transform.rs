@@ -8,16 +8,8 @@ use crate::util::pure;
 use anyhow::{anyhow, Result};
 
 /// Get schema as (name, type) pairs from Table
-fn table_schema(t: &dyn Table) -> Vec<(String, String)> {
-    (0..t.cols()).map(|c| {
-        let typ = match t.col_type(c) {
-            ColType::Int => "Int",
-            ColType::Float => "Float",
-            ColType::Bool => "Bool",
-            _ => "Str",
-        };
-        (t.col_name(c).unwrap_or_default(), typ.to_string())
-    }).collect()
+fn table_schema(t: &dyn Table) -> Vec<(String, ColType)> {
+    (0..t.cols()).map(|c| (t.col_name(c).unwrap_or_default(), t.col_type(c))).collect()
 }
 
 /// Delete columns (via PRQL select excluding deleted cols)
@@ -164,15 +156,16 @@ impl Command for FilterIn {
         if app.is_loading() { return Err(anyhow!("Wait for loading to complete")); }
         let id = app.next_id();
         let v = app.req()?;
-        // Get schema to check if column is string type
+        // Check if column is string type
         let schema = table_schema(v.data.as_ref());
         let is_str = schema.iter().find(|(n, _)| n == &self.col)
-            .map(|(_, t)| pure::is_string_type(t)).unwrap_or(true);
+            .map(|(_, t)| matches!(t, ColType::Str)).unwrap_or(true);
         let clause = pure::in_clause(&self.col, &self.values, is_str);
-        let prql = format!("{} | filter {}", v.prql, pure::to_prql_filter(&clause));
+        let filter_expr = pure::to_prql_filter(&clause);
+        let prql = format!("{} | filter {}", v.prql, filter_expr);
         let mut nv = v.clone();
         nv.id = id;
-        nv.name = pure::filter_in_name(&self.col, &self.values);
+        nv.name = format!("filter {}", filter_expr);  // tab shows command
         nv.prql = prql;
         app.stack.push(nv);
         Ok(())

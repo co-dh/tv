@@ -7,8 +7,9 @@ use crate::state::{StateStack, ViewState};
 use crate::util::theme::Theme;
 use crate::render::Renderer;
 use anyhow::Result;
+use ratatui::backend::Backend;
 use ratatui::crossterm::event::{self, Event, KeyEvent};
-use ratatui::DefaultTerminal;
+use ratatui::Terminal;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::PathBuf;
@@ -158,7 +159,8 @@ impl AppContext {
     // ── Elm Architecture: run/draw/handle_events ─────────────────────────────
 
     /// Main event loop - only redraws when state changes
-    pub fn run(&mut self, tui: &mut DefaultTerminal, on_key: impl Fn(&mut Self, KeyEvent) -> Result<bool>) -> Result<()> {
+    pub fn run<B: Backend>(&mut self, tui: &mut Terminal<B>, on_key: impl Fn(&mut Self, KeyEvent) -> Result<bool>) -> Result<()>
+    where B::Error: Send + Sync + 'static {  // bounds required for anyhow::Error conversion
         let size = tui.size()?;
         self.viewport(size.height, size.width);
         self.needs_redraw = true;  // initial draw
@@ -196,6 +198,19 @@ impl AppContext {
                 }
             }
         }
+        Ok(())
+    }
+
+    /// Run with list of key events (for testing) - renders once at end
+    pub fn run_keys<B: Backend>(&mut self, tui: &mut Terminal<B>, keys: &[KeyEvent], on_key: impl Fn(&mut Self, KeyEvent) -> Result<bool>) -> Result<()>
+    where B::Error: Send + Sync + 'static {  // bounds required for anyhow::Error conversion
+        let size = tui.size()?;
+        self.viewport(size.height, size.width);
+        for key in keys {
+            let _ = on_key(self, *key);
+        }
+        self.check_bg_saver();
+        tui.draw(|frame| Renderer::render(frame, self))?;
         Ok(())
     }
 

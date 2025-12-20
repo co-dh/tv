@@ -150,11 +150,11 @@ impl ViewState {
         Self { path, partial, ..Self::base(id, name, ViewKind::Table, "from df".into(), data) }
     }
 
-    /// Metadata view
+    /// Metadata view (name = command shown in tabs)
     pub fn new_meta(id: usize, data: BoxTable, pid: usize, prows: usize, pname: impl Into<String>, parent_prql: &str) -> Self {
         let prql = format!("{} | meta", parent_prql);
         let parent = ParentInfo { id: pid, rows: prows, name: pname.into(), freq_col: None };
-        Self { parent: Some(parent), ..Self::base(id, "metadata", ViewKind::Meta, prql, data) }
+        Self { parent: Some(parent), ..Self::base(id, "meta", ViewKind::Meta, prql, data) }
     }
 
     /// Freq view (stores parent path for re-querying after filter)
