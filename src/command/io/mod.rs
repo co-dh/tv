@@ -44,33 +44,43 @@ impl Command for From {
     fn to_str(&self) -> String { format!("from {}", self.file_path) }
 }
 
-/// Save file command (CSV only for now)
+/// Save file command (parquet/csv via plugin)
 pub struct Save { pub file_path: String }
 
 impl Command for Save {
-    /// Save view to CSV file
+    /// Save view to file (parquet/csv via plugin, or in-memory CSV fallback)
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
-        use std::io::Write;
         let v = app.req()?;
-        let path = std::path::Path::new(&self.file_path);
+        let out = &self.file_path;
 
-        // Only support CSV for now
-        if !self.file_path.ends_with(".csv") {
-            return Err(anyhow!("Only .csv save supported"));
+        // Check extension
+        let is_pq = out.ends_with(".parquet") || out.ends_with(".pq");
+        let is_csv = out.ends_with(".csv");
+        if !is_pq && !is_csv { return Err(anyhow!("Only .parquet/.csv supported")); }
+
+        // For file-backed views, use plugin to save via PRQL
+        if let Some(path_in) = &v.path {
+            if let Some(sql) = pure::compile_prql(&v.prql) {
+                if let Some(plugin) = dynload::get() {
+                    if plugin.save(&sql, path_in, out) {
+                        app.msg(format!("Saved {}", out));
+                        return Ok(());
+                    }
+                }
+            }
         }
 
-        let mut f = std::fs::File::create(path)?;
-        // Header
+        // Fallback: in-memory table to CSV only
+        if is_pq { return Err(anyhow!("Parquet save requires file-backed view")); }
+        use std::io::Write;
+        let mut f = std::fs::File::create(out)?;
         let cols = v.data.col_names();
         writeln!(f, "{}", cols.join(","))?;
-        // Data
         for r in 0..v.data.rows() {
-            let row: Vec<String> = (0..cols.len()).map(|c| {
-                let cell = v.data.cell(r, c);
-                cell.format(10)  // CSV format
-            }).collect();
+            let row: Vec<String> = (0..cols.len()).map(|c| v.data.cell(r, c).format(10)).collect();
             writeln!(f, "{}", row.join(","))?;
         }
+        app.msg(format!("Saved {}", out));
         Ok(())
     }
 

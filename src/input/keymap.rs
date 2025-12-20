@@ -38,7 +38,6 @@ impl KeyMap {
             // Common (all views)
             ("common", "q", "quit"),
             ("common", "<c-c>", "force_quit"),
-            ("common", "<a-p>", "print_status"),
             ("common", "<up>", "up"),
             ("common", "<down>", "down"),
             ("common", "<left>", "left"),
@@ -69,13 +68,12 @@ impl KeyMap {
             ("common", "M", "meta"),
             ("common", "D", "delete"),
             ("common", "T", "dup"),
-            ("common", "W", "swap"),
             ("common", ":", "command"),
             ("common", "g", "goto_row"),
             ("common", "@", "goto_col"),
             ("common", "<ret>", "enter"),
             ("common", "L", "from"),
-            ("common", "S", "save"),
+            ("common", "S", "swap"),
             ("common", "s", "select_cols"),
             // l is now right movement (vim hjkl)
             ("common", "r", "lr"),

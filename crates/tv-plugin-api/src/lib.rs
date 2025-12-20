@@ -57,6 +57,9 @@ pub struct PluginVtable {
     pub cell: extern "C" fn(TableHandle, usize, usize) -> CCell,
     /// Free string returned by col_name or cell
     pub str_free: extern "C" fn(*mut c_char),
+    /// Save query result to file (parquet/csv). Returns 0 on success, 1 on error.
+    /// sql: SQL query, path_in: source file, path_out: destination file
+    pub save: extern "C" fn(sql: *const c_char, path_in: *const c_char, path_out: *const c_char) -> u8,
 }
 
 // === C string helpers ===

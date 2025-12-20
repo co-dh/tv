@@ -53,6 +53,17 @@ impl Plugin {
             f(id, names.as_ptr(), types.as_ptr(), rows.as_ptr(), n_rows, n_cols);
         }
     }
+
+    /// Save query result to file (parquet/csv)
+    pub fn save(&self, sql: &str, path_in: &str, path_out: &str) -> bool {
+        let sql = CString::new(sql).ok();
+        let path_in = CString::new(path_in).ok();
+        let path_out = CString::new(path_out).ok();
+        match (sql, path_in, path_out) {
+            (Some(s), Some(pi), Some(po)) => (self.vt.save)(s.as_ptr(), pi.as_ptr(), po.as_ptr()) == 0,
+            _ => false,
+        }
+    }
 }
 
 /// Load polars plugin (for file paths)

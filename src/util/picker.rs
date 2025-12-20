@@ -5,7 +5,12 @@ use std::process::{Command, Stdio};
 
 /// Simple fzf - single select, returns selection or typed query
 pub fn fzf(items: Vec<String>, prompt: &str) -> Result<Option<String>> {
-    let (sels, query) = fzf_multi(items, prompt)?;
+    fzf_with(items, prompt, None)
+}
+
+/// Simple fzf with optional pre-filled query (for testing)
+pub fn fzf_with(items: Vec<String>, prompt: &str, pre_query: Option<&str>) -> Result<Option<String>> {
+    let (sels, query) = fzf_multi_header(items, prompt, None, pre_query)?;
     if let Some(s) = sels.into_iter().next() { Ok(Some(s)) }
     else if !query.is_empty() { Ok(Some(query)) }
     else { Ok(None) }
@@ -14,19 +19,28 @@ pub fn fzf(items: Vec<String>, prompt: &str) -> Result<Option<String>> {
 /// Use external fzf with multi-select - returns (selections, query)
 /// --print-query: line1=query, rest=selections (tab to select multiple)
 pub fn fzf_multi(items: Vec<String>, prompt: &str) -> Result<(Vec<String>, String)> {
-    fzf_multi_header(items, prompt, None)
+    fzf_multi_header(items, prompt, None, None)
 }
 
-/// fzf with optional header line (for showing column context)
-pub fn fzf_multi_header(items: Vec<String>, prompt: &str, header: Option<&str>) -> Result<(Vec<String>, String)> {
-    terminal::disable_raw_mode()?;
-    execute!(std::io::stdout(), cursor::Show)?;
-
+/// fzf with optional header and pre-filled query (--filter mode for testing)
+pub fn fzf_multi_header(items: Vec<String>, prompt: &str, header: Option<&str>, pre_query: Option<&str>) -> Result<(Vec<String>, String)> {
     let _ = header;  // reserved for future use
+    let test_mode = pre_query.is_some();
+
+    // Skip terminal ops in test mode (no TTY)
+    if !test_mode {
+        terminal::disable_raw_mode()?;
+        execute!(std::io::stdout(), cursor::Show)?;
+    }
+
+    let mut args = vec!["--prompt", prompt, "--layout=reverse", "--height=50%", "--no-sort", "--print-query", "--multi", "-e"];
+    let q;  // keep owned string alive
+    if let Some(query) = pre_query { q = query.to_string(); args.extend(["--filter", &q]); }
     let mut child = Command::new("fzf")
-        .args(["--prompt", prompt, "--layout=reverse", "--height=50%", "--no-sort", "--print-query", "--multi", "-e"])
+        .args(&args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
+        .stderr(if test_mode { Stdio::null() } else { Stdio::inherit() })
         .spawn()?;
 
     if let Some(mut stdin) = child.stdin.take() {
@@ -35,8 +49,10 @@ pub fn fzf_multi_header(items: Vec<String>, prompt: &str, header: Option<&str>) 
 
     let output = child.wait_with_output()?;
 
-    terminal::enable_raw_mode()?;
-    execute!(std::io::stdout(), cursor::Hide)?;
+    if !test_mode {
+        terminal::enable_raw_mode()?;
+        execute!(std::io::stdout(), cursor::Hide)?;
+    }
 
     let text = String::from_utf8_lossy(&output.stdout);
     let mut lines = text.lines();
@@ -50,10 +66,10 @@ pub fn fzf_multi_header(items: Vec<String>, prompt: &str, header: Option<&str>) 
 /// - N items from hints → `col` == 'a' || `col` == 'b'
 /// - else → raw PRQL expression
 /// Examples shown: col == 'x', col > 5, s"col LIKE '%pat%'"
-pub fn fzf_filter(hints: Vec<String>, col: &str, is_str: bool, header: Option<&str>) -> Result<Option<String>> {
+pub fn fzf_filter(hints: Vec<String>, col: &str, is_str: bool, header: Option<&str>, pre_query: Option<&str>) -> Result<Option<String>> {
     // Build prompt with PRQL examples
     let prompt = format!("PRQL: `{}` == 'x' | > 5 | s\"LIKE '%'\" > ", col);
-    let (sels, query) = fzf_multi_header(hints.clone(), &prompt, header)?;
+    let (sels, query) = fzf_multi_header(hints.clone(), &prompt, header, pre_query)?;
     // Check how many selections are from hints
     let from_hints: Vec<&String> = sels.iter().filter(|s| hints.contains(s)).collect();
     let expr = if from_hints.len() == 1 {

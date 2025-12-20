@@ -54,7 +54,8 @@ pub fn do_filter(app: &mut AppContext) -> Result<()> {
         Some((hints(v.data.as_ref(), &col_name, v.state.cr, file), col_name, is_str, header))
     });
     if let Some((hint_list, col_name, is_str, header)) = info {
-        let expr_opt = picker::fzf_filter(hint_list, &col_name, is_str, Some(&header));
+        let pre_query = if app.test_input.is_empty() { None } else { Some(app.test_input.remove(0)) };
+        let expr_opt = picker::fzf_filter(hint_list, &col_name, is_str, Some(&header), pre_query.as_deref());
         app.needs_clear = true;
         if let Ok(Some(expr)) = expr_opt {
             run(app, Box::new(Filter { expr }));
@@ -72,7 +73,9 @@ pub fn do_command_picker(app: &mut AppContext) -> Result<()> {
         "filter <expr>", "freq <col>", "meta", "corr",
         "select <cols>", "delcol <cols>", "sort <col>", "sort -<col>", "take <n>", "rename <old> <new>",
     ].iter().map(|s| s.to_string()).collect();
-    let result = picker::fzf(cmd_list, ": ");
+    // Pop pre-filled query from test_input if available (for --keys mode)
+    let pre_query = if app.test_input.is_empty() { None } else { Some(app.test_input.remove(0)) };
+    let result = picker::fzf_with(cmd_list, ": ", pre_query.as_deref());
     app.needs_clear = true;
     if let Ok(Some(selected)) = result {
         let cmd_str = selected.split_whitespace().next().unwrap_or(&selected);
@@ -102,7 +105,12 @@ pub fn do_goto_col(app: &mut AppContext) -> Result<()> {
 }
 
 /// Prompt user for input, None if cancelled
-pub fn prompt(_app: &mut AppContext, prompt_str: &str) -> Result<Option<String>> {
+/// In test mode (test_input non-empty), pops from test_input instead
+pub fn prompt(app: &mut AppContext, prompt_str: &str) -> Result<Option<String>> {
+    // Test mode: return pre-filled input
+    if !app.test_input.is_empty() {
+        return Ok(Some(app.test_input.remove(0)));
+    }
     let (_cols, rows) = terminal::size()?;
     execute!(
         io::stdout(),
@@ -153,7 +161,7 @@ pub fn hints(table: &dyn Table, col_name: &str, _row: usize, file: Option<&str>)
 
     // Try PRQL distinct for parquet files
     if let Some(path) = file.filter(|f| f.ends_with(".parquet")) {
-        let prql = format!("from df | select {{`{}`}} | group {{`{}`}} () | take 500", col_name, col_name);
+        let prql = format!("from df | group {{`{}`}} (take 1) | select {{`{}`}} | take 500", col_name, col_name);
         if let Some(sql) = pure::compile_prql(&prql) {
             if let Some(plugin) = dynload::get() {
                 if let Some(t) = plugin.query(&sql, path) {

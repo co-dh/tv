@@ -182,8 +182,13 @@ pub extern "C" fn tv_plugin_init() -> PluginVtable {
         col_type: tv_col_type,
         cell: tv_cell,
         str_free: tv_str_free,
+        save: tv_save,
     }
 }
+
+/// Save not supported for memory tables
+#[unsafe(no_mangle)]
+pub extern "C" fn tv_save(_sql: *const c_char, _path_in: *const c_char, _path_out: *const c_char) -> u8 { 1 }
 
 /// Execute SQL on table (memory:id or source:type:args) - LRU cached
 #[unsafe(no_mangle)]

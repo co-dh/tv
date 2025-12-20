@@ -120,6 +120,9 @@ KeyEvent → key_str() → keymap.get_command() → keyhandler::to_cmd() → par
 - If result is N items from hints → `col IN ('a', 'b', ...)`
 - Otherwise (not in hints) → raw SQL WHERE clause
 
+# Testing
+- Use unique static IDs (10000+) for `new_memory()` in tests to avoid parallel test conflicts with sqlite registry
+
 # Known Issues (Fixed)
 - Space key in TUI must map to `<space>` in key_str(), not `" "`. Keymap expects `<space>`.
 

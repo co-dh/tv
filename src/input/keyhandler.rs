@@ -29,8 +29,9 @@ pub fn to_cmd(app: &AppContext, cmd: &str) -> Option<String> {
         "ls" => Some("ls".into()),
         "lr" => Some("lr".into()),
         "pop" => Some("pop".into()),
+        "dup" => Some("dup".into()),
         // These need has_view check or extra logic in main
-        "meta" | "corr" | "pivot" | "dup" => None,
+        "meta" | "corr" | "pivot" => None,
 
         // Display commands
         "toggle_info" => Some("toggle_info".into()),

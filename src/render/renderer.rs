@@ -32,14 +32,12 @@ impl Renderer {
             let selected_rows = view.selected_rows.clone();
             let view_name = view.name.clone();
             let prql = view.prql.clone();
-            let show_tabs = stack_names.len() > 1;
+            let show_tabs = true;  // always show tab bar
             Self::render_table(frame, view, area, &selected_cols, &selected_rows, decimals, &theme, show_tabs);
             if info_mode > 0 {
                 Self::render_info_box(frame, &view_name, stack_len, area, &hints, &theme, info_mode, &prql);
             }
-            if show_tabs {
-                Self::render_tabs(frame, &stack_names, area, &theme);
-            }
+            Self::render_tabs(frame, &stack_names, area, &theme);
             Self::render_status_bar(frame, view, &message, is_loading, area, &theme);
         } else {
             Self::empty_msg(frame, &message, area);
@@ -91,10 +89,8 @@ impl Renderer {
             return;
         }
 
-        // Row number width (show for table/freq/meta, not folder)
-        let row_num_width = if !matches!(view.kind, ViewKind::Folder) {
-            total_rows.to_string().len().max(3) as u16
-        } else { 0 };
+        // Row number column removed - use goto_row for navigation
+        let row_num_width = 0u16;
         let screen_width = area.width.saturating_sub(if row_num_width > 0 { row_num_width + 1 } else { 0 }) as i32;
 
         // Calculate xs - x position for each column in display order
@@ -909,8 +905,7 @@ mod tests {
         );
 
         let mut app = AppContext::default();
-        let id = app.next_id();  // unique ID to avoid test conflicts
-        app.stack.push(ViewState::new_memory(id, "test", ViewKind::Table, Box::new(table)));
+        app.stack.push(ViewState::new_memory(10000, "test", ViewKind::Table, Box::new(table)));
 
         let backend = TestBackend::new(80, 10);
         let mut terminal = Terminal::new(backend).unwrap();
@@ -952,8 +947,7 @@ mod tests {
         );
 
         let mut app = AppContext::default();
-        let id = app.next_id();
-        app.stack.push(ViewState::new_memory(id, "test", ViewKind::Table, Box::new(table)));
+        app.stack.push(ViewState::new_memory(10001, "test", ViewKind::Table, Box::new(table)));
 
         let backend = TestBackend::new(40, 15);  // 15 rows high - enough for header/footer/data
         let mut terminal = Terminal::new(backend).unwrap();

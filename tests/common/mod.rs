@@ -20,3 +20,8 @@ pub fn footer(output: &str) -> (&str, &str) {
     let tab = it.next().expect("output missing tab line");
     (tab, status)
 }
+
+/// Extract header line (first line)
+pub fn header(output: &str) -> &str {
+    output.lines().next().expect("output missing header")
+}

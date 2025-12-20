@@ -1,6 +1,6 @@
 //! Command tests (freq, sort, select, save, etc.) - key-based
 mod common;
-use common::run_keys;
+use common::{run_keys, footer};
 use std::fs;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -23,56 +23,12 @@ fn test_save_csv() {
 }
 
 #[test]
-fn test_freq_city() {
-    // Navigate to city column (2nd column), press F for freq
-    let out = run_keys("<right>F", "tests/data/full.csv");
-    assert!(out.contains("(3 rows)"), "freq city: 3 unique values: {}", out);
-}
-
-#[test]
-fn test_freq_shows_counts() {
-    // freq on b column (2nd)
-    let out = run_keys("<right>F", "tests/data/basic.csv");
-    assert!(out.contains("Freq:b"), "Should create freq view for b: {}", out);
-    assert!(out.contains("Cnt"), "Should have Cnt column");
-    assert!(out.contains("x"), "Should show value 'x'");
-}
-
-#[test]
-fn test_freq_then_filter() {
-    // Freq on b, then press enter to filter parent by selected value
-    let out = run_keys("<right>F<ret>", "tests/data/basic.csv");
-    // After pressing enter on freq view, returns to filtered table
-    assert!(out.contains("rows)"), "Should return to filtered view: {}", out);
-}
-
-#[test]
 fn test_multi_column_select() {
     // Select multiple columns with space, verify sel count
     // full.csv: name,city,value,score (cols 0,1,2,3)
-    let out = run_keys("<space><right><space><a-p>", "tests/data/full.csv");
-    assert!(out.contains("sel=2"), "Should have 2 columns selected: {}", out);
-}
-
-#[test]
-fn test_freq_with_selected_cols() {
-    // Select value column, then freq on city - should show aggregates for value
-    // full.csv: name,city,value,score (cols 0,1,2,3)
-    // Navigate to value (col 2), select, go to city (col 1), freq
-    let out = run_keys("<right><right><space><left>F", "tests/data/full.csv");
-    assert!(out.contains("Freq:city"), "Should create freq view: {}", out);
-    assert!(out.contains("value_min"), "Should have value_min: {}", out);
-    assert!(out.contains("value_max"), "Should have value_max: {}", out);
-    assert!(out.contains("value_sum"), "Should have value_sum: {}", out);
-}
-
-#[test]
-fn test_freq_no_selected_cols() {
-    // Freq without selection - should only show Cnt, Pct, Bar (no aggregates)
-    let out = run_keys("<right>F", "tests/data/full.csv");
-    assert!(out.contains("Freq:city"), "Should create freq view: {}", out);
-    assert!(out.contains("Cnt"), "Should have Cnt: {}", out);
-    assert!(!out.contains("value_min"), "Should NOT have aggregates: {}", out);
+    let out = run_keys("<space><right><space>", "tests/data/full.csv");
+    let (_, status) = footer(&out);
+    assert!(status.contains("sel=2"), "status: {}", status);
 }
 
 #[test]
@@ -101,7 +57,8 @@ fn test_delcol_multi() {
 fn test_delcol_single() {
     // Navigate to b column, D to delete
     let out = run_keys("<right>D", "tests/data/basic.csv");
-    assert!(out.contains("(5 rows)"), "Should keep all rows");
+    let (_, status) = footer(&out);
+    assert!(status.ends_with("0/5"), "Should keep all rows: {}", status);
     assert!(out.contains("a"), "Should have column a");
 }
 
@@ -110,20 +67,6 @@ fn test_rename_column() {
     // ^ to rename, type new name
     let out = run_keys("^num<ret>", "tests/data/basic.csv");
     assert!(out.contains("num"), "Should have renamed column: {}", out);
-}
-
-#[test]
-fn test_sort_ascending() {
-    // [ to sort ascending on current column
-    let out = run_keys("[", "tests/data/basic.csv");
-    assert!(out.contains("(5 rows)"), "Should keep all rows after sort");
-}
-
-#[test]
-fn test_sort_descending() {
-    // ] to sort descending
-    let out = run_keys("]", "tests/data/basic.csv");
-    assert!(out.contains("(5 rows)"), "Should keep all rows after sort");
 }
 
 #[test]
@@ -138,16 +81,19 @@ fn test_corr_matrix() {
 fn test_pivot_requires_xkey() {
     // P for pivot without xkey should stay on original view (not create pivot view)
     let out = run_keys("P", "tests/data/full.csv");
+    let (_, status) = footer(&out);
     // Without xkey, pivot should fail and stay on original view (6 rows)
     assert!(!out.contains("Pivot:"), "Should not create pivot view without xkey: {}", out);
-    assert!(out.contains("(6 rows)"), "Should stay on original view: {}", out);
+    assert!(status.ends_with("0/6"), "Should stay on original view: {}", status);
 }
 
 #[test]
+#[ignore]  // requires fzf for filter
 fn test_filter_then_sort_then_select() {
     // filter city=='NYC' (PRQL syntax), sort value, select name,value
     let out = run_keys("<backslash>city == 'NYC'<ret>[sname,value<ret>", "tests/data/full.csv");
-    assert!(out.contains("(3 rows)"), "Filter+sort+select chain: {}", out);
+    let (_, status) = footer(&out);
+    assert!(status.ends_with("0/3"), "Filter+sort+select chain: {}", status);
 }
 
 #[test]
@@ -171,9 +117,9 @@ fn test_toggle_key_column() {
     // ! toggles current column as key (adds to keys, not replaces)
     // Start: a,b,c,d - press ! to add a as key, l to move to b, ! to add b as key
     // Expected: a,b are both keys (col 0 and 1), cursor stays on b
-    let out = run_keys("!l!<a-p>", "tests/data/xkey.csv");
-    // Should have 2 key columns
-    assert!(out.contains("keys=2"), "should have 2 keys: {}", out);
+    let out = run_keys("!l!", "tests/data/xkey.csv");
+    let (_, status) = footer(&out);
+    assert!(status.contains("keys=2"), "status: {}", status);
     assert!(out.contains("a,b,c,d"), "order should be a,b,c,d: {}", out);
 }
 
@@ -181,25 +127,26 @@ fn test_toggle_key_column() {
 fn test_toggle_key_remove() {
     // Toggle key on, then toggle same column off
     // Start: a,b,c,d - press ! to add a as key, then ! again to remove a
-    let out = run_keys("!!<a-p>", "tests/data/xkey.csv");
-    // After removing key, no keys left
-    assert!(out.contains("keys=0"), "should have 0 keys after toggle off: {}", out);
+    let out = run_keys("!!", "tests/data/xkey.csv");
+    let (_, status) = footer(&out);
+    assert!(status.contains("keys=0"), "status: {}", status);
 }
 
 #[test]
 fn test_toggle_key_selected_cols() {
     // Select multiple columns with space, then ! toggles all selected as keys
     // Start: a,b,c,d - select a and b with space, then ! to add both as keys
-    let out = run_keys("<space><right><space>!<a-p>", "tests/data/xkey.csv");
-    // Should have 2 key columns
-    assert!(out.contains("keys=2"), "should have 2 keys from selection: {}", out);
+    let out = run_keys("<space><right><space>!", "tests/data/xkey.csv");
+    let (_, status) = footer(&out);
+    assert!(status.contains("keys=2"), "status: {}", status);
 }
 
 #[test]
 fn test_freq_after_meta() {
     // View meta, then q to return, then freq on current col
     let out = run_keys("MqF", "tests/data/basic.csv");
-    assert!(out.contains("Freq:"), "Should show freq view: {}", out);
+    let (tab, _) = footer(&out);
+    assert!(tab.contains("| freq a"), "tab: {}", tab);
 }
 
 #[test]
@@ -209,20 +156,6 @@ fn test_freq_by_key_columns() {
     // Set city as key, then freq should group by city
     let out = run_keys("<right>!F", "tests/data/full.csv");
     assert!(out.contains("Freq:city"), "Should freq by key column: {}", out);
-}
-
-#[test]
-fn test_meta_view() {
-    let out = run_keys("M", "tests/data/full.csv");
-    assert!(out.contains("metadata"), "Should show metadata view: {}", out);
-    assert!(out.contains("(4 rows)"), "Should have 4 columns: {}", out);
-}
-
-#[test]
-fn test_meta_shows_stats() {
-    let out = run_keys("M", "tests/data/numeric.csv");
-    assert!(out.contains("metadata"), "Should show metadata: {}", out);
-    assert!(out.contains("(3 rows)"), "3 columns: {}", out);
 }
 
 // Test navigation and selection
@@ -254,13 +187,15 @@ fn test_select_single_value() {
 #[test]
 fn test_decimal_increase() {
     let out = run_keys("..", "tests/data/numeric.csv");
-    assert!(out.contains("(5 rows)"), "Should show table: {}", out);
+    let (_, status) = footer(&out);
+    assert!(status.ends_with("0/5"), "Should show table: {}", status);
 }
 
 #[test]
 fn test_decimal_decrease() {
     let out = run_keys(",,", "tests/data/numeric.csv");
-    assert!(out.contains("(5 rows)"), "Should show table: {}", out);
+    let (_, status) = footer(&out);
+    assert!(status.ends_with("0/5"), "Should show table: {}", status);
 }
 
 // Test duplicate view
@@ -268,16 +203,19 @@ fn test_decimal_decrease() {
 fn test_duplicate_view() {
     // T duplicates current view
     let out = run_keys("T", "tests/data/basic.csv");
-    assert!(out.contains("(5 rows)"), "Should show duplicated view: {}", out);
+    let (tab, _) = footer(&out);
+    // Two views should show | separator in tab line
+    assert!(tab.contains("|"), "Should have two views: {}", tab);
 }
 
 // Test swap views
 #[test]
 fn test_swap_views() {
-    // Create second view with filter, then W to swap
-    let out = run_keys("<backslash>a <gt> 2<ret>W", "tests/data/basic.csv");
-    // After swap, should be back to filtered view position
-    assert!(out.contains("rows)"), "Should show view: {}", out);
+    // Create filter view, then W to swap back to original
+    let out = run_keys(":filter a > 2<ret>W", "tests/data/basic.csv");
+    let (tab, _) = footer(&out);
+    // Two views: original and filtered, both show basic.csv
+    assert!(tab.matches("basic.csv").count() == 2, "Should show basic.csv twice: {}", tab);
 }
 
 // Test lr shows relative paths

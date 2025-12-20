@@ -1,6 +1,6 @@
 //! Parquet backend tests - key-based
 mod common;
-use common::run_keys;
+use common::{run_keys, footer};
 
 
 // Test data files:
@@ -134,24 +134,25 @@ fn test_parquet_freq_enter_then_freq() {
 // Run with: cargo test large_parquet -- --ignored
 
 #[test]
-#[ignore]
+#[ignore]  // large parquet test
 fn test_large_parquet_freq_enter_single() {
     // Freq Exchange (18 vals), Enter filters by P, freq Exchange shows 1 row
-    let out = run_keys("<right>F<ret><right>F<a-p>", "tests/data/nyse/1.parquet");
-    assert!(out.contains("rows=1"), "Filtered freq should show 1 row: {}", out);
+    let out = run_keys("<right>F<ret><right>F", "tests/data/nyse/1.parquet");
+    let (_, status) = footer(&out);
+    assert!(status.ends_with("0/1"), "Filtered freq should show 1 row: {}", status);
 }
 
 #[test]
-#[ignore]
+#[ignore]  // large parquet test
 fn test_large_parquet_filter_not_10k() {
     // Filter by Exchange=P should show 94M rows, not 10k
-    let out = run_keys("<right>F<ret><ret><a-p>", "tests/data/nyse/1.parquet");
-    assert!(!out.contains("rows=10000"), "Should NOT be limited to 10k: {}", out);
-    assert!(out.contains("94874100"), "Should show 94M rows: {}", out);
+    let out = run_keys("<right>F<ret><ret>", "tests/data/nyse/1.parquet");
+    let (_, status) = footer(&out);
+    assert!(status.contains("94874100") || status.contains("94,874,100"), "Should show 94M rows: {}", status);
 }
 
 #[test]
-#[ignore]
+#[ignore]  // large parquet test
 fn test_large_parquet_filtered_freq_symbol() {
     // Filter Exchange=P, then freq Symbol should have >1000 unique values
     let out = run_keys("<right>F<ret><ret><right><right>F<a-p>", "tests/data/nyse/1.parquet");

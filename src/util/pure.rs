@@ -62,17 +62,6 @@ pub fn in_clause(col: &str, values: &[String], is_str: bool) -> String {
     values.iter().map(|v| format!("`{}` == {}{}{}", col, q, v, q)).collect::<Vec<_>>().join(" || ")
 }
 
-/// Build display name for IN filter (PRQL-style command for tabs)
-#[must_use]
-pub fn filter_in_name(col: &str, values: &[String]) -> String {
-    if values.len() == 1 {
-        format!("filter `{}`==\"{}\"", col, values[0])
-    } else {
-        let conds = values.iter().map(|v| format!("`{}`==\"{}\"", col, v)).collect::<Vec<_>>().join(" || ");
-        format!("filter ({})", conds)
-    }
-}
-
 /// Reorder columns: keys first, then rest
 #[must_use]
 pub fn reorder_cols(all: &[String], keys: &[String]) -> Vec<String> {
@@ -170,16 +159,6 @@ mod tests {
     fn test_in_clause_num() {
         let vals = vec!["1".into(), "2".into()];
         assert_eq!(in_clause("col", &vals, false), "`col` == 1 || `col` == 2");
-    }
-
-    #[test]
-    fn test_filter_in_name_single() {
-        assert_eq!(filter_in_name("x", &["val".into()]), "x=val");
-    }
-
-    #[test]
-    fn test_filter_in_name_multi() {
-        assert_eq!(filter_in_name("x", &["a".into(), "b".into()]), "x∈{2}");
     }
 
     #[test]

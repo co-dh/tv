@@ -40,6 +40,7 @@ pub struct AppContext {
     pub needs_redraw: bool,  // redraw on next frame
     pub needs_clear: bool,   // force full clear (after fzf/bat)
     pub needs_center: bool,  // center cursor after viewport update (for search)
+    pub test_input: Vec<String>,   // pre-extracted input for prompts (test mode)
 }
 
 impl Default for AppContext {
@@ -66,6 +67,7 @@ impl Default for AppContext {
             needs_redraw: false,
             needs_clear: false,
             needs_center: false,
+            test_input: Vec::new(),
         }
     }
 }

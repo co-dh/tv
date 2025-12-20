@@ -42,6 +42,7 @@ pub extern "C" fn tv_plugin_init() -> PluginVtable {
         col_type: tv_col_type,
         cell: tv_cell,
         str_free: tv_str_free,
+        save: tv_save,
     }
 }
 
@@ -163,6 +164,44 @@ pub extern "C" fn tv_cell(h: TableHandle, row: usize, col: usize) -> CCell {
 #[unsafe(no_mangle)]
 pub extern "C" fn tv_str_free(p: *mut c_char) {
     unsafe { free_c_str(p); }
+}
+
+/// Save query result to file (parquet/csv)
+#[unsafe(no_mangle)]
+pub extern "C" fn tv_save(sql: *const c_char, path_in: *const c_char, path_out: *const c_char) -> u8 {
+    if sql.is_null() || path_in.is_null() || path_out.is_null() { return 1; }
+    let sql = unsafe { from_c_str(sql) };
+    let path_in = unsafe { from_c_str(path_in) };
+    let path_out = unsafe { from_c_str(path_out) };
+    dbg(&format!("save {} -> {}", path_in, path_out));
+
+    // Load source
+    let lf = if path_in.ends_with(".parquet") {
+        LazyFrame::scan_parquet(PlPath::new(&path_in), Default::default()).ok()
+    } else if path_in.ends_with(".csv") {
+        CsvReadOptions::default()
+            .with_has_header(true)
+            .try_into_reader_with_file_path(Some(path_in.into()))
+            .and_then(|r| r.finish())
+            .map(|df| df.lazy())
+            .ok()
+    } else { None };
+
+    let Some(lf) = lf else { return 1; };
+    let Ok(mut df) = exec_sql(lf, &sql) else { return 1; };
+
+    // Save based on extension
+    let ok = if path_out.ends_with(".parquet") {
+        std::fs::File::create(&path_out)
+            .and_then(|f| ParquetWriter::new(f).finish(&mut df).map_err(|e| std::io::Error::other(e)))
+            .is_ok()
+    } else if path_out.ends_with(".csv") {
+        std::fs::File::create(&path_out)
+            .and_then(|f| CsvWriter::new(f).finish(&mut df).map_err(|e| std::io::Error::other(e)))
+            .is_ok()
+    } else { false };
+
+    if ok { 0 } else { 1 }
 }
 
 #[cfg(test)]

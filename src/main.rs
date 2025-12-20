@@ -38,14 +38,16 @@ fn main() -> Result<()> {
             std::process::exit(1);
         }
         let file = args.get(idx + 2).map(|s| s.as_str());
-        let keys = parse_keys(&args[idx + 1]);
+        let (keys, test_input) = extract_prompts(&parse_keys(&args[idx + 1]));
         let key_events: Vec<KeyEvent> = keys.iter().map(|s| str_to_key(s)).collect();
         let mut app = make_app(file, raw_save);
-        let backend = TestBackend::new(120, 50);
+        app.test_input = test_input;
+        let (w, h) = (200, 80);
+        let backend = TestBackend::new(w, h);
         let mut term = ratatui::Terminal::new(backend)?;
         app.run_keys(&mut term, &key_events, on_key)?;
         // Output buffer as string
-        for line in term.backend().buffer().content.chunks(120) {
+        for line in term.backend().buffer().content.chunks(w as usize) {
             let s: String = line.iter().map(|c| c.symbol()).collect();
             println!("{}", s.trim_end());
         }
@@ -70,6 +72,34 @@ fn make_app(file: Option<&str>, raw_save: bool) -> AppContext {
         }
     }
     app
+}
+
+/// Extract prompt inputs from key sequence for --keys mode
+/// ":pacman<ret>" → keys=[":"], test_input=["pacman"]
+fn extract_prompts(keys: &[String]) -> (Vec<String>, Vec<String>) {
+    // Keys that trigger prompts: : ^ \ (command picker, rename, filter)
+    let prompt_keys = [":", "^", "<backslash>"];
+    let mut out_keys = Vec::new();
+    let mut test_input = Vec::new();
+    let mut i = 0;
+    while i < keys.len() {
+        if prompt_keys.contains(&keys[i].as_str()) {
+            out_keys.push(keys[i].clone());
+            i += 1;
+            // Collect until <ret>
+            let mut cmd = String::new();
+            while i < keys.len() && keys[i] != "<ret>" {
+                cmd.push_str(&keys[i]);
+                i += 1;
+            }
+            if i < keys.len() { i += 1; }  // skip <ret>
+            if !cmd.is_empty() { test_input.push(cmd); }
+        } else {
+            out_keys.push(keys[i].clone());
+            i += 1;
+        }
+    }
+    (out_keys, test_input)
 }
 
 /// Parse Kakoune-style key sequence: "F<ret><down>" → ["F", "<ret>", "<down>"]
@@ -149,5 +179,21 @@ mod tests {
         assert_eq!(str_to_key("a").code, KeyCode::Char('a'));
         assert_eq!(str_to_key("<c-x>").code, KeyCode::Char('x'));
         assert!(str_to_key("<c-x>").modifiers.contains(KeyModifiers::CONTROL));
+    }
+
+    #[test]
+    fn test_extract_prompts() {
+        let keys = parse_keys(":pacman<ret>");
+        let (out, input) = extract_prompts(&keys);
+        assert_eq!(out, vec![":"]);
+        assert_eq!(input, vec!["pacman"]);
+    }
+
+    #[test]
+    fn test_extract_prompts_multiple() {
+        let keys = parse_keys(":ps<ret>F<ret>:systemctl<ret>");
+        let (out, input) = extract_prompts(&keys);
+        assert_eq!(out, vec![":", "F", "<ret>", ":"]);
+        assert_eq!(input, vec!["ps", "systemctl"]);
     }
 }

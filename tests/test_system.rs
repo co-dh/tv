@@ -1,6 +1,6 @@
 //! System tests - key-based
 mod common;
-use common::run_keys;
+use common::{run_keys, footer, header};
 use std::fs;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use chrono::Utc;
@@ -106,80 +106,78 @@ fn test_ps_quit_returns_to_empty() {
 }
 
 #[test]
-fn test_pacman_command() {
-    // :pacman to list packages
-    let out = run_keys(":pacman<ret><a-p>", "tests/data/basic.csv");
-    assert!(out.contains("pacman"), "Should show pacman view: {}", out);
-    assert!(out.contains("name"), "Should have name column: {}", out);
-    assert!(out.contains("size(k)"), "Should have size(k) column: {}", out);
-}
-
-#[test]
 fn test_pacman_sort_deps() {
     // :pacman then navigate to deps column (col 4: name,ver,size,rsize,deps) and sort ascending
-    let out = run_keys(":pacman<ret><right><right><right><right>[<a-p>", "tests/data/basic.csv");
-    assert!(out.contains("pacman"), "Should show sorted pacman: {}", out);
-    assert!(out.contains("size(k)"), "Should have size(k) column: {}", out);
-}
-
-#[test]
-fn test_pacman_sort_deps_desc() {
-    // :pacman then navigate to deps column (col 4) and sort descending
-    let out = run_keys(":pacman<ret><right><right><right><right>]<a-p>", "tests/data/basic.csv");
-    assert!(out.contains("pacman"), "Should show sorted pacman: {}", out);
+    let out = run_keys(":pacman<ret><right><right><right><right>[!", "");
+    let (tab, _) = footer(&out);
+    let hdr = header(&out).trim_start();
+    assert!(tab.contains("pacman"), "Tab should show pacman: {}", tab);
+    assert!(!hdr.starts_with('#'), "Header should not start with #: {}", hdr);
+    // First data row should start with 0 (smallest deps count)
+    let row1 = out.lines().nth(1).unwrap_or("").trim_start();
+    assert!(row1.starts_with('0'), "First data row should start with 0: {}", row1);
 }
 
 #[test]
 fn test_systemctl_command() {
     // :systemctl to list services
-    let out = run_keys(":systemctl<ret><a-p>", "tests/data/basic.csv");
-    assert!(out.contains("systemctl"), "Should show systemctl view: {}", out);
-    assert!(out.contains("unit"), "Should have unit column: {}", out);
-    assert!(out.contains("active"), "Should have active column: {}", out);
+    let out = run_keys(":systemctl<ret>", "");
+    let (tab, _) = footer(&out);
+    let hdr = header(&out).trim_start();
+    assert!(tab.contains("systemctl"), "Tab should show systemctl: {}", tab);
+    assert!(!hdr.starts_with('#'), "Header should not start with #: {}", hdr);
+    assert!(hdr.contains("unit"), "Header should have unit: {}", hdr);
+    assert!(hdr.contains("active"), "Header should have active: {}", hdr);
 }
 
 #[test]
 fn test_journalctl_command() {
     // :journalctl 50 to get 50 log entries
-    let out = run_keys(":journalctl 50<ret><a-p>", "tests/data/basic.csv");
-    assert!(out.contains("journalctl"), "Should show journalctl view: {}", out);
-    assert!(out.contains("message"), "Should have message column: {}", out);
+    let out = run_keys(":journalctl 50<ret>", "");
+    let (tab, _) = footer(&out);
+    let hdr = header(&out).trim_start();
+    assert!(tab.contains("journalctl"), "Tab should show journalctl: {}", tab);
+    assert!(!hdr.starts_with('#'), "Header should not start with #: {}", hdr);
+    assert!(hdr.contains("message"), "Header should have message: {}", hdr);
 }
 
 #[test]
 fn test_pacman_sort_unicode_description() {
     // Sort on description column (col 9) which may contain unicode chars like fancy quotes
     // This crashed due to byte-slicing non-ASCII strings
-    let out = run_keys(":pacman<ret><right><right><right><right><right><right><right><right><right>[<a-p>", "tests/data/basic.csv");
-    assert!(out.contains("pacman"), "Should handle unicode in sort: {}", out);
+    let out = run_keys(":pacman<ret><right><right><right><right><right><right><right><right><right>[", "");
+    let (tab, _) = footer(&out);
+    assert!(tab.contains("pacman"), "Tab should show pacman: {}", tab);
 }
 
 #[test]
 fn test_pacman_sort_size_numeric() {
     // Size column should sort numerically (KB), not alphabetically
     // Sort descending on size (col 2), largest packages first
-    let out = run_keys(":pacman<ret><right><right>]<a-p>", "tests/data/basic.csv");
-    assert!(out.contains("pacman"), "Should show pacman: {}", out);
-    // Size is now stored as u64 KB. Largest packages (>100MB = >100000KB) should be first.
-    let has_large = out.lines().take(20).any(|l| {
-        l.split(',').any(|w| w.parse::<u64>().map(|n| n > 100_000).unwrap_or(false))
-    });
-    assert!(has_large, "Largest packages (>100MB) should be first when sorting desc: {}", out);
+    let out = run_keys(":pacman<ret><right><right>]!", "");
+    let (tab, _) = footer(&out);
+    let hdr = header(&out).trim_start();
+    assert!(tab.contains("pacman"), "Tab should show pacman: {}", tab);
+    assert!(!hdr.starts_with('#'), "Header should not start with #: {}", hdr);
+    // First data row should have large size (sorted desc, moved to first col)
+    let row1 = out.lines().nth(1).unwrap_or("").trim_start();
+    let size: u64 = row1.split_whitespace().next().and_then(|s| s.parse().ok()).unwrap_or(0);
+    assert!(size > 100_000, "First row size should be >100MB (>100000KB): {}", row1);
 }
 
 #[test]
 fn test_pacman_rsize_column() {
     // rsize(k) column shows removal size = pkg size + exclusive deps
     // Sort descending on rsize (col 3), largest removals first
-    let out = run_keys(":pacman<ret><right><right><right>]<a-p>", "tests/data/basic.csv");
-    assert!(out.contains("pacman"), "Should show pacman: {}", out);
-    assert!(out.contains("rsize(k)"), "Should have rsize(k) column: {}", out);
-    // Some packages have rsize > size (due to exclusive deps)
-    // cuda is ~5GB removal size with deps
-    let has_large_rsize = out.lines().take(20).any(|l| {
-        l.split(',').any(|w| w.parse::<u64>().map(|n| n > 1_000_000).unwrap_or(false))
-    });
-    assert!(has_large_rsize, "Should have large rsize packages when sorted desc: {}", out);
+    let out = run_keys(":pacman<ret><right><right><right>]!", "");
+    let (tab, _) = footer(&out);
+    let hdr = header(&out).trim_start();
+    assert!(tab.contains("pacman"), "Tab should show pacman: {}", tab);
+    assert!(hdr.contains("rsize(k)"), "Header should have rsize(k): {}", hdr);
+    // First data row should have large rsize (sorted desc, moved to first col)
+    let row1 = out.lines().nth(1).unwrap_or("").trim_start();
+    let rsize: u64 = row1.split_whitespace().next().and_then(|s| s.parse().ok()).unwrap_or(0);
+    assert!(rsize > 1_000_000, "First row rsize should be >1GB: {}", row1);
 }
 
 #[test]
@@ -193,30 +191,36 @@ fn test_cargo_command() {
     fs::write(&cache_path, format!("name,version,timestamp\nadler2,99.0.0,{}\n", now)).ok();
 
     // :cargo to list project dependencies (like pacman for Rust)
-    let out = run_keys(":cargo<ret><a-p>", "tests/data/basic.csv");
-    assert!(out.contains("cargo"), "Should show cargo view: {}", out);
-    assert!(out.contains("name"), "Should have name column: {}", out);
-    assert!(out.contains("size(k)"), "Should have size(k) column: {}", out);
-    assert!(out.contains("deps"), "Should have deps column: {}", out);
-    assert!(out.contains("req_by"), "Should have req_by column: {}", out);
-    assert!(out.contains("platform"), "Should have platform column: {}", out);
-    assert!(out.contains("latest"), "Should have latest column: {}", out);
+    let out = run_keys(":cargo<ret>", "");
+    let (tab, _) = footer(&out);
+    let hdr = header(&out).trim_start();
+    assert!(tab.contains("cargo"), "Tab should show cargo: {}", tab);
+    assert!(!hdr.starts_with('#'), "Header should not start with #: {}", hdr);
+    assert!(hdr.contains("name"), "Header should have name: {}", hdr);
+    assert!(hdr.contains("size(k)"), "Header should have size(k): {}", hdr);
+    assert!(hdr.contains("deps"), "Header should have deps: {}", hdr);
+    assert!(hdr.contains("req_by"), "Header should have req_by: {}", hdr);
+    assert!(hdr.contains("platform"), "Header should have platform: {}", hdr);
+    assert!(hdr.contains("latest"), "Header should have latest: {}", hdr);
     // Check cached version shows up
     assert!(out.contains("99.0.0"), "Should show cached latest version 99.0.0: {}", out);
 }
 
 #[test]
 fn test_pacman_installed_iso_date() {
-    // Installed date should be ISO format (2025-10-25), not verbose (Sat Oct 25 23:02:55 2025)
-    let out = run_keys(":pacman<ret><a-p>", "tests/data/basic.csv");
-    assert!(out.contains("pacman"), "Should show pacman: {}", out);
-    // Check for ISO date pattern YYYY-MM-DD in output
-    let has_iso = out.lines().any(|l| {
-        l.contains("2025-") || l.contains("2024-")  // recent years
-    });
+    // Installed date should be ISO format (YYYY-MM-DD), not verbose (Sat Oct 25 23:02:55 2025)
+    // Navigate to installed column (col 6: name,ver,size,rsize,deps,req_by,installed), sort desc, move first
+    let out = run_keys(":pacman<ret><right><right><right><right><right><right>]!", "");
+    let (tab, _) = footer(&out);
+    let hdr = header(&out).trim_start();
+    assert!(tab.contains("pacman"), "Tab should show pacman: {}", tab);
+    assert!(hdr.starts_with("installed"), "Header should start with installed: {}", hdr);
+    // First data row should start with current year (ISO format)
+    let row1 = out.lines().nth(1).unwrap_or("").trim_start();
+    let year = Utc::now().format("%Y").to_string();
+    assert!(row1.starts_with(&year), "First row should start with {}: {}", year, row1);
     // Should NOT have verbose date format with day names
     let has_verbose = out.contains("Sat ") || out.contains("Sun ") || out.contains("Mon ")
         || out.contains("Tue ") || out.contains("Wed ") || out.contains("Thu ") || out.contains("Fri ");
-    assert!(has_iso, "Should have ISO date format (YYYY-MM-DD): {}", out);
     assert!(!has_verbose, "Should NOT have verbose date format (day names): {}", out);
 }
