@@ -8,12 +8,23 @@ use crate::util::pure;
 /// Returns None for interactive commands (need prompts) or navigation
 pub fn to_cmd(app: &AppContext, cmd: &str) -> Option<String> {
     match cmd {
-        // Freq: use key columns if set, else current column
+        // Freq: group by key columns + selected columns + cursor column
         "freq" => {
             let v = app.view()?;
             let sep = v.col_separator.unwrap_or(0);
-            // Pure: build freq command
-            pure::freq_cmd(&v.data.col_names(), sep, cur_col(app).as_deref())
+            let dcols = v.display_cols();
+            // Key cols (in display order)
+            let mut group: Vec<String> = dcols[..sep].iter()
+                .filter_map(|&i| v.data.col_name(i)).collect();
+            // Add selected cols
+            for &i in &v.selected_cols {
+                if let Some(n) = v.col_name(i) { if !group.contains(&n) { group.push(n); } }
+            }
+            // Add cursor col if not already included
+            if let Some(cur) = v.col_name(v.state.cc) {
+                if !group.contains(&cur) { group.push(cur); }
+            }
+            if group.is_empty() { None } else { Some(format!("freq {}", group.join(","))) }
         }
         "sort" => cur_col(app).map(|c| format!("sort {}", c)),
         "sort-" => cur_col(app).map(|c| format!("sort -{}", c)),

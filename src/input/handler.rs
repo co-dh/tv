@@ -8,7 +8,6 @@ use crate::command::executor::CommandExecutor;
 use crate::command::io::{From, Save};
 use crate::command::transform::{Agg, DelCol, RenameCol, Select, Xkey};
 use crate::command::view::Pop;
-use crate::data::dynload;
 use crate::input::keyhandler;
 use crate::input::parser::parse;
 use crate::input::prompt::{do_search, do_filter, do_command_picker, do_goto_col, prompt};
@@ -67,25 +66,6 @@ pub fn dispatch(app: &mut AppContext, action: &str) -> bool {
     let cmd = plugins.handle(&name, action, app);
     app.plugins = plugins;
     if let Some(cmd) = cmd { run(app, cmd); true } else { false }
-}
-
-/// Fetch data for lazy views (parquet files or source: paths)
-pub fn fetch_lazy(view: &mut crate::state::ViewState) {
-    let path = match &view.path {
-        Some(p) if p.ends_with(".parquet") || p.ends_with(".pq") || p.starts_with("source:") => p.clone(),
-        _ => return,
-    };
-    let offset = view.state.r0;
-    if let Some(plugin) = dynload::get_for(&path) {
-        // Use PRQL chain with take range (1-based)
-        let (s, e) = (offset + 1, offset + 51);
-        let prql = format!("{} | take {}..{}", view.prql, s, e);
-        if let Some(sql) = crate::util::pure::compile_prql(&prql) {
-            if let Some(t) = plugin.query(&sql, &path) {
-                view.data = dynload::to_box_table(&t);
-            }
-        }
-    }
 }
 
 /// Navigate to next/prev search match

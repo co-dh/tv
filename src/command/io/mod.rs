@@ -6,37 +6,18 @@ use crate::data::dynload;
 use crate::state::ViewState;
 use crate::util::pure;
 use anyhow::{anyhow, Result};
-use std::path::Path;
 
 /// Load file command (CSV, Parquet, or gzipped CSV)
 pub struct From { pub file_path: String }
 
 impl Command for From {
-    /// Load file via plugin
+    /// Load file - lazy, data fetched on render
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         let p = &self.file_path;
+        dynload::get_for(p).ok_or_else(|| anyhow!("no plugin for: {}", p))?;
         let id = app.next_id();
-
-        // Use plugin to load/query file
-        let plugin = dynload::get().ok_or_else(|| anyhow!("polars plugin not loaded"))?;
-
-        // Use command as view name (shown in tabs)
         let name = format!("from {}", p);
-
-        // Check if parquet for lazy loading
-        let is_pq = p.ends_with(".parquet") || p.ends_with(".pq");
-        let view = if is_pq {
-            // Parquet: lazy loading, data fetched via PRQL
-            ViewState::new_parquet(id, &name, p)
-        } else {
-            // CSV/other: fetch all rows into memory via PRQL
-            let sql = pure::compile_prql("from df | take 1000000").ok_or_else(|| anyhow!("prql compile failed"))?;
-            let t = plugin.query(&sql, p).ok_or_else(|| anyhow!("Failed to load: {}", p))?;
-            let table = dynload::to_box_table(&t);
-            ViewState::new(id, &name, table, Some(p.to_string()))
-        };
-
-        app.stack.push(view);
+        app.stack.push(ViewState::new_parquet(id, &name, p));
         app.msg(format!("Loaded {}", name));
         Ok(())
     }

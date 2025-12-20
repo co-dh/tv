@@ -1,6 +1,6 @@
 use crate::app::AppContext;
 use crate::data::dynload;
-use crate::data::table::{Cell, ColStats, ColType, Table};
+use crate::data::table::{Cell, ColType, Table};
 use crate::utils::commify;
 use crate::state::{TableState, ViewKind, ViewState};
 use crate::util::theme::Theme;
@@ -66,8 +66,8 @@ impl Renderer {
 
         // Use Table trait for polars-free rendering
         let table = view.data.as_ref();
-        // Get total rows via PRQL count (plugin caches it)
-        let total_rows = Self::total_rows(view);
+        // Get total rows via plugin (caches it)
+        let total_rows = view.total_rows();
         let is_correlation = view.kind == ViewKind::Corr;
         let dcols = view.display_cols();  // column indices in display order
 
@@ -347,58 +347,6 @@ impl Renderer {
         } else { Self::commify_str(s) }
     }
 
-    /// Get total rows via PRQL count query (plugin caches it)
-    fn total_rows(v: &ViewState) -> usize {
-        use crate::data::table::Cell;
-        use crate::util::pure;
-        v.path.as_ref()
-            .and_then(|p| dynload::get_for(p).map(|pl| (p, pl)))
-            .and_then(|(p, pl)| {
-                let prql = format!("{} | aggregate {{n = count this}}", v.prql);
-                pure::compile_prql(&prql).and_then(|sql| pl.query(&sql, p))
-            })
-            .and_then(|t| match t.cell(0, 0) { Cell::Int(n) => Some(n as usize), _ => None })
-            .unwrap_or_else(|| v.rows())
-    }
-
-    /// Get column stats via PRQL (plugin caches)
-    fn col_stats(v: &ViewState, col_idx: usize) -> ColStats {
-        use crate::data::table::{Cell, ColType, Table};
-        use crate::util::pure;
-
-        let col_name = v.data.col_name(col_idx).unwrap_or_default();
-        let col_type = v.data.col_type(col_idx);
-        let is_num = matches!(col_type, ColType::Int | ColType::Float);
-
-        // Try plugin query for accurate stats
-        let stats = v.path.as_ref()
-            .and_then(|p| dynload::get_for(p).map(|pl| (p, pl)))
-            .and_then(|(p, pl)| {
-                let prql = if is_num {
-                    format!("{} | aggregate {{n = count this, min_v = min `{}`, max_v = max `{}`, avg_v = average `{}`, std_v = stddev `{}`}}",
-                        v.prql, col_name, col_name, col_name, col_name)
-                } else {
-                    format!("{} | aggregate {{n = count this, dist = count_distinct `{}`}}",
-                        v.prql, col_name)
-                };
-                pure::compile_prql(&prql).and_then(|sql| pl.query(&sql, p))
-            });
-
-        if let Some(t) = stats {
-            if is_num && t.cols() >= 5 {
-                let min = match t.cell(0, 1) { Cell::Float(f) => format!("{:.2}", f), Cell::Int(i) => i.to_string(), _ => String::new() };
-                let max = match t.cell(0, 2) { Cell::Float(f) => format!("{:.2}", f), Cell::Int(i) => i.to_string(), _ => String::new() };
-                let avg = match t.cell(0, 3) { Cell::Float(f) => format!("{:.2}", f), _ => String::new() };
-                let std = match t.cell(0, 4) { Cell::Float(f) => format!("{:.2}", f), _ => String::new() };
-                return ColStats { name: col_name, dtype: format!("{:?}", col_type), null_pct: 0.0, distinct: 0, min, max, median: avg, sigma: std };
-            } else if !is_num && t.cols() >= 2 {
-                let dist = match t.cell(0, 1) { Cell::Int(i) => i as usize, _ => 0 };
-                return ColStats { name: col_name, dtype: format!("{:?}", col_type), null_pct: 0.0, distinct: dist, min: String::new(), max: String::new(), median: String::new(), sigma: String::new() };
-            }
-        }
-        // Fallback to in-memory stats
-        v.col_stats(col_idx)
-    }
 
     /// Render info box using ratatui widgets
     fn render_info_box(frame: &mut Frame, _view_name: &str, stack_len: usize, area: Rect, keys: &[(String, &'static str)], theme: &Theme, info_mode: u8, prql: &str) {
@@ -568,8 +516,8 @@ impl Renderer {
         // Fill status bar
         for x in 0..area.width { buf[(x, row)].set_style(style); buf[(x, row)].set_char(' '); }
 
-        // Show total rows via PRQL count (plugin caches it)
-        let total_str = commify(&Self::total_rows(view).to_string());
+        // Show total rows via plugin
+        let total_str = commify(&view.total_rows().to_string());
 
         let keys = view.col_separator.unwrap_or(0);
         let sel_info = if keys > 0 {
@@ -586,9 +534,9 @@ impl Renderer {
         }
         else { format!("{}{}", view.path.as_deref().unwrap_or("(no file)"), sel_info) };
 
-        // Get column stats for current column (via PRQL for full data)
+        // Get column stats for current column (via plugin)
         let col_stats_str = if view.cols() > 0 {
-            Self::col_stats(view, view.state.cc).format()
+            view.col_stats_plugin(view.state.cc).format()
         } else { String::new() };
 
         let partial = if is_loading || view.partial { " Partial" } else { "" };
@@ -1003,12 +951,9 @@ mod tests {
         let mut from_cmd = From { file_path: "tests/data/sample.parquet".to_string() };
         from_cmd.exec(&mut app).unwrap();
 
-        // Fetch data (lazy loading)
-        crate::input::fetch_lazy(app.view_mut().unwrap());
-
         let view = app.view().unwrap();
         // age column is at index 1
-        let stats = Renderer::col_stats(view, 1);
+        let stats = view.col_stats_plugin(1);
 
         // sample.parquet has 10000 rows, age should have reasonable stats
         // min should be around 18, max around 80, avg around 49

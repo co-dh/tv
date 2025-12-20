@@ -96,16 +96,6 @@ pub fn toggle_keys(current: &[String], to_toggle: &[String]) -> Vec<String> {
     keys
 }
 
-/// Build freq command from columns and separator
-#[must_use]
-pub fn freq_cmd(cols: &[String], sep: usize, cur: Option<&str>) -> Option<String> {
-    if sep > 0 {
-        Some(format!("freq {}", cols[..sep].join(",")))
-    } else {
-        cur.map(|c| format!("freq {}", c))
-    }
-}
-
 /// Build xkey command from key list
 #[must_use]
 pub fn xkey_cmd(keys: &[String]) -> String {
@@ -187,18 +177,6 @@ mod tests {
         let cur = vec!["a".into(), "b".into()];
         let tog = vec!["a".into()];
         assert_eq!(toggle_keys(&cur, &tog), vec!["b"]);
-    }
-
-    #[test]
-    fn test_freq_cmd_with_sep() {
-        let cols = vec!["a".into(), "b".into(), "c".into()];
-        assert_eq!(freq_cmd(&cols, 2, None), Some("freq a,b".into()));
-    }
-
-    #[test]
-    fn test_freq_cmd_no_sep() {
-        let cols = vec!["a".into(), "b".into()];
-        assert_eq!(freq_cmd(&cols, 0, Some("x")), Some("freq x".into()));
     }
 
     #[test]

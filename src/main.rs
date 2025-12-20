@@ -76,6 +76,17 @@ fn make_app(file: Option<&str>, raw_save: bool) -> AppContext {
 
 /// Extract prompt inputs from key sequence for --keys mode
 /// ":pacman<ret>" → keys=[":"], test_input=["pacman"]
+/// Convert key name to char for prompt text
+fn key_to_char(s: &str) -> &str {
+    match s {
+        "<lt>" => "<",
+        "<gt>" => ">",
+        "<space>" => " ",
+        "<backslash>" => "\\",
+        _ => s,
+    }
+}
+
 fn extract_prompts(keys: &[String]) -> (Vec<String>, Vec<String>) {
     // Keys that trigger prompts: : ^ \ s (command picker, rename, filter, select)
     let prompt_keys = [":", "^", "<backslash>", "s"];
@@ -86,10 +97,10 @@ fn extract_prompts(keys: &[String]) -> (Vec<String>, Vec<String>) {
         if prompt_keys.contains(&keys[i].as_str()) {
             out_keys.push(keys[i].clone());
             i += 1;
-            // Collect until <ret>
+            // Collect until <ret>, convert special keys to chars
             let mut cmd = String::new();
             while i < keys.len() && keys[i] != "<ret>" {
-                cmd.push_str(&keys[i]);
+                cmd.push_str(key_to_char(&keys[i]));
                 i += 1;
             }
             if i < keys.len() { i += 1; }  // skip <ret>
@@ -155,7 +166,7 @@ fn str_to_key(s: &str) -> KeyEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use input::is_plain_value;
+    use input::prompt::is_plain_value;
 
     #[test]
     fn test_key_str_backslash() {

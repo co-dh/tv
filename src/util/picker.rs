@@ -17,14 +17,8 @@ pub fn fzf_with(items: Vec<String>, prompt: &str, pre_query: Option<&str>) -> Re
     else if let Some(s) = sels.into_iter().next() { Ok(Some(s)) }
     else { Ok(None) }
 }
-
-/// Use external fzf with multi-select - returns (selections, query)
+/// fzf with multi-select - returns (selections, query)
 /// --print-query: line1=query, rest=selections (tab to select multiple)
-pub fn fzf_multi(items: Vec<String>, prompt: &str) -> Result<(Vec<String>, String)> {
-    fzf_multi_header(items, prompt, None, None)
-}
-
-/// fzf with optional header and pre-filled query (--filter mode for testing)
 pub fn fzf_multi_header(items: Vec<String>, prompt: &str, header: Option<&str>, pre_query: Option<&str>) -> Result<(Vec<String>, String)> {
     let _ = header;  // reserved for future use
     let test_mode = pre_query.is_some();

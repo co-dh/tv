@@ -1,4 +1,5 @@
-use crate::data::table::{BoxTable, ColStats, SimpleTable, Cell};
+use crate::data::table::{BoxTable, ColStats, SimpleTable, Cell, Table};
+use crate::data::dynload::{self, Plugin};
 use std::collections::HashSet;
 
 /// Reserved rows in viewport (header + footer_header + status)
@@ -90,6 +91,7 @@ pub struct ViewState {
     pub kind: ViewKind,
     pub prql: String,                    // query chain
     pub path: Option<String>,            // query path (file, memory:id, source:...)
+    pub plugin: Option<&'static Plugin>, // cached plugin ref
     pub data: BoxTable,                  // current viewport data
     pub state: TableState,
     pub parent: Option<ParentInfo>,
@@ -112,7 +114,7 @@ impl Clone for ViewState {
         ));
         Self {
             id: self.id, name: self.name.clone(), kind: self.kind,
-            prql: self.prql.clone(), path: self.path.clone(), data,
+            prql: self.prql.clone(), path: self.path.clone(), plugin: self.plugin, data,
             state: self.state.clone(), parent: self.parent.clone(),
             selected_cols: self.selected_cols.clone(), selected_rows: self.selected_rows.clone(),
             col_separator: self.col_separator, col_order: self.col_order.clone(),
@@ -125,7 +127,7 @@ impl ViewState {
     /// Base view with defaults
     fn base(id: usize, name: impl Into<String>, kind: ViewKind, prql: String, data: BoxTable) -> Self {
         Self {
-            id, name: name.into(), kind, prql, path: None, data,
+            id, name: name.into(), kind, prql, path: None, plugin: None, data,
             state: TableState::default(), parent: None,
             selected_cols: HashSet::new(), selected_rows: HashSet::new(),
             col_separator: None, col_order: None, history: Vec::new(), partial: false,
@@ -136,18 +138,21 @@ impl ViewState {
 
     /// Standard view (CSV, etc.)
     pub fn new(id: usize, name: impl Into<String>, data: BoxTable, path: Option<String>) -> Self {
-        Self { path, ..Self::base(id, name, ViewKind::Table, "from df".into(), data) }
+        let plugin = path.as_ref().and_then(|p| dynload::get_for(p));
+        Self { path, plugin, ..Self::base(id, name, ViewKind::Table, "from df".into(), data) }
     }
 
     /// Lazy parquet view
     pub fn new_parquet(id: usize, name: impl Into<String>, path: impl Into<String>) -> Self {
         let p = path.into();
-        Self { path: Some(p), ..Self::base(id, name, ViewKind::Table, "from df".into(), Self::empty_table()) }
+        let plugin = dynload::get_for(&p);
+        Self { path: Some(p), plugin, ..Self::base(id, name, ViewKind::Table, "from df".into(), Self::empty_table()) }
     }
 
     /// Gzipped CSV view
     pub fn new_gz(id: usize, name: impl Into<String>, data: BoxTable, path: Option<String>, partial: bool) -> Self {
-        Self { path, partial, ..Self::base(id, name, ViewKind::Table, "from df".into(), data) }
+        let plugin = path.as_ref().and_then(|p| dynload::get_for(p));
+        Self { path, plugin, partial, ..Self::base(id, name, ViewKind::Table, "from df".into(), data) }
     }
 
     /// Metadata view (name = command shown in tabs)
@@ -162,7 +167,8 @@ impl ViewState {
         let grp = grp_cols.iter().map(|c| format!("`{}`", c)).collect::<Vec<_>>().join(", ");
         let prql = format!("{} | group {{{}}} (aggregate {{Cnt = count this}}) | sort {{-Cnt}}", parent_prql, grp);
         let parent = ParentInfo { id: pid, rows: prows, name: pname.into(), freq_col: Some(col.into()) };
-        Self { path, parent: Some(parent), ..Self::base(id, name, ViewKind::Freq, prql, data) }
+        let plugin = path.as_ref().and_then(|p| dynload::get_for(p));
+        Self { path, plugin, parent: Some(parent), ..Self::base(id, name, ViewKind::Freq, prql, data) }
     }
 
     /// Pivot view
@@ -179,13 +185,16 @@ impl ViewState {
 
     /// Memory view (folder, system) - registers with sqlite
     pub fn new_memory(id: usize, name: impl Into<String>, kind: ViewKind, data: BoxTable) -> Self {
-        let path = crate::data::dynload::register_table(id, data.as_ref());
-        Self { path, ..Self::base(id, name, kind, "from df".into(), data) }
+        let path = dynload::register_table(id, data.as_ref());
+        let plugin = path.as_ref().and_then(|p| dynload::get_for(p));
+        Self { path, plugin, ..Self::base(id, name, kind, "from df".into(), data) }
     }
 
     /// Source view (source:ps, source:ls:/path) - lazy via sqlite plugin
     pub fn new_source(id: usize, name: impl Into<String>, kind: ViewKind, source_path: impl Into<String>) -> Self {
-        Self { path: Some(source_path.into()), ..Self::base(id, name, kind, "from df".into(), Self::empty_table()) }
+        let p = source_path.into();
+        let plugin = dynload::get_for(&p);
+        Self { path: Some(p), plugin, ..Self::base(id, name, kind, "from df".into(), Self::empty_table()) }
     }
 
     /// Add to history
@@ -265,6 +274,52 @@ impl ViewState {
             let mode = vals.first().cloned().unwrap_or_default();
             ColStats { name, dtype: format!("{:?}", typ), null_pct, distinct, min: String::new(), max: mode, median: String::new(), sigma: String::new() }
         }
+    }
+
+    /// Total rows via plugin (or in-memory fallback)
+    #[must_use]
+    pub fn total_rows(&self) -> usize {
+        self.plugin.and_then(|pl| {
+            let p = self.path.as_ref()?;
+            let q = format!("{} | aggregate {{n = count this}}", self.prql);
+            let sql = crate::util::pure::compile_prql(&q)?;
+            let t = pl.query(&sql, p)?;
+            match t.cell(0, 0) { Cell::Int(n) => Some(n as usize), _ => None }
+        }).unwrap_or_else(|| self.rows())
+    }
+
+    /// Column stats via plugin (or in-memory fallback)
+    #[must_use]
+    pub fn col_stats_plugin(&self, col_idx: usize) -> ColStats {
+        use crate::data::table::ColType;
+        use crate::util::pure;
+        self.plugin.and_then(|pl| {
+            let p = self.path.as_ref()?;
+            // Get schema from current view's PRQL
+            let sql = pure::compile_prql(&format!("{} | take 1", self.prql))?;
+            let schema = pl.query(&sql, p)?;
+            let col_name = schema.col_name(col_idx)?;
+            let col_type = schema.col_type(col_idx);
+            let is_num = matches!(col_type, ColType::Int | ColType::Float);
+            // Query stats
+            let q = if is_num {
+                format!("{} | aggregate {{n = count this, min_v = min `{}`, max_v = max `{}`, avg_v = average `{}`, std_v = stddev `{}`}}",
+                    self.prql, col_name, col_name, col_name, col_name)
+            } else {
+                format!("{} | aggregate {{n = count this, dist = count_distinct `{}`}}", self.prql, col_name)
+            };
+            let t = pure::compile_prql(&q).and_then(|sql| pl.query(&sql, p))?;
+            if is_num && t.cols() >= 5 {
+                let min = match t.cell(0, 1) { Cell::Float(f) => format!("{:.2}", f), Cell::Int(i) => i.to_string(), _ => String::new() };
+                let max = match t.cell(0, 2) { Cell::Float(f) => format!("{:.2}", f), Cell::Int(i) => i.to_string(), _ => String::new() };
+                let avg = match t.cell(0, 3) { Cell::Float(f) => format!("{:.2}", f), _ => String::new() };
+                let std = match t.cell(0, 4) { Cell::Float(f) => format!("{:.2}", f), _ => String::new() };
+                Some(ColStats { name: col_name, dtype: format!("{:?}", col_type), null_pct: 0.0, distinct: 0, min, max, median: avg, sigma: std })
+            } else if !is_num && t.cols() >= 2 {
+                let dist = match t.cell(0, 1) { Cell::Int(i) => i as usize, _ => 0 };
+                Some(ColStats { name: col_name, dtype: format!("{:?}", col_type), null_pct: 0.0, distinct: dist, ..Default::default() })
+            } else { None }
+        }).unwrap_or_else(|| self.col_stats(col_idx))
     }
 }
 
