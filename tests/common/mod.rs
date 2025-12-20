@@ -13,8 +13,10 @@ pub fn run_keys(keys: &str, file: &str) -> String {
     format!("{}{}", stdout, stderr)
 }
 
-/// Extract tab line (second-to-last line) from buffer output
-pub fn tab_line(output: &str) -> &str {
-    let lines: Vec<&str> = output.lines().collect();
-    lines.get(lines.len().saturating_sub(2)).copied().unwrap_or("")
+/// Extract tab line (2nd-to-last) and status line (last)
+pub fn footer(output: &str) -> (&str, &str) {
+    let mut it = output.lines().rev();
+    let status = it.next().expect("output missing status line");
+    let tab = it.next().expect("output missing tab line");
+    (tab, status)
 }

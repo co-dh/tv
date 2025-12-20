@@ -160,7 +160,7 @@ impl ViewState {
     /// Freq view (stores parent path for re-querying after filter)
     pub fn new_freq(id: usize, name: impl Into<String>, data: BoxTable, pid: usize, prows: usize, pname: impl Into<String>, col: impl Into<String>, parent_prql: &str, grp_cols: &[String], path: Option<String>) -> Self {
         let grp = grp_cols.iter().map(|c| format!("`{}`", c)).collect::<Vec<_>>().join(", ");
-        let prql = format!("{} | group {{{}}} (aggregate {{Cnt = count this}})", parent_prql, grp);
+        let prql = format!("{} | group {{{}}} (aggregate {{Cnt = count this}}) | sort {{-Cnt}}", parent_prql, grp);
         let parent = ParentInfo { id: pid, rows: prows, name: pname.into(), freq_col: Some(col.into()) };
         Self { path, parent: Some(parent), ..Self::base(id, name, ViewKind::Freq, prql, data) }
     }

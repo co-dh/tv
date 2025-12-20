@@ -138,7 +138,7 @@ impl Renderer {
                     let sep_style = Style::default().fg(to_rcolor(theme.info_border_fg));
                     let sep_end = area.height.saturating_sub(bottom_reserve as u16);
                     for y in 0..sep_end {
-                        if px < area.width { buf[(px, y)].set_char('│').set_style(sep_style); }
+                        if px < area.width { buf[(px, y)].set_char('|').set_style(sep_style); }
                     }
                 }
             }
@@ -533,7 +533,7 @@ impl Renderer {
             .select(selected)
             .style(Style::default().fg(to_rcolor(theme.status_fg)).bg(bg))
             .highlight_style(Style::default().fg(to_rcolor(theme.header_fg)).bg(bg).add_modifier(Modifier::BOLD))
-            .divider("│");
+            .divider("|");
         frame.render_widget(tabs, tab_area);
     }
 

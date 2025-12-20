@@ -166,23 +166,7 @@ impl AppContext {
         self.needs_redraw = true;  // initial draw
 
         loop {
-            // Update: check background tasks (may set needs_redraw)
-            self.update();
-
-            // Only draw when needed
-            if self.needs_redraw || self.needs_center || self.needs_clear {
-                if self.needs_center {
-                    if let Some(v) = self.view_mut() { v.state.center_if_needed(); }
-                    self.needs_center = false;
-                }
-                if self.needs_clear {
-                    tui.clear()?;  // reset buffer after external program
-                    self.needs_clear = false;
-                }
-                tui.draw(|frame| Renderer::render(frame, self))?;
-                self.needs_redraw = false;
-            }
-
+            self.tick(tui)?;
             // Poll for events
             if event::poll(std::time::Duration::from_millis(100))? {
                 match event::read()? {
@@ -201,16 +185,37 @@ impl AppContext {
         Ok(())
     }
 
-    /// Run with list of key events (for testing) - renders once at end
+    /// Run with list of key events (for testing)
     pub fn run_keys<B: Backend>(&mut self, tui: &mut Terminal<B>, keys: &[KeyEvent], on_key: impl Fn(&mut Self, KeyEvent) -> Result<bool>) -> Result<()>
     where B::Error: Send + Sync + 'static {  // bounds required for anyhow::Error conversion
         let size = tui.size()?;
         self.viewport(size.height, size.width);
+        self.needs_redraw = true;
         for key in keys {
-            let _ = on_key(self, *key);
+            self.tick(tui)?;
+            if let Err(e) = on_key(self, *key) { self.message = e.to_string(); }
+            self.needs_redraw = true;
         }
-        self.check_bg_saver();
-        tui.draw(|frame| Renderer::render(frame, self))?;
+        self.tick(tui)?;  // final render
+        Ok(())
+    }
+
+    /// One tick: update + draw if needed
+    fn tick<B: Backend>(&mut self, tui: &mut Terminal<B>) -> Result<()>
+    where B::Error: Send + Sync + 'static {
+        self.update();
+        if self.needs_redraw || self.needs_center || self.needs_clear {
+            if self.needs_center {
+                if let Some(v) = self.view_mut() { v.state.center_if_needed(); }
+                self.needs_center = false;
+            }
+            if self.needs_clear {
+                tui.clear()?;
+                self.needs_clear = false;
+            }
+            tui.draw(|frame| Renderer::render(frame, self))?;
+            self.needs_redraw = false;
+        }
         Ok(())
     }
 
