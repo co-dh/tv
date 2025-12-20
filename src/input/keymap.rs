@@ -88,8 +88,8 @@ impl KeyMap {
             ("common", "P", "pivot"),
             // Freq view - override enter to filter parent
             ("freq", "<ret>", "filter_parent"),
-            // Meta view - override enter/D for column operations
-            ("meta", "<ret>", "goto_col"),
+            // Meta view - enter triggers xkey on selected cols
+            ("meta", "<ret>", "enter"),
             ("meta", "D", "delete_sel"),
             ("meta", "0", "sel_null"),
             ("meta", "1", "sel_single"),

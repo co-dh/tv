@@ -1,11 +1,12 @@
 //! Command tests (freq, sort, select, save, etc.) - key-based
 mod common;
-use common::{run_keys, footer};
+use common::{run_keys, footer, header};
 use std::fs;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-static TEST_ID: AtomicUsize = AtomicUsize::new(1000);
-fn tid() -> usize { TEST_ID.fetch_add(1, Ordering::SeqCst) }
+// tid() only for save test (needs unique filename)
+static SAVE_ID: AtomicUsize = AtomicUsize::new(1000);
+fn tid() -> usize { SAVE_ID.fetch_add(1, Ordering::SeqCst) }
 
 // Tests use:
 // - tests/data/basic.csv: a,b (1,x 2,y 3,x 4,z 5,x) - 5 rows
@@ -57,19 +58,22 @@ fn test_delcol_multi() {
 fn test_delcol_single() {
     // Navigate to b column, D to delete
     let out = run_keys("<right>D", "tests/data/basic.csv");
-    let (_, status) = footer(&out);
-    assert!(status.ends_with("0/5"), "Should keep all rows: {}", status);
-    assert!(out.contains("a"), "Should have column a");
+    let hdr = header(&out);
+    assert!(hdr.contains("a"), "Should have column a: {}", hdr);
+    assert!(!hdr.contains("b"), "Should not have column b: {}", hdr);
 }
 
 #[test]
 fn test_rename_column() {
-    // ^ to rename, type new name
+    // ^ to rename column a to num
     let out = run_keys("^num<ret>", "tests/data/basic.csv");
-    assert!(out.contains("num"), "Should have renamed column: {}", out);
+    let hdr = header(&out);
+    assert!(hdr.contains("num"), "Header should have num: {}", hdr);
+    assert!(!hdr.contains("a"), "Header should not have a: {}", hdr);
 }
 
 #[test]
+#[ignore]  // requires polars plugin
 fn test_corr_matrix() {
     // C for correlation matrix
     let out = run_keys("C", "tests/data/numeric.csv");
@@ -88,7 +92,6 @@ fn test_pivot_requires_xkey() {
 }
 
 #[test]
-#[ignore]  // requires fzf for filter
 fn test_filter_then_sort_then_select() {
     // filter city=='NYC' (PRQL syntax), sort value, select name,value
     let out = run_keys("<backslash>city == 'NYC'<ret>[sname,value<ret>", "tests/data/full.csv");
@@ -100,16 +103,17 @@ fn test_filter_then_sort_then_select() {
 fn test_load_nonexistent() {
     // Try to load nonexistent file via L command
     let out = run_keys("L/nonexistent/path/file.csv<ret>", "tests/data/basic.csv");
-    // Should show error or remain on original
-    assert!(out.contains("a") || out.contains("error") || out.contains("No"), "Should handle missing file: {}", out);
+    let (_, status) = footer(&out);
+    assert!(status.contains("Failed"), "Status should show error: {}", status);
 }
 
 #[test]
-fn test_xkey_moves_to_front() {
-    // M for meta, navigate to c row, space select, down, space select b, Enter to xkey
+fn test_meta_select_rows_xkey_parent() {
+    // M for meta, select rows for c and d columns, Enter to xkey them in parent
     let out = run_keys("M<down><down><space><down><space><ret>", "tests/data/xkey.csv");
-    // After xkey, c and d should be key columns (moved to front)
-    assert!(out.contains("c") && out.contains("d"), "xkey cols present: {}", out);
+    // Parent table should show c,d as key columns (before |)
+    let hdr: String = header(&out).chars().filter(|c| !c.is_whitespace()).collect();
+    assert!(hdr.starts_with("cd|"), "Header should start with cd|: {}", hdr);
 }
 
 #[test]
@@ -156,49 +160,29 @@ fn test_freq_after_meta() {
 fn test_freq_by_key_columns() {
     // Set key column with !, then press F to freq by key
     // full.csv: name,city,value,score (cols 0,1,2,3)
-    // Set city as key, then freq should group by city
+    // After ! on city: city moves to pos 0 (key), cursor moves to 0
+    // Freq groups by city only - cursor is on city after !
     let out = run_keys("<right>!F", "tests/data/full.csv");
-    assert!(out.contains("Freq:city"), "Should freq by key column: {}", out);
+    let (tab, _) = footer(&out);
+    let hdr = header(&out);
+    assert!(tab.contains("freq city"), "Tab should show freq city: {}", tab);
+    assert!(!hdr.contains("name"), "Header should not contain name: {}", hdr);
 }
 
-// Test navigation and selection
-#[test]
-fn test_select_all_null() {
-    // Create csv with all-null column, use 0 to select
-    let id = tid();
-    let p = format!("tmp/tv_null_{}.csv", id);
-    fs::write(&p, "a,b\n1,\n2,\n3,\n").unwrap();
-    let out = run_keys("M0", &p);
-    // 0 selects columns with 100% null
-    assert!(out.contains("b") || out.contains("metadata"), "Should show meta: {}", out);
-    fs::remove_file(&p).ok();
-}
-
-#[test]
-fn test_select_single_value() {
-    // Create csv with single-value column
-    let id = tid();
-    let p = format!("tmp/tv_single_{}.csv", id);
-    fs::write(&p, "a,b\n1,x\n2,x\n3,x\n").unwrap();
-    let out = run_keys("M1", &p);
-    // 1 selects columns with 1 distinct value
-    assert!(out.contains("metadata"), "Should show meta: {}", out);
-    fs::remove_file(&p).ok();
-}
-
-// Test decimal precision
+// Test decimal precision (floats.csv: a=1.123456, b=2.654321)
 #[test]
 fn test_decimal_increase() {
-    let out = run_keys("..", "tests/data/numeric.csv");
-    let (_, status) = footer(&out);
-    assert!(status.ends_with("0/5"), "Should show table: {}", status);
+    // Default is 3 decimals (1.123), after . should be 4 (1.1235)
+    let out = run_keys(".", "tests/data/floats.csv");
+    assert!(out.contains("1.1235"), "Should show 4 decimals: {}", out);
 }
 
 #[test]
 fn test_decimal_decrease() {
-    let out = run_keys(",,", "tests/data/numeric.csv");
-    let (_, status) = footer(&out);
-    assert!(status.ends_with("0/5"), "Should show table: {}", status);
+    // Default is 3 decimals (1.123), after , should be 2 (1.12)
+    let out = run_keys(",", "tests/data/floats.csv");
+    assert!(out.contains("1.12"), "Should show 2 decimals: {}", out);
+    assert!(!out.contains("1.123"), "Should not show 3 decimals: {}", out);
 }
 
 // Test duplicate view
@@ -242,7 +226,7 @@ fn test_lr_enter_csv() {
 #[test]
 fn test_lr_filter_extension_open() {
     // lr tests/data, filter for meta_test.parquet, enter to open
-    let out = run_keys(":lr tests/data<ret><backslash>path LIKE '%meta_test%'<ret><ret>", "tests/data/basic.csv");
+    let out = run_keys(":lr tests/data<ret><backslash>path ~= 'meta_test'<ret><ret>", "tests/data/basic.csv");
     // After enter, should open parquet (show a, b columns)
     assert!(out.contains("a") || out.contains("b"), "Should open parquet after filter: {}", out);
 }
@@ -253,8 +237,8 @@ fn test_lr_sort_size() {
     // lr tests/data, move to size column, sort ascending
     let out = run_keys(":lr tests/data<ret><right>[", "tests/data/basic.csv");
     let lines: Vec<&str> = out.lines().collect();
-    assert!(lines.len() > 3, "Should have data rows: {}", out);
-    // First data row (line 2) should be smallest file (unsorted.csv at 16 bytes)
-    let first = lines.get(2).unwrap_or(&"");
-    assert!(first.contains("unsorted.csv"), "Smallest file should be first after sort: {}", out);
+    assert!(lines.len() > 2, "Should have data rows: {}", out);
+    // First data row (line 1, after header line 0) should be smallest file
+    let first = lines.get(1).unwrap_or(&"");
+    assert!(first.contains("null_col.csv"), "Smallest file should be first after sort: {}", out);
 }

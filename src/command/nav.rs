@@ -116,12 +116,15 @@ impl Command for SelAll {
     fn record(&self) -> bool { false }
 }
 
-/// Select rows matching SQL WHERE expression (stub - needs plugin)
+/// Select rows matching PRQL expression via plugin query
 pub struct SelRows { pub expr: String }
 impl Command for SelRows {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
-        // TODO: implement via plugin for SQL filtering
-        app.msg("SelRows not yet implemented without polars");
+        let v = app.req_mut()?;
+        let rows = v.sel_rows(&self.expr);
+        let n = rows.len();
+        v.selected_rows.extend(rows);
+        app.msg(format!("{} row(s) selected", n));
         Ok(())
     }
     fn to_str(&self) -> String { format!("sel_rows {}", self.expr) }

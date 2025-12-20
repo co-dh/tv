@@ -288,6 +288,19 @@ impl ViewState {
         }).unwrap_or_else(|| self.rows())
     }
 
+    /// Select rows matching PRQL filter, return matching row indices (0-based)
+    pub fn sel_rows(&self, expr: &str) -> Vec<usize> {
+        self.plugin.and_then(|pl| {
+            let p = self.path.as_ref()?;
+            let q = format!("{} | derive {{_row = row_number this}} | filter {} | select {{_row}}", self.prql, expr);
+            let sql = crate::util::pure::compile_prql(&q)?;
+            let t = pl.query(&sql, p)?;
+            Some((0..t.rows()).filter_map(|r| {
+                match t.cell(r, 0) { Cell::Int(n) => Some((n - 1) as usize), _ => None }
+            }).collect())
+        }).unwrap_or_default()
+    }
+
     /// Column stats via plugin (or in-memory fallback)
     #[must_use]
     pub fn col_stats_plugin(&self, col_idx: usize) -> ColStats {

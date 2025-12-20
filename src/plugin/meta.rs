@@ -38,13 +38,14 @@ impl Plugin for MetaPlugin {
     }
 }
 
-/// Get selected column names from meta view
+/// Get selected column names from meta view (sorted by parent column order)
 fn sel_cols(app: &AppContext, allow_all: bool) -> Option<Vec<String>> {
     let v = app.view()?;
     let name_idx = v.data.col_names().iter().position(|c| c == "column")?;
-    let rows: Vec<usize> = if v.selected_rows.is_empty() {
+    let mut rows: Vec<usize> = if v.selected_rows.is_empty() {
         if allow_all { (0..v.data.rows()).collect() } else { vec![v.state.cr] }
     } else { v.selected_rows.iter().copied().collect() };
+    rows.sort();  // preserve parent column order
     Some(rows.iter().filter_map(|&r| {
         let s = v.data.cell(r, name_idx).format(10);
         if s.is_empty() || s == "null" { None } else { Some(unquote(&s)) }
@@ -70,7 +71,8 @@ impl Command for Metadata {
         let id = app.next_id();
         let mem_path = dynload::register_table(id, meta.as_ref());
         let mut view = state::ViewState::new_meta(id, meta, 0, parent_rows, &parent_name, &parent_prql);
-        view.path = mem_path;
+        view.path = mem_path.clone();
+        view.plugin = mem_path.as_ref().and_then(|p| dynload::get_for(p));
         view.prql = "from df".into(); // Use simple PRQL for memory table
         app.stack.push(view);
         Ok(())

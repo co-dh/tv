@@ -16,12 +16,13 @@ pub fn to_cmd(app: &AppContext, cmd: &str) -> Option<String> {
             // Key cols (in display order)
             let mut group: Vec<String> = dcols[..sep].iter()
                 .filter_map(|&i| v.data.col_name(i)).collect();
-            // Add selected cols
+            // Add selected cols (convert display index to data index)
             for &i in &v.selected_cols {
-                if let Some(n) = v.col_name(i) { if !group.contains(&n) { group.push(n); } }
+                let di = v.data_col(i);
+                if let Some(n) = v.col_name(di) { if !group.contains(&n) { group.push(n); } }
             }
-            // Add cursor col if not already included
-            if let Some(cur) = v.col_name(v.state.cc) {
+            // Add cursor col if not already included (cc is display index)
+            if let Some(cur) = v.col_name(v.data_col(v.state.cc)) {
                 if !group.contains(&cur) { group.push(cur); }
             }
             if group.is_empty() { None } else { Some(format!("freq {}", group.join(","))) }
@@ -99,11 +100,11 @@ fn toggle_key(app: &AppContext) -> Option<String> {
     let sep = v.col_separator.unwrap_or(0);
     let cols = v.data.col_names();
 
-    // Get columns to toggle: selected cols or current col
+    // Get columns to toggle: selected cols or current col (convert display to data index)
     let to_toggle: Vec<String> = if v.selected_cols.is_empty() {
-        vec![v.col_name(v.state.cc)?]
+        vec![v.col_name(v.data_col(v.state.cc))?]
     } else {
-        v.selected_cols.iter().filter_map(|&i| v.col_name(i)).collect()
+        v.selected_cols.iter().filter_map(|&i| v.col_name(v.data_col(i))).collect()
     };
 
     // Pure: toggle columns in key list
