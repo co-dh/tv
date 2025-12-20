@@ -571,7 +571,12 @@ impl Renderer {
         // Show total rows via PRQL count (plugin caches it)
         let total_str = commify(&Self::total_rows(view).to_string());
 
-        let sel_info = format!(" [sel={}]", view.selected_cols.len());
+        let keys = view.col_separator.unwrap_or(0);
+        let sel_info = if keys > 0 {
+            format!(" [keys={} sel={}]", keys, view.selected_cols.len())
+        } else {
+            format!(" [sel={}]", view.selected_cols.len())
+        };
         let left = if !message.is_empty() { format!("{}{}", message, sel_info) }
         else if matches!(view.kind, ViewKind::Freq | ViewKind::Meta) {
             // Show parent name and row count for Meta/Freq views

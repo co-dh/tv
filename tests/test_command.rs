@@ -120,7 +120,9 @@ fn test_toggle_key_column() {
     let out = run_keys("!l!", "tests/data/xkey.csv");
     let (_, status) = footer(&out);
     assert!(status.contains("keys=2"), "status: {}", status);
-    assert!(out.contains("a,b,c,d"), "order should be a,b,c,d: {}", out);
+    // Header should have columns in order: a,b as keys | c,d as non-keys
+    let h: String = out.lines().next().unwrap_or("").chars().filter(|c| !c.is_whitespace()).collect();
+    assert!(h.starts_with("ab|cd"), "header: {}", h);
 }
 
 #[test]
@@ -129,7 +131,8 @@ fn test_toggle_key_remove() {
     // Start: a,b,c,d - press ! to add a as key, then ! again to remove a
     let out = run_keys("!!", "tests/data/xkey.csv");
     let (_, status) = footer(&out);
-    assert!(status.contains("keys=0"), "status: {}", status);
+    // When keys=0, status shows [sel=0] without keys
+    assert!(!status.contains("keys="), "should have no keys: {}", status);
 }
 
 #[test]
