@@ -93,16 +93,16 @@ impl Command for Frequency {
         // Get view info before mutation
         let (parent_id, parent_rows, parent_name, path, key_cols, parent_prql) = {
             let v = app.req()?;
-            (v.id, v.rows(), v.name.clone(), v.path.clone().unwrap_or_default(),
-             v.key_cols(), v.prql.clone())
+            (v.id, v.rows(), v.name.clone(), v.path.clone(), v.key_cols(), v.prql.clone())
         };
+        let path_str = path.clone().unwrap_or_default();
 
         // Build PRQL for freq: group by cols, count, sort desc (using parent prql as base)
-        let plugin = dynload::get_for(&path).ok_or_else(|| anyhow!("plugin not loaded"))?;
+        let plugin = dynload::get_for(&path_str).ok_or_else(|| anyhow!("plugin not loaded"))?;
         let grp_cols = self.col_names.iter().map(|c| format!("`{}`", c)).collect::<Vec<_>>().join(", ");
         let prql = format!("{} | group {{{}}} (aggregate {{Cnt = count this}}) | sort {{-Cnt}}", parent_prql, grp_cols);
         let sql = pure::compile_prql(&prql).ok_or_else(|| anyhow!("prql compile failed"))?;
-        let t = plugin.query(&sql, &path).ok_or_else(|| anyhow!("freq query failed"))?;
+        let t = plugin.query(&sql, &path_str).ok_or_else(|| anyhow!("freq query failed"))?;
         let result = add_pct_bar(dynload::to_box_table(&t));
 
         // Create freq view
@@ -110,7 +110,7 @@ impl Command for Frequency {
         let name = format!("Freq:{}", self.col_names.join(","));
         let freq_col = self.col_names.first().cloned().unwrap_or_default();
         let mut new_view = ViewState::new_freq(
-            id, name, result, parent_id, parent_rows, parent_name, freq_col, &parent_prql, &self.col_names,
+            id, name, result, parent_id, parent_rows, parent_name, freq_col, &parent_prql, &self.col_names, path,
         );
         if !key_cols.is_empty() { new_view.col_separator = Some(key_cols.len()); }
         app.stack.push(new_view);

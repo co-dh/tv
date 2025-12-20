@@ -2,16 +2,28 @@
 
 use polars::prelude::*;
 use std::ffi::c_char;
+use std::num::NonZeroUsize;
 use std::sync::Mutex;
-use tv_plugin_api::*;
+use tv_plugin_api::{*, LruCache};
 
-/// Cache: (path, sql) -> DataFrame
-static CACHE: Mutex<Option<CacheEntry>> = Mutex::new(None);
+/// Debug log to ~/.tv/debug.log
+fn dbg(msg: &str) {
+    use std::io::Write;
+    let Some(home) = dirs::home_dir() else { return };
+    let log = home.join(".tv").join("debug.log");
+    let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(log) else { return };
+    let ts = chrono::Local::now().format("%H:%M:%S%.3f");
+    let _ = writeln!(f, "[{}] POLARS {}", ts, msg);
+}
 
-struct CacheEntry {
-    path: String,
-    sql: String,
-    df: Box<DataFrame>,
+/// Query cache: (path, sql) -> DataFrame
+static CACHE: Mutex<Option<LruCache<(String, String), Box<DataFrame>>>> = Mutex::new(None);
+
+fn cache() -> &'static Mutex<Option<LruCache<(String, String), Box<DataFrame>>>> {
+    let mut guard = CACHE.lock().unwrap();
+    if guard.is_none() { *guard = Some(LruCache::new(NonZeroUsize::new(100).unwrap())); }
+    drop(guard);
+    &CACHE
 }
 
 static NAME: &[u8] = b"polars\0";
@@ -33,19 +45,24 @@ pub extern "C" fn tv_plugin_init() -> PluginVtable {
     }
 }
 
-/// Execute SQL on file (cached)
+/// Execute SQL on file (cached with LRU)
 #[unsafe(no_mangle)]
 pub extern "C" fn tv_query(sql: *const c_char, path: *const c_char) -> TableHandle {
     if sql.is_null() || path.is_null() { return std::ptr::null_mut(); }
     let sql = unsafe { from_c_str(sql) };
     let path = unsafe { from_c_str(path) };
+    dbg(&format!("query path={} sql={}", path, &sql[..sql.len().min(80)]));
 
-    // Check cache
-    if let Ok(guard) = CACHE.lock() {
-        if let Some(ref e) = *guard {
-            if e.path == path && e.sql == sql {
-                return e.df.as_ref() as *const DataFrame as TableHandle;
+    let key = (path.clone(), sql.clone());
+
+    // Check LRU cache
+    if let Ok(mut guard) = cache().lock() {
+        if let Some(ref mut c) = *guard {
+            if let Some(df) = c.get(&key) {
+                dbg("cache HIT");
+                return df.as_ref() as *const DataFrame as TableHandle;
             }
+            dbg(&format!("cache MISS (entries={})", c.len()));
         }
     }
 
@@ -63,13 +80,15 @@ pub extern "C" fn tv_query(sql: *const c_char, path: *const c_char) -> TableHand
 
     let df = lf.and_then(|lf| exec_sql(lf, &sql).ok());
     if let Some(df) = df {
-        // Store in cache
-        if let Ok(mut guard) = CACHE.lock() {
-            let entry = CacheEntry { path, sql, df: Box::new(df) };
-            let ptr = entry.df.as_ref() as *const DataFrame as TableHandle;
-            *guard = Some(entry);
-            return ptr;
+        dbg(&format!("query OK rows={}", df.height()));
+        if let Ok(mut guard) = cache().lock() {
+            if let Some(ref mut c) = *guard {
+                c.put(key.clone(), Box::new(df));
+                return c.get(&key).unwrap().as_ref() as *const DataFrame as TableHandle;
+            }
         }
+    } else {
+        dbg("query FAILED");
     }
     std::ptr::null_mut()
 }

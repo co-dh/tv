@@ -10,3 +10,5 @@ crate-type = ["cdylib"]
 tv-plugin-api = { path = "../tv-plugin-api" }
 polars = { version = "0.52", default-features = false, features = ["lazy", "csv", "parquet", "sql", "new_streaming", "pivot", "dtype-struct", "dtype-array", "dtype-i8", "dtype-i16", "dtype-u8", "dtype-u16", "temporal", "rows"] }
 prqlc = "0.13"
+dirs = "6"
+chrono = "0.4"

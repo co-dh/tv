@@ -157,12 +157,12 @@ impl ViewState {
         Self { parent: Some(parent), ..Self::base(id, "metadata", ViewKind::Meta, prql, data) }
     }
 
-    /// Freq view
-    pub fn new_freq(id: usize, name: impl Into<String>, data: BoxTable, pid: usize, prows: usize, pname: impl Into<String>, col: impl Into<String>, parent_prql: &str, grp_cols: &[String]) -> Self {
+    /// Freq view (stores parent path for re-querying after filter)
+    pub fn new_freq(id: usize, name: impl Into<String>, data: BoxTable, pid: usize, prows: usize, pname: impl Into<String>, col: impl Into<String>, parent_prql: &str, grp_cols: &[String], path: Option<String>) -> Self {
         let grp = grp_cols.iter().map(|c| format!("`{}`", c)).collect::<Vec<_>>().join(", ");
         let prql = format!("{} | group {{{}}} (aggregate {{Cnt = count this}})", parent_prql, grp);
         let parent = ParentInfo { id: pid, rows: prows, name: pname.into(), freq_col: Some(col.into()) };
-        Self { parent: Some(parent), ..Self::base(id, name, ViewKind::Freq, prql, data) }
+        Self { path, parent: Some(parent), ..Self::base(id, name, ViewKind::Freq, prql, data) }
     }
 
     /// Pivot view
@@ -319,7 +319,7 @@ mod tests {
 
     #[test]
     fn test_prql_freq() {
-        let v = ViewState::new_freq(0, "freq", empty(), 1, 100, "parent", "col", "from df", &["col".into()]);
+        let v = ViewState::new_freq(0, "freq", empty(), 1, 100, "parent", "col", "from df", &["col".into()], None);
         assert!(v.prql.contains("group"));
     }
 }

@@ -4417,11 +4417,16 @@ dependencies = [
 [[package]]
 name = "tv-plugin-api"
 version = "0.1.0"
+dependencies = [
+ "lru",
+]
 
 [[package]]
 name = "tv-polars"
 version = "0.1.0"
 dependencies = [
+ "chrono",
+ "dirs 6.0.0",
  "polars",
  "prqlc",
  "tv-plugin-api",

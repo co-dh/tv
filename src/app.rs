@@ -121,9 +121,24 @@ impl AppContext {
     /// Navigate rows: +down, -up (large values clamp to bounds)
     pub fn nav_row(&mut self, d: isize) {
         if let Some(v) = self.view_mut() {
-            let n = v.rows();
+            let n = Self::total_rows(v);
             if d < 0 { v.state.up((-d) as usize); } else { v.state.down(d as usize, n); }
         }
+    }
+
+    /// Get total rows via PRQL count query (plugin caches it)
+    fn total_rows(v: &ViewState) -> usize {
+        use crate::data::dynload;
+        use crate::util::pure;
+        use crate::data::table::{Table, Cell};
+        v.path.as_ref()
+            .and_then(|p| dynload::get_for(p).map(|plugin| (p, plugin)))
+            .and_then(|(p, plugin)| {
+                let prql = format!("{} | aggregate {{n = count this}}", v.prql);
+                pure::compile_prql(&prql).and_then(|sql| plugin.query(&sql, p))
+            })
+            .and_then(|t| match t.cell(0, 0) { Cell::Int(n) => Some(n as usize), _ => None })
+            .unwrap_or_else(|| v.rows())
     }
 
     /// Navigate cols: +right, -left

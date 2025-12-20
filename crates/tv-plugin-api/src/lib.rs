@@ -4,6 +4,8 @@
 use std::ffi::{c_char, c_void, CStr, CString};
 use std::ptr;
 
+pub use lru::LruCache;
+
 pub const PLUGIN_API_VERSION: u32 = 1;
 
 /// Cell type tag

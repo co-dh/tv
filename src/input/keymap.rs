@@ -71,6 +71,7 @@ impl KeyMap {
             ("common", "T", "dup"),
             ("common", "W", "swap"),
             ("common", ":", "command"),
+            ("common", "g", "goto_row"),
             ("common", "@", "goto_col"),
             ("common", "<ret>", "enter"),
             ("common", "L", "from"),

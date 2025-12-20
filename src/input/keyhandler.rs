@@ -68,8 +68,9 @@ pub fn to_cmd(app: &AppContext, cmd: &str) -> Option<String> {
         // Special
         "force_quit" | "print_status" => None,
 
-        // Page navigation - needs app.page()
-        "page_down" | "page_up" => None,
+        // Page navigation
+        "page_down" => Some(format!("goto +{}", app.page())),
+        "page_up" => Some(format!("goto -{}", app.page())),
 
         _ => None,
     }

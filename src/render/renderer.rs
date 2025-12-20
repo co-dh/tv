@@ -1,6 +1,6 @@
 use crate::app::AppContext;
 use crate::data::dynload;
-use crate::data::table::{Cell, Table};
+use crate::data::table::{Cell, ColStats, ColType, Table};
 use crate::utils::commify;
 use crate::state::{TableState, ViewKind, ViewState};
 use crate::util::theme::Theme;
@@ -68,14 +68,16 @@ impl Renderer {
 
         // Use Table trait for polars-free rendering
         let table = view.data.as_ref();
-        let total_rows = view.rows();  // use disk_rows for parquet
+        // Get total rows via PRQL count (plugin caches it)
+        let total_rows = Self::total_rows(view);
         let is_correlation = view.kind == ViewKind::Corr;
         let dcols = view.display_cols();  // column indices in display order
 
-        // Calculate column widths if needed (based on content, don't extend last col)
+        // Calculate column widths (last displayed col uses actual content width)
         if view.state.need_widths() {
+            let last_col = dcols.last().copied().unwrap_or(usize::MAX);
             let widths: Vec<u16> = (0..table.cols())
-                .map(|col_idx| Self::col_width(table, col_idx, &view.state, decimals))
+                .map(|c| Self::col_width(table, c, &view.state, decimals, c == last_col))
                 .collect();
             view.state.col_widths = widths;
             view.state.widths_row = view.state.cr;
@@ -314,24 +316,27 @@ impl Renderer {
     }
 
     /// Calculate column width using Table trait (polars-free)
-    fn col_width(table: &dyn Table, col_idx: usize, state: &TableState, decimals: usize) -> u16 {
+    /// is_last: last displayed column uses actual content width (no limit)
+    fn col_width(table: &dyn Table, col_idx: usize, state: &TableState, decimals: usize, is_last: bool) -> u16 {
         const MIN_WIDTH: usize = 3;
-        // Path columns get more width (for lr view)
         let col_name = table.col_name(col_idx).unwrap_or_default();
-        let max_width_limit = if col_name == "path" { 80 } else { 30 };
+        // Last col: no limit. Text cols: 80. Numeric: 30. Path: 80.
+        let max_limit = if is_last { usize::MAX }
+            else if col_name == "path" { 80 }
+            else if table.col_type(col_idx) == ColType::Str { 80 }
+            else { 30 };
 
-        let mut max_width = col_name.len();
-        let sample_size = ((state.viewport.0.saturating_sub(2) as usize) * 3).max(100);
-        let start_row = state.cr.saturating_sub(sample_size / 2);
-        let end_row = (start_row + sample_size).min(table.rows());
+        let mut max_w = col_name.len();
+        let sample = ((state.viewport.0.saturating_sub(2) as usize) * 3).max(100);
+        let start = state.cr.saturating_sub(sample / 2);
+        let end = (start + sample).min(table.rows());
 
-        for row_idx in start_row..end_row {
-            let value = Self::format_cell(table, col_idx, row_idx, decimals);
-            max_width = max_width.max(value.len());
-            if max_width >= max_width_limit { break; }
+        for r in start..end {
+            let v = Self::format_cell(table, col_idx, r, decimals);
+            max_w = max_w.max(v.len());
+            if max_w >= max_limit { break; }
         }
-
-        max_width.max(MIN_WIDTH).min(max_width_limit) as u16
+        max_w.max(MIN_WIDTH).min(max_limit) as u16
     }
 
     /// Format number with commas (handles negatives)
@@ -344,6 +349,59 @@ impl Renderer {
         if let Some(dot) = s.find('.') {
             format!("{}{}", Self::commify_str(&s[..dot]), &s[dot..])
         } else { Self::commify_str(s) }
+    }
+
+    /// Get total rows via PRQL count query (plugin caches it)
+    fn total_rows(v: &ViewState) -> usize {
+        use crate::data::table::Cell;
+        use crate::util::pure;
+        v.path.as_ref()
+            .and_then(|p| dynload::get_for(p).map(|pl| (p, pl)))
+            .and_then(|(p, pl)| {
+                let prql = format!("{} | aggregate {{n = count this}}", v.prql);
+                pure::compile_prql(&prql).and_then(|sql| pl.query(&sql, p))
+            })
+            .and_then(|t| match t.cell(0, 0) { Cell::Int(n) => Some(n as usize), _ => None })
+            .unwrap_or_else(|| v.rows())
+    }
+
+    /// Get column stats via PRQL (plugin caches)
+    fn col_stats(v: &ViewState, col_idx: usize) -> ColStats {
+        use crate::data::table::{Cell, ColType, Table};
+        use crate::util::pure;
+
+        let col_name = v.data.col_name(col_idx).unwrap_or_default();
+        let col_type = v.data.col_type(col_idx);
+        let is_num = matches!(col_type, ColType::Int | ColType::Float);
+
+        // Try plugin query for accurate stats
+        let stats = v.path.as_ref()
+            .and_then(|p| dynload::get_for(p).map(|pl| (p, pl)))
+            .and_then(|(p, pl)| {
+                let prql = if is_num {
+                    format!("{} | aggregate {{n = count this, min_v = min `{}`, max_v = max `{}`, avg_v = average `{}`, std_v = stddev `{}`}}",
+                        v.prql, col_name, col_name, col_name, col_name)
+                } else {
+                    format!("{} | aggregate {{n = count this, dist = count_distinct `{}`}}",
+                        v.prql, col_name)
+                };
+                pure::compile_prql(&prql).and_then(|sql| pl.query(&sql, p))
+            });
+
+        if let Some(t) = stats {
+            if is_num && t.cols() >= 5 {
+                let min = match t.cell(0, 1) { Cell::Float(f) => format!("{:.2}", f), Cell::Int(i) => i.to_string(), _ => String::new() };
+                let max = match t.cell(0, 2) { Cell::Float(f) => format!("{:.2}", f), Cell::Int(i) => i.to_string(), _ => String::new() };
+                let avg = match t.cell(0, 3) { Cell::Float(f) => format!("{:.2}", f), _ => String::new() };
+                let std = match t.cell(0, 4) { Cell::Float(f) => format!("{:.2}", f), _ => String::new() };
+                return ColStats { name: col_name, dtype: format!("{:?}", col_type), null_pct: 0.0, distinct: 0, min, max, median: avg, sigma: std };
+            } else if !is_num && t.cols() >= 2 {
+                let dist = match t.cell(0, 1) { Cell::Int(i) => i as usize, _ => 0 };
+                return ColStats { name: col_name, dtype: format!("{:?}", col_type), null_pct: 0.0, distinct: dist, min: String::new(), max: String::new(), median: String::new(), sigma: String::new() };
+            }
+        }
+        // Fallback to in-memory stats
+        v.col_stats(col_idx)
     }
 
     /// Render info box using ratatui widgets
@@ -516,8 +574,8 @@ impl Renderer {
         // Fill status bar
         for x in 0..area.width { buf[(x, row)].set_style(style); buf[(x, row)].set_char(' '); }
 
-        // Show total rows: just disk_rows if set, else dataframe height
-        let total_str = commify(&view.rows().to_string());
+        // Show total rows via PRQL count (plugin caches it)
+        let total_str = commify(&Self::total_rows(view).to_string());
 
         let sel_info = format!(" [sel={}]", view.selected_cols.len());
         let left = if !message.is_empty() { format!("{}{}", message, sel_info) }
@@ -529,9 +587,9 @@ impl Renderer {
         }
         else { format!("{}{}", view.path.as_deref().unwrap_or("(no file)"), sel_info) };
 
-        // Get column stats for current column
+        // Get column stats for current column (via PRQL for full data)
         let col_stats_str = if view.cols() > 0 {
-            view.col_stats(view.state.cc).format()
+            Self::col_stats(view, view.state.cc).format()
         } else { String::new() };
 
         let partial = if is_loading || view.partial { " Partial" } else { "" };
@@ -563,8 +621,8 @@ impl Renderer {
     }
 
     #[cfg(test)]
-    pub fn test_col_width(table: &dyn Table, col_idx: usize, state: &TableState, decimals: usize) -> u16 {
-        Self::col_width(table, col_idx, state, decimals)
+    pub fn test_col_width(table: &dyn Table, col_idx: usize, state: &TableState, decimals: usize, is_last: bool) -> u16 {
+        Self::col_width(table, col_idx, state, decimals, is_last)
     }
 }
 
@@ -638,14 +696,14 @@ mod tests {
         );
         let state = TableState { viewport: (25, 120), ..Default::default() };
 
-        // Get natural widths for both columns
-        let name_w = Renderer::test_col_width(&table, 0, &state, 3);
-        let price_w = Renderer::test_col_width(&table, 1, &state, 3);
+        // Get natural widths for both columns (price is last)
+        let name_w = Renderer::test_col_width(&table, 0, &state, 3, false);
+        let price_w = Renderer::test_col_width(&table, 1, &state, 3, true);
 
         // name col: max("name".len(), "banana".len()) = 6
         assert!(name_w >= 6 && name_w <= 10, "name width {} should be ~6", name_w);
-        // price col: max("price".len(), "200".len()) = 5
-        assert!(price_w >= 5 && price_w <= 10, "price width {} should be ~5, not extended to fill screen", price_w);
+        // price col: max("price".len(), "200".len()) = 5 (last col uses actual width)
+        assert!(price_w >= 5 && price_w <= 10, "price width {} should be ~5", price_w);
     }
 
     #[test]
@@ -872,5 +930,100 @@ mod tests {
         assert!(!content.contains("\"world\""), "Should not have quotes: {}", content);
         assert!(content.contains("hello"), "Should have hello: {}", content);
         assert!(content.contains("world"), "Should have world: {}", content);
+    }
+
+    #[test]
+    fn test_scroll_down_moves_content() {
+        // Verify scrolling down past screen moves content up
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+        use crate::state::{ViewState, ViewKind};
+        use crate::app::AppContext;
+        use std::collections::HashSet;
+        use crate::util::theme::Theme;
+
+        // Create table with 20 rows (more than screen height)
+        let rows: Vec<Vec<TCell>> = (0..20).map(|i| vec![
+            TCell::Str(format!("row{:02}", i)),
+            TCell::Int(i * 10),
+        ]).collect();
+        let table = SimpleTable::new(
+            vec!["name".into(), "val".into()],
+            vec![ColType::Str, ColType::Int],
+            rows,
+        );
+
+        let mut app = AppContext::default();
+        let id = app.next_id();
+        app.stack.push(ViewState::new_memory(id, "test", ViewKind::Table, Box::new(table)));
+
+        let backend = TestBackend::new(40, 15);  // 15 rows high - enough for header/footer/data
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        // Render at row 0 - should see row00, row01, etc.
+        terminal.draw(|frame| {
+            let view = app.view_mut().unwrap();
+            view.state.cr = 0;
+            view.state.viewport = (15, 40);
+            Renderer::render_table(frame, view, frame.area(), &HashSet::new(), &HashSet::new(), 3, &Theme::default(), false);
+        }).unwrap();
+
+        let buf1 = terminal.backend().buffer().clone();
+        let content1 = (0..15).map(|y| (0..20).map(|x| buf1.cell((x, y)).unwrap().symbol().chars().next().unwrap_or(' ')).collect::<String>()).collect::<Vec<_>>().join("\n");
+        eprintln!("At row 0:\n{}", content1);
+
+        assert!(content1.contains("row00"), "Should see row00 at top");
+        assert!(content1.contains("row01"), "Should see row01");
+        assert!(!content1.contains("row15"), "Should NOT see row15 yet");
+
+        // Scroll to row 15 - should see row15, not row00
+        terminal.draw(|frame| {
+            let view = app.view_mut().unwrap();
+            view.state.cr = 15;
+            view.state.visible();  // update r0 to show cursor
+            Renderer::render_table(frame, view, frame.area(), &HashSet::new(), &HashSet::new(), 3, &Theme::default(), false);
+        }).unwrap();
+
+        let buf2 = terminal.backend().buffer().clone();
+        let content2 = (0..15).map(|y| (0..20).map(|x| buf2.cell((x, y)).unwrap().symbol().chars().next().unwrap_or(' ')).collect::<String>()).collect::<Vec<_>>().join("\n");
+        eprintln!("At row 15:\n{}", content2);
+
+        assert!(content2.contains("row15"), "Should see row15 after scroll");
+        assert!(!content2.contains("row00"), "row00 should be scrolled off");
+    }
+
+    #[test]
+    fn test_col_stats_with_parquet() {
+        use crate::command::io::From;
+        use crate::command::Command;
+        use crate::app::AppContext;
+
+        // Load plugins
+        let _ = crate::data::dynload::load_polars("./target/release/libtv_polars.so");
+        let _ = crate::data::dynload::load_sqlite("./target/release/libtv_sqlite.so");
+
+        let mut app = AppContext::default();
+        let mut from_cmd = From { file_path: "tests/data/sample.parquet".to_string() };
+        from_cmd.exec(&mut app).unwrap();
+
+        // Fetch data (lazy loading)
+        crate::input::fetch_lazy(app.view_mut().unwrap());
+
+        let view = app.view().unwrap();
+        // age column is at index 1
+        let stats = Renderer::col_stats(view, 1);
+
+        // sample.parquet has 10000 rows, age should have reasonable stats
+        // min should be around 18, max around 80, avg around 49
+        assert!(!stats.min.is_empty(), "min should not be empty");
+        assert!(!stats.max.is_empty(), "max should not be empty");
+        assert!(!stats.median.is_empty(), "avg should not be empty");
+        assert!(!stats.sigma.is_empty(), "stddev should not be empty");
+
+        // Verify stats are from full dataset (not just first 50 rows)
+        let min: f64 = stats.min.parse().unwrap_or(0.0);
+        let max: f64 = stats.max.parse().unwrap_or(0.0);
+        assert!(min >= 15.0 && min <= 25.0, "min age should be ~18-20, got {}", min);
+        assert!(max >= 70.0 && max <= 85.0, "max age should be ~80, got {}", max);
     }
 }

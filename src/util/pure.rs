@@ -4,7 +4,7 @@
 /// Compile PRQL to SQL
 pub fn compile_prql(prql: &str) -> Option<String> {
     if prql.is_empty() { return None; }
-    let opts = prqlc::Options::default().no_format();
+    let opts = prqlc::Options::default().no_format().with_signature_comment(false);
     match prqlc::compile(prql, &opts) {
         Ok(sql) => Some(sql),
         Err(e) => { eprintln!("PRQL compile error: {}", e); None }
@@ -55,14 +55,11 @@ pub fn filter_name(parent: &str, expr: &str) -> String {
     format!("{} & {}", parent, expr)
 }
 
-/// Build SQL IN clause
+/// Build PRQL filter for multiple values (col == a || col == b)
 #[must_use]
 pub fn in_clause(col: &str, values: &[String], is_str: bool) -> String {
-    let vals = values.iter()
-        .map(|v| if is_str { format!("'{}'", v) } else { v.clone() })
-        .collect::<Vec<_>>()
-        .join(",");
-    format!("\"{}\" IN ({})", col, vals)
+    let q = if is_str { "'" } else { "" };
+    values.iter().map(|v| format!("`{}` == {}{}{}", col, q, v, q)).collect::<Vec<_>>().join(" || ")
 }
 
 /// Build display name for IN filter
@@ -171,13 +168,13 @@ mod tests {
     #[test]
     fn test_in_clause_str() {
         let vals = vec!["a".into(), "b".into()];
-        assert_eq!(in_clause("col", &vals, true), "\"col\" IN ('a','b')");
+        assert_eq!(in_clause("col", &vals, true), "`col` == 'a' || `col` == 'b'");
     }
 
     #[test]
     fn test_in_clause_num() {
         let vals = vec!["1".into(), "2".into()];
-        assert_eq!(in_clause("col", &vals, false), "\"col\" IN (1,2)");
+        assert_eq!(in_clause("col", &vals, false), "`col` == 1 || `col` == 2");
     }
 
     #[test]
@@ -267,5 +264,24 @@ mod tests {
         let sql = result.unwrap();
         eprintln!("SQL: {}", sql);
         assert!(sql.contains("LIMIT") || sql.contains("OFFSET"), "SQL should have LIMIT/OFFSET: {}", sql);
+    }
+
+    #[test]
+    fn test_compile_prql_take_with_offset() {
+        // Test take 301..351 should generate LIMIT with OFFSET
+        let prql = "from df | take 301..351";
+        let result = super::compile_prql(prql);
+        eprintln!("PRQL: {}", prql);
+        let sql = result.unwrap();
+        eprintln!("SQL: {}", sql);
+        // Should have OFFSET 300 and LIMIT 50
+        assert!(sql.contains("OFFSET") || sql.contains("offset"), "SQL should have OFFSET for range starting at 301: {}", sql);
+
+        // Test take 1..51 (offset 0) - no OFFSET needed
+        let prql = "from df | take 1..51";
+        let result = super::compile_prql(prql);
+        eprintln!("PRQL: {}", prql);
+        let sql = result.unwrap();
+        eprintln!("SQL (offset 0): {}", sql);
     }
 }

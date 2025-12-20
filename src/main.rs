@@ -248,6 +248,15 @@ fn run_keys(keys: &str, file: Option<&str>) -> Result<()> {
             eprintln!("Error loading {}: {}", path, e);
         }
         wait_bg(&mut app);
+        // Fetch data for lazy views so navigation works
+        if let Some(view) = app.view_mut() {
+            if let Some(t) = view.path.as_ref()
+                .and_then(|p| dynload::get_for(p).map(|pl| (p, pl)))
+                .and_then(|(p, pl)| pure::compile_prql(&view.prql).and_then(|sql| pl.query(&sql, p)))
+            {
+                view.data = dynload::to_box_table(&t);
+            }
+        }
     }
     app.viewport(50, 120);
     let mut mode = InputMode::None;
@@ -312,8 +321,8 @@ fn exec_input(app: &mut AppContext, mode: &InputMode, text: &str) {
             let expr = if is_plain_value(text) {
                 if let Some(v) = app.view() {
                     let col = v.col_name(v.state.cc).unwrap_or_default();
-                    let is_str = v.data.col_type(v.state.cc) == data::table::ColType::Str;
-                    if is_str { format!("\"{}\" = '{}'", col, text) } else { format!("\"{}\" = {}", col, text) }
+                    let q = if v.data.col_type(v.state.cc) == data::table::ColType::Str { "'" } else { "" };
+                    format!("`{}` == {}{}{}", col, q, text, q)
                 } else { text.to_string() }
             } else { text.to_string() };
             input::run(app, Box::new(Filter { expr }));
@@ -365,38 +374,38 @@ fn wait_bg(app: &mut AppContext) {
 
 /// Print view data - compiles PRQL to SQL and executes via plugin
 fn print(app: &mut AppContext) {
-    if let Some(view) = app.view_mut() {
-        let path = view.path.clone().unwrap_or_default();
-        let prql = &view.prql;
-        if !prql.is_empty() && !path.is_empty() {
-            if let Some(sql) = pure::compile_prql(prql) {
-                if let Some(plugin) = dynload::get_for(&path) {
-                    if let Some(t) = plugin.query(&sql, &path) {
-                        use data::table::Table;
-                        println!("=== {} ({} rows) ===", view.name, t.rows());
-                        println!("{}", t.col_names().join(","));
-                        for r in 0..t.rows().min(10) {
-                            let row: Vec<String> = (0..t.cols()).map(|c| t.cell(r, c).format(10)).collect();
-                            println!("{}", row.join(","));
-                        }
-                        return;
-                    }
-                }
-            }
+    let Some(view) = app.view_mut() else { println!("No table loaded"); return };
+    let path = view.path.clone().unwrap_or_default();
+    let start = view.state.cr;
+
+    // Use take range for pagination
+    let prql = format!("{} | take {}..{}", view.prql, start + 1, start + 11);
+    let result = (!view.prql.is_empty() && !path.is_empty())
+        .then(|| pure::compile_prql(&prql))
+        .flatten()
+        .and_then(|sql| dynload::get_for(&path).and_then(|pl| pl.query(&sql, &path)));
+    if let Some(t) = result {
+        use data::table::Table;
+        // Get total via count query
+        let total = pure::compile_prql(&format!("{} | aggregate {{n = count this}}", view.prql))
+            .and_then(|sql| dynload::get_for(&path).and_then(|pl| pl.query(&sql, &path)))
+            .and_then(|ct| match ct.cell(0, 0) { data::table::Cell::Int(n) => Some(n as usize), _ => None })
+            .unwrap_or(t.rows());
+        println!("=== {} ({} rows) ===", view.name, total);
+        println!("{}", t.col_names().join(","));
+        for r in 0..t.rows() {
+            println!("{}", (0..t.cols()).map(|c| t.cell(r, c).format(10)).collect::<Vec<_>>().join(","));
         }
-        // Fallback: show cached data
-        println!("=== {} ({} rows) ===", view.name, view.rows());
-        fetch_lazy(view);
-        let cols = view.data.col_names();
-        println!("{}", cols.join(","));
-        let r0 = view.state.r0;
-        let n = view.data.rows().min(r0 + 10);
-        for r in r0..n {
-            let row: Vec<String> = (0..cols.len()).map(|c| view.data.cell(r, c).format(10)).collect();
-            println!("{}", row.join(","));
-        }
-    } else {
-        println!("No table loaded");
+        return;
+    }
+    // Fallback: show cached data
+    println!("=== {} ({} rows) ===", view.name, view.rows());
+    fetch_lazy(view);
+    let cols = view.data.col_names();
+    println!("{}", cols.join(","));
+    let r0 = view.state.r0;
+    for r in r0..view.data.rows().min(r0 + 10) {
+        println!("{}", (0..cols.len()).map(|c| view.data.cell(r, c).format(10)).collect::<Vec<_>>().join(","));
     }
 }
 
