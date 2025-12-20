@@ -77,8 +77,8 @@ fn make_app(file: Option<&str>, raw_save: bool) -> AppContext {
 /// Extract prompt inputs from key sequence for --keys mode
 /// ":pacman<ret>" → keys=[":"], test_input=["pacman"]
 fn extract_prompts(keys: &[String]) -> (Vec<String>, Vec<String>) {
-    // Keys that trigger prompts: : ^ \ (command picker, rename, filter)
-    let prompt_keys = [":", "^", "<backslash>"];
+    // Keys that trigger prompts: : ^ \ s (command picker, rename, filter, select)
+    let prompt_keys = [":", "^", "<backslash>", "s"];
     let mut out_keys = Vec::new();
     let mut test_input = Vec::new();
     let mut i = 0;
@@ -197,3 +197,11 @@ mod tests {
         assert_eq!(input, vec!["ps", "systemctl"]);
     }
 }
+
+    #[test]
+    fn test_extract_prompts_select() {
+        let keys = parse_keys("sname,city<ret>");
+        let (out, input) = extract_prompts(&keys);
+        assert_eq!(out, vec!["s"]);
+        assert_eq!(input, vec!["name,city"]);
+    }

@@ -9,10 +9,12 @@ pub fn fzf(items: Vec<String>, prompt: &str) -> Result<Option<String>> {
 }
 
 /// Simple fzf with optional pre-filled query (for testing)
+/// Returns query if it's a custom command (not in selections), else first selection
 pub fn fzf_with(items: Vec<String>, prompt: &str, pre_query: Option<&str>) -> Result<Option<String>> {
     let (sels, query) = fzf_multi_header(items, prompt, None, pre_query)?;
-    if let Some(s) = sels.into_iter().next() { Ok(Some(s)) }
-    else if !query.is_empty() { Ok(Some(query)) }
+    // If query differs from selections, user typed a custom command - return it
+    if !query.is_empty() && sels.iter().all(|s| s != &query) { Ok(Some(query)) }
+    else if let Some(s) = sels.into_iter().next() { Ok(Some(s)) }
     else { Ok(None) }
 }
 

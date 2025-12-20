@@ -78,8 +78,9 @@ pub fn do_command_picker(app: &mut AppContext) -> Result<()> {
     let result = picker::fzf_with(cmd_list, ": ", pre_query.as_deref());
     app.needs_clear = true;
     if let Ok(Some(selected)) = result {
+        // Try full command first, then just the command word (for items like "ps")
         let cmd_str = selected.split_whitespace().next().unwrap_or(&selected);
-        if let Some(cmd) = parse(cmd_str, app).or_else(|| parse(&selected, app)) {
+        if let Some(cmd) = parse(&selected, app).or_else(|| parse(cmd_str, app)) {
             if let Err(e) = CommandExecutor::exec(app, cmd) { app.err(e); }
         } else { app.msg(format!("Unknown command: {}", selected)); }
     }
