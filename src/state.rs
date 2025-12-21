@@ -14,18 +14,6 @@ pub struct ParentInfo {
     pub freq_col: Option<String>,
 }
 
-/// View kind for dispatch
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ViewKind { Table, Meta, Freq, Corr, Pivot }
-
-impl std::fmt::Display for ViewKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", match self {
-            Self::Table => "table", Self::Meta => "meta", Self::Freq => "freq",
-            Self::Corr => "corr", Self::Pivot => "pivot",
-        })
-    }
-}
 
 /// Table cursor/viewport state
 #[derive(Clone, Debug, Default)]
@@ -88,7 +76,6 @@ impl TableState {
 pub struct ViewState {
     pub id: usize,
     pub name: String,
-    pub kind: ViewKind,
     pub prql: String,                    // query chain
     pub path: Option<String>,            // query path (file, memory:id, source:...)
     pub plugin: Option<&'static Plugin>, // cached plugin ref
@@ -113,7 +100,7 @@ impl Clone for ViewState {
             (0..t.rows()).map(|r| (0..t.cols()).map(|c| t.cell(r, c)).collect()).collect()
         ));
         Self {
-            id: self.id, name: self.name.clone(), kind: self.kind,
+            id: self.id, name: self.name.clone(),
             prql: self.prql.clone(), path: self.path.clone(), plugin: self.plugin, data,
             state: self.state.clone(), parent: self.parent.clone(),
             selected_cols: self.selected_cols.clone(), selected_rows: self.selected_rows.clone(),
@@ -129,7 +116,7 @@ impl ViewState {
     /// Builder: start with id + name, chain setters
     pub fn build(id: usize, name: impl Into<String>) -> Self {
         Self {
-            id, name: name.into(), kind: ViewKind::Table, prql: "from df".into(),
+            id, name: name.into(), prql: "from df".into(),
             path: None, plugin: None, data: Self::empty(), state: TableState::default(),
             parent: None, selected_cols: HashSet::new(), selected_rows: HashSet::new(),
             col_separator: None, col_order: None, history: Vec::new(), partial: false,
@@ -137,7 +124,6 @@ impl ViewState {
     }
 
     // Builder methods
-    pub fn kind(mut self, k: ViewKind) -> Self { self.kind = k; self }
     pub fn prql(mut self, p: impl Into<String>) -> Self { self.prql = p.into(); self }
     pub fn data(mut self, d: BoxTable) -> Self { self.data = d; self }
     pub fn partial(mut self) -> Self { self.partial = true; self }
@@ -180,9 +166,9 @@ impl ViewState {
         self.col_separator.map(|sep| self.col_names().into_iter().take(sep).collect()).unwrap_or_default()
     }
 
-    /// Row selection mode (meta/freq)
+    /// Row selection mode (meta/freq) - detected by name prefix
     #[inline] #[must_use]
-    pub fn is_row_sel(&self) -> bool { matches!(self.kind, ViewKind::Meta | ViewKind::Freq) }
+    pub fn is_row_sel(&self) -> bool { self.name == "meta" || self.name.starts_with("freq ") }
 
     /// Get column indices in display order (respects col_order if set)
     #[must_use]
@@ -345,11 +331,11 @@ mod tests {
 
     #[test]
     fn test_prql_freq() {
-        let v = ViewState::build(0, "freq")
-            .kind(ViewKind::Freq)
+        let v = ViewState::build(0, "freq col")
             .prql("from df | group {`col`} (aggregate {Cnt = count this}) | sort {-Cnt}")
             .data(empty())
             .parent(1, 100, "parent", Some("col".into()));
         assert!(v.prql.contains("group"));
+        assert!(v.is_row_sel());
     }
 }

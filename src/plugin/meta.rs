@@ -70,7 +70,6 @@ impl Command for Metadata {
         // Register meta table in memory for filtering
         let id = app.next_id();
         let view = state::ViewState::build(id, "meta")
-            .kind(state::ViewKind::Meta)
             .data(meta)
             .parent(0, parent_rows, &parent_name, None)
             .register();

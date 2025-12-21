@@ -30,11 +30,11 @@ fn is_text_file(path: &Path) -> bool {
 impl Plugin for FolderPlugin {
     fn name(&self) -> &str { "folder" }
     fn tab(&self) -> &str { "folder" }
-    fn matches(&self, name: &str) -> bool { name.starts_with("ls") }
+    fn matches(&self, name: &str) -> bool { name.starts_with("folder") }
 
     fn handle(&self, cmd: &str, app: &mut AppContext) -> Option<Box<dyn Command>> {
         let v = app.view()?;
-        // Extract parent dir from view name (ls:path or ls -r:path [& filter])
+        // Extract parent dir from view name (folder:path or folder -r:path [& filter])
         let dir = v.name.split(':').nth(1)
             .map(|s| s.split(" & ").next().unwrap_or(s))  // strip filter part
             .map(|s| PathBuf::from(s)).unwrap_or_else(|| PathBuf::from("."));
@@ -65,7 +65,7 @@ impl Plugin for FolderPlugin {
         let is_dir = dir_col.map(|c| unquote(&v.data.cell(v.state.cr, c).format(10)) == "x")
             .unwrap_or(false);
         // For lr (recursive), join base dir with relative path
-        let path = if v.name.starts_with("ls -r:") {
+        let path = if v.name.starts_with("folder -r:") {
             dir.join(&rel_path).to_string_lossy().to_string()
         } else { rel_path };
 
@@ -101,9 +101,9 @@ impl Command for Ls {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         let id = app.next_id();
         let (name, source_path) = if self.recursive {
-            (format!("ls -r:{}", self.dir.display()), format!("source:lr:{}", self.dir.display()))
+            (format!("folder -r:{}", self.dir.display()), format!("source:lr:{}", self.dir.display()))
         } else {
-            (format!("ls:{}", self.dir.display()), format!("source:ls:{}", self.dir.display()))
+            (format!("folder:{}", self.dir.display()), format!("source:ls:{}", self.dir.display()))
         };
         app.stack.push(ViewState::build(id, name).path(source_path));
         Ok(())

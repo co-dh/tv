@@ -110,7 +110,6 @@ impl Command for Frequency {
         let name = format!("freq {}", self.col_names.join(" "));
         let freq_col = self.col_names.first().cloned().unwrap_or_default();
         let mut nv = ViewState::build(id, name)
-            .kind(crate::state::ViewKind::Freq)
             .prql(&prql)
             .data(result)
             .parent(parent_id, parent_rows, parent_name, Some(freq_col));

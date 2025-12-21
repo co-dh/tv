@@ -12,7 +12,6 @@ use crate::input::keyhandler;
 use crate::input::parser::parse;
 use crate::input::prompt::{do_search, do_filter, do_command_picker, do_goto_col, prompt};
 use crate::plugin::corr::Correlation;
-use crate::state::ViewKind;
 use crate::util::picker;
 
 /// Convert KeyEvent to Kakoune-style key name for keymap lookup
@@ -41,17 +40,11 @@ pub fn key_str(key: &KeyEvent) -> String {
     }
 }
 
-/// Get current keymap tab based on view type or name prefix
+/// Get current keymap tab based on view name prefix
 pub fn cur_tab(app: &AppContext) -> &'static str {
     app.view().map(|v| {
-        if v.name.starts_with("ls") { return "folder"; }
-        match v.kind {
-            ViewKind::Freq => "freq",
-            ViewKind::Meta => "meta",
-            ViewKind::Corr => "corr",
-            ViewKind::Pivot => "pivot",
-            ViewKind::Table => "table",
-        }
+        let p = v.name.split(&[':', ' '][..]).next().unwrap_or("");
+        match p { "folder" => "folder", "freq" => "freq", "meta" => "meta", "corr" => "corr", _ => "table" }
     }).unwrap_or("table")
 }
 

@@ -2,7 +2,7 @@ use crate::app::AppContext;
 use crate::data::dynload;
 use crate::data::table::{Cell, ColType, Table};
 use crate::utils::commify;
-use crate::state::{TableState, ViewKind, ViewState};
+use crate::state::{TableState, ViewState};
 use crate::util::theme::Theme;
 use ratatui::prelude::*;
 use ratatui::style::{Color as RColor, Modifier, Style};
@@ -68,7 +68,7 @@ impl Renderer {
         let table = view.data.as_ref();
         // Get total rows via plugin (caches it)
         let total_rows = view.total_rows();
-        let is_correlation = view.kind == ViewKind::Corr;
+        let is_correlation = view.name.starts_with("corr");
         let dcols = view.display_cols();  // column indices in display order
 
         // Calculate column widths (last displayed col uses actual content width)
@@ -526,7 +526,7 @@ impl Renderer {
             format!(" [sel={}]", view.selected_cols.len())
         };
         let left = if !message.is_empty() { format!("{}{}", message, sel_info) }
-        else if matches!(view.kind, ViewKind::Freq | ViewKind::Meta) {
+        else if view.is_row_sel() {
             // Show parent name and row count for Meta/Freq views
             let pn = view.parent.as_ref().map(|p| p.name.as_str()).unwrap_or("");
             let pr = view.parent.as_ref().map(|p| format!(" ({})", commify(&p.rows.to_string()))).unwrap_or_default();
@@ -657,7 +657,7 @@ mod tests {
     fn test_render_folder_sort() {
         use ratatui::backend::TestBackend;
         use ratatui::Terminal;
-        use crate::state::{ViewState, ViewKind};
+        use crate::state::ViewState;
         use std::collections::HashSet;
         use crate::util::theme::Theme;
 
@@ -676,7 +676,7 @@ mod tests {
         );
 
         // Create view with sort by size ascending (use unique ID to avoid test conflicts)
-        let mut view = ViewState::build(100, "ls:test").data(Box::new(table)).register();
+        let mut view = ViewState::build(100, "folder:test").data(Box::new(table)).register();
         view.prql = "from df | sort {size}".to_string();
 
         // Check plugin is loaded and path is set
@@ -713,7 +713,7 @@ mod tests {
     fn test_sort_command_flow() {
         use ratatui::backend::TestBackend;
         use ratatui::Terminal;
-        use crate::state::{ViewState, ViewKind};
+        use crate::state::ViewState;
         use crate::command::transform::Sort;
         use crate::command::Command;
         use crate::app::AppContext;
@@ -736,7 +736,7 @@ mod tests {
 
         // Create app with folder view
         let mut app = AppContext::default();
-        app.stack.push(ViewState::build(200, "ls:test").data(Box::new(table)).register());
+        app.stack.push(ViewState::build(200, "folder:test").data(Box::new(table)).register());
 
         // Move cursor to size column
         if let Some(v) = app.view_mut() { v.state.cc = 1; }
@@ -775,7 +775,7 @@ mod tests {
     fn test_multi_render_sort() {
         use ratatui::backend::TestBackend;
         use ratatui::Terminal;
-        use crate::state::{ViewState, ViewKind};
+        use crate::state::ViewState;
         use crate::command::transform::Sort;
         use crate::command::Command;
         use crate::app::AppContext;
@@ -798,7 +798,7 @@ mod tests {
 
         let mut app = AppContext::default();
         // Use unique ID to avoid test conflicts with other tests
-        app.stack.push(ViewState::build(300, "ls:test").data(Box::new(table)).register());
+        app.stack.push(ViewState::build(300, "folder:test").data(Box::new(table)).register());
 
         let backend = TestBackend::new(80, 10);
         let mut terminal = Terminal::new(backend).unwrap();
@@ -839,7 +839,7 @@ mod tests {
     fn test_no_quotes_in_strings() {
         use ratatui::backend::TestBackend;
         use ratatui::Terminal;
-        use crate::state::{ViewState, ViewKind};
+        use crate::state::ViewState;
         use crate::app::AppContext;
         use std::collections::HashSet;
         use crate::util::theme::Theme;
@@ -883,7 +883,7 @@ mod tests {
         // Verify scrolling down past screen moves content up
         use ratatui::backend::TestBackend;
         use ratatui::Terminal;
-        use crate::state::{ViewState, ViewKind};
+        use crate::state::ViewState;
         use crate::app::AppContext;
         use std::collections::HashSet;
         use crate::util::theme::Theme;

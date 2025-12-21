@@ -7,7 +7,7 @@ use common::{run_keys, footer};
 fn test_folder_view() {
     // :ls shows current working directory
     let out = run_keys(":ls<ret>", "tests/data/basic.csv");
-    assert!(out.contains("ls:"), ":ls should show folder view: {}", out);
+    assert!(out.contains("folder:"), ":ls should show folder view: {}", out);
     // Should show .. parent entry
     assert!(out.contains(".."), "Should show parent entry: {}", out);
 }
@@ -15,7 +15,7 @@ fn test_folder_view() {
 #[test]
 fn test_folder_sort_by_size() {
     let out = run_keys(":ls<ret><right><right>]", "tests/data/basic.csv");
-    assert!(out.contains("ls:"), ":ls should show folder view: {}", out);
+    assert!(out.contains("folder:"), ":ls should show folder view: {}", out);
 }
 
 #[test]
@@ -27,7 +27,7 @@ fn test_folder_freq() {
 #[test]
 fn test_folder_multi_select() {
     let out = run_keys(":ls<ret><space><down><space>", "tests/data/basic.csv");
-    assert!(out.contains("ls:"), "Folder view multi-select: {}", out);
+    assert!(out.contains("folder:"), "Folder view multi-select: {}", out);
 }
 
 #[test]
@@ -43,7 +43,7 @@ fn test_folder_filter() {
 fn test_folder_recursive() {
     // r for recursive listing
     let out = run_keys("r", "tests/data/basic.csv");
-    assert!(out.contains("ls -r:"), "r should show recursive: {}", out);
+    assert!(out.contains("folder -r:"), "r should show recursive: {}", out);
 }
 
 #[test]
