@@ -2,7 +2,7 @@
 members = [".", "crates/tv-plugin-api", "crates/tv-polars", "crates/tv-sqlite", "crates/tv-duckdb", "crates/tv-plot"]
 
 [package]
-name = "tv"
+name = "tabv"
 version = "0.1.0"
 edition = "2024"
 

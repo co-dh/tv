@@ -34,7 +34,7 @@ fn main() -> Result<()> {
     // Check for --keys argument (key replay mode for testing)
     if let Some(idx) = args.iter().position(|a| a == "--keys") {
         if args.len() <= idx + 1 {
-            eprintln!("Usage: tv --keys 'F<ret>' file.parquet");
+            eprintln!("Usage: tabv --keys 'F<ret>' file.parquet");
             std::process::exit(1);
         }
         let file = args.get(idx + 2).map(|s| s.as_str());
@@ -166,21 +166,11 @@ fn str_to_key(s: &str) -> KeyEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use input::prompt::is_plain_value;
 
     #[test]
     fn test_key_str_backslash() {
         let key = KeyEvent::new(KeyCode::Char('\\'), KeyModifiers::NONE);
         assert_eq!(input::handler::key_str(&key), "<backslash>", "backslash should map to <backslash>");
-    }
-
-    #[test]
-    fn test_is_plain_value() {
-        assert!(is_plain_value("foo"));
-        assert!(is_plain_value("123"));
-        assert!(is_plain_value("'quoted'"));
-        assert!(!is_plain_value("a > b"));
-        assert!(!is_plain_value("col = 5"));
     }
 
     #[test]

@@ -1,25 +1,16 @@
 //! PRQL compilation with function library and query cache
 
-use std::sync::{Mutex, OnceLock};
+use std::sync::Mutex;
 use std::num::NonZeroUsize;
 use crate::LruCache;
 
-/// PRQL function library (loaded once)
-static FUNCS: OnceLock<String> = OnceLock::new();
-
-fn funcs() -> &'static str {
-    FUNCS.get_or_init(|| {
-        // Try to load from file, fallback to empty
-        std::fs::read_to_string("funcs.prql")
-            .or_else(|_| std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/funcs.prql")))
-            .unwrap_or_default()
-    })
-}
+/// PRQL function library (embedded at compile time)
+const FUNCS: &str = include_str!("../funcs.prql");
 
 /// Compile PRQL to SQL (prepends funcs.prql)
 pub fn compile(prql: &str) -> Option<String> {
     if prql.is_empty() { return None; }
-    let full = format!("{}\n{}", funcs(), prql);
+    let full = format!("{}\n{}", FUNCS, prql);
     let opts = prqlc::Options::default().no_format().with_signature_comment(false);
     prqlc::compile(&full, &opts).ok()
 }

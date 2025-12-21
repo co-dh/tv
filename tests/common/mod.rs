@@ -2,9 +2,9 @@
 
 use std::process::Command;
 
-/// Run tv with --keys mode and return rendered buffer
+/// Run tabv with --keys mode and return rendered buffer
 pub fn run_keys(keys: &str, file: &str) -> String {
-    let mut cmd = Command::new("./target/release/tv");
+    let mut cmd = Command::new("./target/release/tabv");
     cmd.arg("--keys").arg(keys);
     if !file.is_empty() { cmd.arg(file); }
     let output = cmd.output().expect("failed to execute tv");

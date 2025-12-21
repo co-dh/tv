@@ -15,21 +15,12 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 
-/// Search state for n/N
-#[derive(Clone, Default)]
-pub struct SearchState {
-    pub col_name: Option<String>,  // column being searched
-    pub value: Option<String>,     // search value (SQL WHERE)
-}
-
 /// App context
 pub struct AppContext {
     pub stack: StateStack,         // view stack
     pub history_file: PathBuf,     // cmd history file
     pub message: String,           // status bar msg
     next_id: usize,                // view id counter
-    pub search: SearchState,       // search state
-    pub bookmarks: Vec<usize>,     // bookmarked rows
     pub info_mode: u8,             // info box: 0=off, 1=help, 2=help+prql, 3=commands, 4=debug
     pub float_decimals: usize,     // decimal places for floats
     pub keymap: KeyMap,            // key bindings
@@ -39,7 +30,6 @@ pub struct AppContext {
     pub raw_save: bool,            // --raw: skip type detection on save
     pub needs_redraw: bool,  // redraw on next frame
     pub needs_clear: bool,   // force full clear (after fzf/bat)
-    pub needs_center: bool,  // center cursor after viewport update (for search)
     pub test_input: Vec<String>,   // pre-extracted input for prompts (test mode)
 }
 
@@ -55,8 +45,6 @@ impl Default for AppContext {
             history_file,
             message: String::new(),
             next_id: 0,
-            search: SearchState::default(),
-            bookmarks: Vec::new(),
             info_mode: 1,  // start with help visible
             float_decimals: 3,
             keymap: KeyMap::default(),
@@ -66,7 +54,6 @@ impl Default for AppContext {
             raw_save: false,
             needs_redraw: false,
             needs_clear: false,
-            needs_center: false,
             test_input: Vec::new(),
         }
     }
@@ -205,11 +192,7 @@ impl AppContext {
     fn tick<B: Backend>(&mut self, tui: &mut Terminal<B>) -> Result<()>
     where B::Error: Send + Sync + 'static {
         self.update();
-        if self.needs_redraw || self.needs_center || self.needs_clear {
-            if self.needs_center {
-                if let Some(v) = self.view_mut() { v.state.center_if_needed(); }
-                self.needs_center = false;
-            }
+        if self.needs_redraw || self.needs_clear {
             if self.needs_clear {
                 tui.clear()?;
                 self.needs_clear = false;

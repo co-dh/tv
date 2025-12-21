@@ -66,17 +66,11 @@ pub fn to_cmd(app: &AppContext, cmd: &str) -> Option<String> {
         "bottom" => Some("goto max".into()),
 
         // Interactive commands - need prompts, handled separately
-        "filter" | "search" | "from" | "save" | "select_cols" | "rename"
+        "filter" | "from" | "save" | "select_cols" | "rename"
         | "aggregate" | "convert" | "command" | "goto_col" | "goto_col_name" => None,
 
         // Plugin dispatch commands
         "enter" | "filter_parent" | "delete_sel" => None,
-
-        // Search navigation
-        "next_match" | "prev_match" | "search_cell" => None,
-
-        // Bookmarks
-        "bookmark" | "next_bookmark" => None,
 
         // Special
         "force_quit" | "print_status" => None,

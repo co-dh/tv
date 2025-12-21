@@ -7,42 +7,10 @@ use std::io::{self, Write};
 use crate::app::AppContext;
 use crate::command::executor::CommandExecutor;
 use crate::command::transform::Filter;
-use crate::data::dynload;
-use crate::data::table::Table;
-use crate::input::handler::{dispatch, run};
+use crate::data::{dynload, table::Table};
+use crate::input::handler::run;
 use crate::input::parser::parse;
-use crate::util::{picker, theme};
-
-/// Search with fzf (/)
-pub fn do_search(app: &mut AppContext) -> Result<()> {
-    let info = app.view().and_then(|v| {
-        let col_name = v.col_name(v.state.cc)?;
-        let file = v.path.as_deref();
-        Some((hints(v.data.as_ref(), &col_name, v.state.cr, file), col_name, v.name.starts_with("ls")))
-    });
-    if let Some((hint_list, col_name, is_folder)) = info {
-        let expr_opt = picker::fzf(hint_list, "Search> ");
-        app.needs_clear = true;
-        if let Ok(Some(expr)) = expr_opt {
-            let prql_mode = theme::load_config_value("prql_hints").map(|v| v == "true").unwrap_or(false);
-            let expr = if !prql_mode && is_plain_value(&expr) {
-                format!("{} LIKE '%{}%'", col_name, expr)
-            } else { expr.to_string() };
-            let matches = app.view().map(|v| find(v.data.as_ref(), &expr)).unwrap_or_default();
-            app.search.col_name = None;
-            app.search.value = Some(expr.clone());
-            let found = if let Some(view) = app.view_mut() {
-                if let Some(&pos) = matches.first() {
-                    view.state.cr = pos;
-                    app.needs_center = true;
-                    true
-                } else { app.msg(format!("Not found: {}", expr)); false }
-            } else { false };
-            if found && is_folder { dispatch(app, "enter"); }
-        }
-    }
-    Ok(())
-}
+use crate::util::picker;
 
 /// Filter with fzf (\) - multi-select support
 pub fn do_filter(app: &mut AppContext) -> Result<()> {
@@ -182,20 +150,6 @@ pub fn hints(table: &dyn Table, col_name: &str, _row: usize, file: Option<&str>)
 
     items.sort();
     items
-}
-
-/// Check if expression is a plain value (simple identifier or literal)
-pub fn is_plain_value(expr: &str) -> bool {
-    let e = expr.trim();
-    if e.is_empty() || e.contains(' ') { return false; }
-    if (e.starts_with('\'') && e.ends_with('\'')) || (e.starts_with('"') && e.ends_with('"')) { return true; }
-    e.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.' || c == '-')
-}
-
-/// Find rows matching expression (stub - returns empty for now)
-pub fn find(_table: &dyn Table, _expr: &str) -> Vec<usize> {
-    // TODO: implement via plugin for SQL filtering
-    Vec::new()
 }
 
 /// Strip quotes from string values

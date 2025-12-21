@@ -10,7 +10,7 @@ use crate::command::transform::{Agg, DelCol, RenameCol, Select, Xkey};
 use crate::command::view::Pop;
 use crate::input::keyhandler;
 use crate::input::parser::parse;
-use crate::input::prompt::{do_search, do_filter, do_command_picker, do_goto_col, prompt};
+use crate::input::prompt::{do_filter, do_command_picker, do_goto_col, prompt};
 use crate::plugin::corr::Correlation;
 use crate::util::picker;
 
@@ -63,18 +63,6 @@ pub fn dispatch(app: &mut AppContext, action: &str) -> bool {
     if let Some(cmd) = cmd { run(app, cmd); true } else { false }
 }
 
-/// Navigate to next/prev search match
-pub fn find_match(app: &mut AppContext, forward: bool) {
-    if let Some(expr) = app.search.value.clone() {
-        if let Some(view) = app.view_mut() {
-            let m = crate::input::prompt::find(view.data.as_ref(), &expr);
-            let cur = view.state.cr;
-            let pos = if forward { m.iter().find(|&&i| i > cur) } else { m.iter().rev().find(|&&i| i < cur) };
-            if let Some(&p) = pos { view.state.cr = p; view.state.visible(); }
-            else { app.msg("No more matches"); }
-        }
-    } else { app.msg("No search active"); }
-}
 
 /// Process key event, return false to quit
 pub fn on_key(app: &mut AppContext, key: KeyEvent) -> Result<bool> {
@@ -144,23 +132,7 @@ pub fn handle_cmd(app: &mut AppContext, cmd: &str) -> Result<bool> {
                 run(app, Box::new(Save { file_path }));
             }
         }
-        "search" => do_search(app)?,
         "filter" => do_filter(app)?,
-        "next_match" => find_match(app, true),
-        "prev_match" => find_match(app, false),
-        "search_cell" => {
-            if let Some(expr) = app.view().and_then(|v| {
-                let col_name = v.col_name(v.state.cc)?;
-                let cell = v.data.cell(v.state.cr, v.state.cc);
-                let is_str = v.data.col_type(v.state.cc) == crate::data::table::ColType::Str;
-                let val = unquote(&cell.format(10));
-                Some(if is_str { format!("{} = '{}'", col_name, val) } else { format!("{} = {}", col_name, val) })
-            }) {
-                app.search.col_name = None;
-                app.search.value = Some(expr.clone());
-                app.msg(format!("Search: {}", expr));
-            }
-        }
         "meta" => {
             if app.has_view() {
                 if let Some(c) = parse("meta", app) { run(app, c); }
@@ -221,40 +193,10 @@ pub fn handle_cmd(app: &mut AppContext, cmd: &str) -> Result<bool> {
         }
         "command" => do_command_picker(app)?,
         "goto_col" | "goto_col_name" => do_goto_col(app)?,
-        "bookmark" => {
-            if let Some(view) = app.view() {
-                let cr = view.state.cr;
-                if let Some(pos) = app.bookmarks.iter().position(|&r| r == cr) {
-                    app.bookmarks.remove(pos);
-                    app.msg(format!("Removed bookmark at row {}", cr));
-                } else {
-                    app.bookmarks.push(cr);
-                    app.bookmarks.sort();
-                    app.msg(format!("Bookmarked row {} ({} total)", cr, app.bookmarks.len()));
-                }
-            }
-        }
-        "next_bookmark" => {
-            if app.bookmarks.is_empty() { app.msg("No bookmarks"); }
-            else if let Some(row) = app.bookmarks.iter()
-                .find(|&&r| r > app.view().map(|v| v.state.cr).unwrap_or(0)).copied()
-                .or_else(|| app.bookmarks.first().copied())
-            {
-                if let Some(v) = app.view_mut() { v.state.cr = row; v.state.visible(); }
-                app.msg(format!("Bookmark: row {}", row));
-            }
-        }
         "enter" | "filter_parent" | "delete_sel" => { dispatch(app, cmd); }
         _ => {}
     }
     Ok(true)
-}
-
-/// Strip quotes from string values
-fn unquote(s: &str) -> String {
-    if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
-        s[1..s.len()-1].to_string()
-    } else { s.to_string() }
 }
 
 /// Print status line info (for key testing)

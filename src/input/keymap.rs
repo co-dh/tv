@@ -58,10 +58,6 @@ impl KeyMap {
             ("common", "<space>", "toggle_sel"),
             ("common", "<esc>", "clear_sel"),
             ("common", "<backslash>", "filter"),
-            ("common", "/", "search"),
-            ("common", "n", "next_match"),
-            ("common", "N", "prev_match"),
-            ("common", "*", "search_cell"),
             ("common", "[", "sort"),
             ("common", "]", "sort-"),
             ("common", "F", "freq"),
@@ -82,8 +78,6 @@ impl KeyMap {
             ("common", "c", "derive"),
             ("common", "$", "convert"),
             ("common", "b", "aggregate"),
-            ("common", "m", "bookmark"),
-            ("common", "'", "next_bookmark"),
             ("common", "!", "xkey"),
             ("common", "P", "pivot"),
             // Freq view - override enter to filter parent
@@ -178,7 +172,7 @@ impl KeyMap {
     }
 
     /// Get hint text for a command (hint, category)
-    /// Categories: 0=view-specific, 1=selection, 2=search, 3=data, 4=file, 5=display, 9=nav (hidden)
+    /// Categories: 0=view-specific, 1=selection, 2=filter, 3=data, 4=file, 5=display, 9=nav (hidden)
     pub fn hint(command: &str) -> Option<(&'static str, u8)> {
         match command {
             // Navigation - category 9 (hidden from info box)
@@ -190,11 +184,8 @@ impl KeyMap {
             "clear_sel" => Some(("clr sel", 1)),
             "sel_null" => Some(("sel null", 0)),
             "sel_single" => Some(("sel single", 0)),
-            // Search
-            "search" => Some(("search", 2)),
+            // Filter
             "filter" => Some(("filter", 2)),
-            "next_match" => Some(("next", 2)),
-            "prev_match" => Some(("prev", 2)),
             // Data ops
             "freq" => Some(("freq", 3)),
             "meta" => Some(("meta", 3)),
