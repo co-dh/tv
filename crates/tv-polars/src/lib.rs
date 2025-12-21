@@ -66,8 +66,8 @@ pub extern "C" fn tv_query(prql_ptr: *const c_char, path: *const c_char) -> Tabl
 
         // Execute SQL
         match exec_sql(lf, sql) {
-            Ok(df) => { dbg(&format!("RESULT rows={}", df.height())); Some(df) }
-            Err(e) => { dbg(&format!("SQL ERR {}", e)); None }
+            Ok(df) => Some(df),
+            Err(e) => { dbg(&format!("ERR {}", e)); None }
         }
     }).unwrap_or(std::ptr::null()) as TableHandle
 }

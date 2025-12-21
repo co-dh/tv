@@ -120,10 +120,8 @@ pub extern "C" fn tv_query(prql_ptr: *const c_char, path_ptr: *const c_char) -> 
     if prql_ptr.is_null() || path_ptr.is_null() { return std::ptr::null_mut(); }
     let prql = unsafe { from_c_str(prql_ptr) };
     let path = unsafe { from_c_str(path_ptr) };
-    dbg(&format!("QUERY path={} prql={}", path, &prql[..prql.len().min(60)]));
-
     cache().get_or_exec(&path, &prql, |sql| {
-        dbg(&format!("EXEC sql={}", &sql[..sql.len().min(80)]));
+        dbg(&format!("EXEC path={} prql={}", path, &prql[..prql.len().min(60)]));
         exec_duckdb(&path, sql)
     }).unwrap_or(std::ptr::null()) as TableHandle
 }
