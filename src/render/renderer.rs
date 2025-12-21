@@ -373,7 +373,7 @@ impl Renderer {
         let box_height = (keys.len() + extra_lines + 2) as u16;
 
         let box_x = area.width.saturating_sub(box_width + 1);
-        let box_y = area.height.saturating_sub(box_height + 2);  // +2 to clear status line
+        let box_y = area.height.saturating_sub(box_height + 3);  // +3 to clear status line
         let box_area = Rect::new(box_x, box_y, box_width, box_height);
 
         // Clear area first
@@ -428,7 +428,7 @@ impl Renderer {
         let box_width = 35u16;
         let box_height = (cmds.len() + 2).min(20) as u16;
         let box_x = area.width.saturating_sub(box_width + 1);
-        let box_y = area.height.saturating_sub(box_height + 2);  // +2 to clear status line
+        let box_y = area.height.saturating_sub(box_height + 3);  // +3 to clear status line
         let box_area = Rect::new(box_x, box_y, box_width, box_height);
 
         frame.render_widget(Clear, box_area);
