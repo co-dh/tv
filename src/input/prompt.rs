@@ -70,7 +70,7 @@ pub fn do_command_picker(app: &mut AppContext) -> Result<()> {
         "from <file>", "save <file>", "ls [dir]", "lr [dir]",
         "ps", "mounts", "tcp", "udp", "lsof [pid]", "env",
         "systemctl", "journalctl [n]", "pacman", "cargo",
-        "filter <expr>", "freq <col>", "meta", "corr",
+        "filter <expr>", "freq <col>", "meta", "corr", "goto <row>",
         "select <cols>", "delcol <cols>", "sort <col>", "sort -<col>", "take <n>", "rename <old> <new>",
     ].iter().map(|s| s.to_string()).collect();
     // Pop pre-filled query from test_input if available (for --keys mode)

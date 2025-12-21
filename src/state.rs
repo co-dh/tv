@@ -316,10 +316,10 @@ impl ViewState {
             let is_num = matches!(col_type, ColType::Int | ColType::Float);
             // Query stats
             let q = if is_num {
-                format!("{} | aggregate {{n = count this, min_v = min `{}`, max_v = max `{}`, avg_v = average `{}`, std_v = stddev `{}`}}",
+                format!("{} | aggregate {{n = count this, min_v = min this.`{}`, max_v = max this.`{}`, avg_v = average this.`{}`, std_v = stddev this.`{}`}}",
                     self.prql, col_name, col_name, col_name, col_name)
             } else {
-                format!("{} | aggregate {{n = count this, dist = count_distinct `{}`}}", self.prql, col_name)
+                format!("{} | aggregate {{n = count this, dist = count_distinct this.`{}`}}", self.prql, col_name)
             };
             let t = pure::compile_prql(&q).and_then(|sql| pl.query(&sql, p))?;
             if is_num && t.cols() >= 5 {
