@@ -17,6 +17,18 @@ pub fn fzf_with(items: Vec<String>, prompt: &str, pre_query: Option<&str>) -> Re
     else if let Some(s) = sels.into_iter().next() { Ok(Some(s)) }
     else { Ok(None) }
 }
+/// fzf with multi-select - returns selections only
+/// Use Tab to select multiple, or type comma-separated names
+pub fn fzf_multi(items: Vec<String>, prompt: &str) -> Result<Vec<String>> {
+    let (sels, query) = fzf_multi_header(items.clone(), prompt, None, None)?;
+    // If Tab selections, use those; else parse query as comma-separated
+    if !sels.is_empty() { return Ok(sels); }
+    if query.is_empty() { return Ok(vec![]); }
+    // Parse comma-separated, filter to valid items
+    let typed: Vec<String> = query.split(',').map(|s| s.trim().to_string()).filter(|s| items.contains(s)).collect();
+    Ok(typed)
+}
+
 /// fzf with multi-select - returns (selections, query)
 /// --print-query: line1=query, rest=selections (tab to select multiple)
 pub fn fzf_multi_header(items: Vec<String>, prompt: &str, header: Option<&str>, pre_query: Option<&str>) -> Result<(Vec<String>, String)> {
@@ -61,10 +73,10 @@ pub fn fzf_multi_header(items: Vec<String>, prompt: &str, header: Option<&str>, 
 /// - 1 item from hints → `col` == 'value'
 /// - N items from hints → `col` == 'a' || `col` == 'b'
 /// - else → raw PRQL expression
-/// Examples shown: col == 'x', col > 5, s"col LIKE '%pat%'"
+/// Examples shown: col == 'x', col > 5, ~= 'pat' (regex)
 pub fn fzf_filter(hints: Vec<String>, col: &str, is_str: bool, header: Option<&str>, pre_query: Option<&str>) -> Result<Option<String>> {
     // Build prompt with PRQL examples
-    let prompt = format!("PRQL: `{}` == 'x' | > 5 | s\"LIKE '%'\" > ", col);
+    let prompt = format!("PRQL: `{}` == 'x' | > 5 | ~= 'pat' > ", col);
     let (sels, query) = fzf_multi_header(hints.clone(), &prompt, header, pre_query)?;
     // Check how many selections are from hints
     let from_hints: Vec<&String> = sels.iter().filter(|s| hints.contains(s)).collect();

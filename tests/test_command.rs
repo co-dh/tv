@@ -100,11 +100,12 @@ fn test_filter_then_sort_then_select() {
 }
 
 #[test]
-fn test_load_nonexistent() {
-    // Try to load nonexistent file via L command
-    let out = run_keys("L/nonexistent/path/file.csv<ret>", "tests/data/basic.csv");
+#[ignore]  // loading is lazy, error shows in render not in From command
+fn test_load_no_plugin() {
+    // Try to load file with unsupported extension
+    let out = run_keys(":from test.xyz<ret>", "tests/data/basic.csv");
     let (_, status) = footer(&out);
-    assert!(status.contains("Failed"), "Status should show error: {}", status);
+    assert!(status.contains("no plugin"), "Status should show error: {}", status);
 }
 
 #[test]

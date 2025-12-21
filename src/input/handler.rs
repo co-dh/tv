@@ -112,8 +112,19 @@ pub fn handle_cmd(app: &mut AppContext, cmd: &str) -> Result<bool> {
         "print_status" => { print_status(app); return Ok(false); }
         "select_cols" => {
             if !app.has_view() { app.no_table(); }
-            else if let Some(cols) = prompt(app, "Select columns: ")? {
+            else if !app.test_input.is_empty() {
+                // Test mode: parse comma-separated column names
+                let cols = app.test_input.remove(0);
                 run(app, Box::new(Select { col_names: cols.split(',').map(|s| s.trim().to_string()).collect() }));
+            } else if let Some(v) = app.view() {
+                let cols = v.data.col_names();
+                let result = picker::fzf_multi(cols, "Select columns: ");
+                app.needs_clear = true;
+                if let Ok(selected) = result {
+                    if !selected.is_empty() {
+                        run(app, Box::new(Select { col_names: selected }));
+                    }
+                }
             }
         }
         "from" => {
