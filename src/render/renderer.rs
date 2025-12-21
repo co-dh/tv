@@ -355,12 +355,6 @@ impl Renderer {
         use ratatui::widgets::{Block, Borders, Paragraph, Clear};
         use ratatui::text::{Line, Span};
 
-        // Mode 3: show system commands from plugin
-        if info_mode == 3 {
-            Self::render_commands_box(frame, stack_len, area, theme);
-            return;
-        }
-
         // Calculate box size - add PRQL lines if mode 2
         let prql_lines: Vec<&str> = if info_mode == 2 && !prql.is_empty() {
             prql.split(" | ").collect()
@@ -409,43 +403,6 @@ impl Renderer {
                 lines.push(Line::from(Span::styled(s, prql_style)));
             }
         }
-
-        let para = Paragraph::new(lines).block(block);
-        frame.render_widget(para, box_area);
-    }
-
-    /// Render system commands box (mode 3) - fetches from sqlite plugin
-    fn render_commands_box(frame: &mut Frame, stack_len: usize, area: Rect, theme: &Theme) {
-        use ratatui::widgets::{Block, Borders, Paragraph, Clear};
-        use ratatui::text::{Line, Span};
-
-        // Fetch commands from sqlite plugin
-        let cmds: Vec<(String, String)> = dynload::get_sqlite()
-            .and_then(|p| p.query("from df", "source:commands"))
-            .map(|t| (0..t.rows()).map(|r| (t.cell(r, 0).format(10), t.cell(r, 1).format(10))).collect())
-            .unwrap_or_default();
-
-        let box_width = 35u16;
-        let box_height = (cmds.len() + 2).min(20) as u16;
-        let box_x = area.width.saturating_sub(box_width + 1);
-        let box_y = area.height.saturating_sub(box_height + 3);  // +3 to clear status line
-        let box_area = Rect::new(box_x, box_y, box_width, box_height);
-
-        frame.render_widget(Clear, box_area);
-
-        let title = if stack_len > 1 { format!(" [#{}] :cmd ", stack_len) } else { " :commands ".to_string() };
-        let border_style = Style::default().fg(to_rcolor(theme.info_border_fg)).bg(RColor::Black);
-        let block = Block::default().borders(Borders::ALL).border_style(border_style).style(Style::default().bg(RColor::Black)).title(title);
-
-        let cmd_style = Style::default().fg(to_rcolor(theme.info_key_fg));
-        let desc_style = Style::default().fg(RColor::White);
-        let lines: Vec<Line> = cmds.iter().take(18).map(|(cmd, desc)| {
-            Line::from(vec![
-                Span::styled(format!("{:>15}", cmd), cmd_style),
-                Span::raw(" "),
-                Span::styled(desc.as_str(), desc_style),
-            ])
-        }).collect();
 
         let para = Paragraph::new(lines).block(block);
         frame.render_widget(para, box_area);
