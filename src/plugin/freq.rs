@@ -109,11 +109,14 @@ impl Command for Frequency {
         let id = app.next_id();
         let name = format!("freq {}", self.col_names.join(" "));
         let freq_col = self.col_names.first().cloned().unwrap_or_default();
-        let mut new_view = ViewState::new_freq(
-            id, name, result, parent_id, parent_rows, parent_name, freq_col, &parent_prql, &self.col_names, path,
-        );
-        if !key_cols.is_empty() { new_view.col_separator = Some(key_cols.len()); }
-        app.stack.push(new_view);
+        let mut nv = ViewState::build(id, name)
+            .kind(crate::state::ViewKind::Freq)
+            .prql(&prql)
+            .data(result)
+            .parent(parent_id, parent_rows, parent_name, Some(freq_col));
+        if let Some(p) = path { nv = nv.path(p); }
+        if !key_cols.is_empty() { nv.col_separator = Some(key_cols.len()); }
+        app.stack.push(nv);
         Ok(())
     }
 

@@ -4,7 +4,7 @@
 use crate::app::AppContext;
 use crate::command::Command;
 use crate::plugin::Plugin;
-use crate::state::{ViewKind, ViewState};
+use crate::state::ViewState;
 use anyhow::Result;
 
 /// Known system commands (cmd, has_arg)
@@ -46,7 +46,7 @@ impl Command for SourceCmd {
             None => (self.cmd.clone(), format!("source:{}", self.cmd)),
         };
         let id = app.next_id();
-        app.stack.push(ViewState::new_source(id, name, ViewKind::Table, source));
+        app.stack.push(ViewState::build(id, name).path(source));
         Ok(())
     }
     fn to_str(&self) -> String {

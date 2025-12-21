@@ -17,7 +17,7 @@ impl Command for From {
         dynload::get_for(p).ok_or_else(|| anyhow!("no plugin for: {}", p))?;
         let id = app.next_id();
         let name = format!("from {}", p);
-        app.stack.push(ViewState::new_parquet(id, &name, p));
+        app.stack.push(ViewState::build(id, &name).path(p));
         app.msg(format!("Loaded {}", name));
         Ok(())
     }

@@ -135,13 +135,10 @@ impl Command for Agg {
         };
         let prql = format!("{} | group {{`{}`}} (aggregate {{{}}})", parent_prql, self.col, agg_expr);
         // Create new view with aggregation
-        let mut new_view = crate::state::ViewState::new(
-            id, format!("{}:{}", self.func, self.col),
-            Box::new(crate::data::table::SimpleTable::empty()),
-            v.path.clone()
-        );
-        new_view.prql = prql;
-        app.stack.push(new_view);
+        let mut nv = crate::state::ViewState::build(id, format!("{}:{}", self.func, self.col))
+            .prql(&prql);
+        if let Some(p) = &v.path { nv = nv.path(p); }
+        app.stack.push(nv);
         Ok(())
     }
     fn to_str(&self) -> String { format!("agg {} {}", self.col, self.func) }

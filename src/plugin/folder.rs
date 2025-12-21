@@ -105,7 +105,7 @@ impl Command for Ls {
         } else {
             (format!("ls:{}", self.dir.display()), format!("source:ls:{}", self.dir.display()))
         };
-        app.stack.push(ViewState::new_source(id, name, ViewKind::Folder, source_path));
+        app.stack.push(ViewState::build(id, name).kind(ViewKind::Folder).path(source_path));
         Ok(())
     }
     fn to_str(&self) -> String {

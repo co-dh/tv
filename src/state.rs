@@ -124,77 +124,35 @@ impl Clone for ViewState {
 }
 
 impl ViewState {
-    /// Base view with defaults
-    fn base(id: usize, name: impl Into<String>, kind: ViewKind, prql: String, data: BoxTable) -> Self {
+    fn empty() -> BoxTable { Box::new(SimpleTable::empty()) }
+
+    /// Builder: start with id + name, chain setters
+    pub fn build(id: usize, name: impl Into<String>) -> Self {
         Self {
-            id, name: name.into(), kind, prql, path: None, plugin: None, data,
-            state: TableState::default(), parent: None,
-            selected_cols: HashSet::new(), selected_rows: HashSet::new(),
+            id, name: name.into(), kind: ViewKind::Table, prql: "from df".into(),
+            path: None, plugin: None, data: Self::empty(), state: TableState::default(),
+            parent: None, selected_cols: HashSet::new(), selected_rows: HashSet::new(),
             col_separator: None, col_order: None, history: Vec::new(), partial: false,
         }
     }
 
-    fn empty_table() -> BoxTable { Box::new(SimpleTable::empty()) }
-
-    /// Standard view (CSV, etc.)
-    pub fn new(id: usize, name: impl Into<String>, data: BoxTable, path: Option<String>) -> Self {
-        let plugin = path.as_ref().and_then(|p| dynload::get_for(p));
-        Self { path, plugin, ..Self::base(id, name, ViewKind::Table, "from df".into(), data) }
+    // Builder methods
+    pub fn kind(mut self, k: ViewKind) -> Self { self.kind = k; self }
+    pub fn prql(mut self, p: impl Into<String>) -> Self { self.prql = p.into(); self }
+    pub fn data(mut self, d: BoxTable) -> Self { self.data = d; self }
+    pub fn partial(mut self) -> Self { self.partial = true; self }
+    /// Set path + auto-resolve plugin
+    pub fn path(mut self, p: impl Into<String>) -> Self {
+        let s = p.into(); self.plugin = dynload::get_for(&s); self.path = Some(s); self
     }
-
-    /// Lazy parquet view
-    pub fn new_parquet(id: usize, name: impl Into<String>, path: impl Into<String>) -> Self {
-        let p = path.into();
-        let plugin = dynload::get_for(&p);
-        Self { path: Some(p), plugin, ..Self::base(id, name, ViewKind::Table, "from df".into(), Self::empty_table()) }
+    /// Set parent info
+    pub fn parent(mut self, id: usize, rows: usize, name: impl Into<String>, freq_col: Option<String>) -> Self {
+        self.parent = Some(ParentInfo { id, rows, name: name.into(), freq_col }); self
     }
-
-    /// Gzipped CSV view
-    pub fn new_gz(id: usize, name: impl Into<String>, data: BoxTable, path: Option<String>, partial: bool) -> Self {
-        let plugin = path.as_ref().and_then(|p| dynload::get_for(p));
-        Self { path, plugin, partial, ..Self::base(id, name, ViewKind::Table, "from df".into(), data) }
-    }
-
-    /// Metadata view (name = command shown in tabs)
-    pub fn new_meta(id: usize, data: BoxTable, pid: usize, prows: usize, pname: impl Into<String>, parent_prql: &str) -> Self {
-        let prql = format!("{} | meta", parent_prql);
-        let parent = ParentInfo { id: pid, rows: prows, name: pname.into(), freq_col: None };
-        Self { parent: Some(parent), ..Self::base(id, "meta", ViewKind::Meta, prql, data) }
-    }
-
-    /// Freq view (stores parent path for re-querying after filter)
-    pub fn new_freq(id: usize, name: impl Into<String>, data: BoxTable, pid: usize, prows: usize, pname: impl Into<String>, col: impl Into<String>, parent_prql: &str, grp_cols: &[String], path: Option<String>) -> Self {
-        let grp = grp_cols.iter().map(|c| format!("`{}`", c)).collect::<Vec<_>>().join(", ");
-        let prql = format!("{} | group {{{}}} (aggregate {{Cnt = count this}}) | sort {{-Cnt}}", parent_prql, grp);
-        let parent = ParentInfo { id: pid, rows: prows, name: pname.into(), freq_col: Some(col.into()) };
-        let plugin = path.as_ref().and_then(|p| dynload::get_for(p));
-        Self { path, plugin, parent: Some(parent), ..Self::base(id, name, ViewKind::Freq, prql, data) }
-    }
-
-    /// Pivot view
-    pub fn new_pivot(id: usize, name: impl Into<String>, data: BoxTable, pid: usize, pname: impl Into<String>, parent_prql: &str) -> Self {
-        let prql = format!("{} | pivot", parent_prql);
-        let parent = ParentInfo { id: pid, rows: 0, name: pname.into(), freq_col: None };
-        Self { parent: Some(parent), ..Self::base(id, name, ViewKind::Pivot, prql, data) }
-    }
-
-    /// Correlation view
-    pub fn new_corr(id: usize, data: BoxTable, parent_prql: &str) -> Self {
-        Self::base(id, "correlation", ViewKind::Corr, format!("{} | corr", parent_prql), data)
-    }
-
-    /// Memory view (folder, system) - registers with sqlite
-    pub fn new_memory(id: usize, name: impl Into<String>, kind: ViewKind, data: BoxTable) -> Self {
-        let path = dynload::register_table(id, data.as_ref());
-        let plugin = path.as_ref().and_then(|p| dynload::get_for(p));
-        Self { path, plugin, ..Self::base(id, name, kind, "from df".into(), data) }
-    }
-
-    /// Source view (source:ps, source:ls:/path) - lazy via sqlite plugin
-    pub fn new_source(id: usize, name: impl Into<String>, kind: ViewKind, source_path: impl Into<String>) -> Self {
-        let p = source_path.into();
-        let plugin = dynload::get_for(&p);
-        Self { path: Some(p), plugin, ..Self::base(id, name, kind, "from df".into(), Self::empty_table()) }
+    /// Register data with sqlite, set path to memory:id
+    pub fn register(mut self) -> Self {
+        self.path = dynload::register_table(self.id, self.data.as_ref());
+        self.plugin = self.path.as_ref().and_then(|p| dynload::get_for(p)); self
     }
 
     /// Add to history
@@ -387,7 +345,11 @@ mod tests {
 
     #[test]
     fn test_prql_freq() {
-        let v = ViewState::new_freq(0, "freq", empty(), 1, 100, "parent", "col", "from df", &["col".into()], None);
+        let v = ViewState::build(0, "freq")
+            .kind(ViewKind::Freq)
+            .prql("from df | group {`col`} (aggregate {Cnt = count this}) | sort {-Cnt}")
+            .data(empty())
+            .parent(1, 100, "parent", Some("col".into()));
         assert!(v.prql.contains("group"));
     }
 }

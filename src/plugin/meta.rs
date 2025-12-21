@@ -58,9 +58,9 @@ pub struct Metadata;
 impl Command for Metadata {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         // Get view info before mutation
-        let (parent_rows, parent_name, path, parent_prql) = {
+        let (parent_rows, parent_name, path) = {
             let v = app.req()?;
-            (v.rows(), v.name.clone(), v.path.clone().unwrap_or_default(), v.prql.clone())
+            (v.rows(), v.name.clone(), v.path.clone().unwrap_or_default())
         };
 
         // Get column metadata via plugin SQL
@@ -69,11 +69,11 @@ impl Command for Metadata {
 
         // Register meta table in memory for filtering
         let id = app.next_id();
-        let mem_path = dynload::register_table(id, meta.as_ref());
-        let mut view = state::ViewState::new_meta(id, meta, 0, parent_rows, &parent_name, &parent_prql);
-        view.path = mem_path.clone();
-        view.plugin = mem_path.as_ref().and_then(|p| dynload::get_for(p));
-        view.prql = "from df".into(); // Use simple PRQL for memory table
+        let view = state::ViewState::build(id, "meta")
+            .kind(state::ViewKind::Meta)
+            .data(meta)
+            .parent(0, parent_rows, &parent_name, None)
+            .register();
         app.stack.push(view);
         Ok(())
     }
