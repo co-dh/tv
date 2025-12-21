@@ -74,12 +74,13 @@ fn source_cache() -> &'static Mutex<HashMap<String, CachedSource>> {
 /// TTL for source caches (seconds): static sources get longer cache
 fn source_ttl(path: &str) -> u64 {
     match path {
-        p if p.starts_with("source:pacman") => 600,   // 10 min (slow, static)
-        p if p.starts_with("source:cargo") => 300,    // 5 min (slow, static)
-        p if p.starts_with("source:systemctl") => 60, // 1 min
-        p if p.starts_with("source:ls") => 10,        // 10 sec (dir may change)
-        p if p.starts_with("source:lr") => 30,        // 30 sec
-        _ => 5,                                        // 5 sec for dynamic (ps, tcp, etc.)
+        p if p.starts_with("source:pacman") => 600,      // 10 min (slow, static)
+        p if p.starts_with("source:cargo") => 300,       // 5 min (slow, static)
+        p if p.starts_with("source:journalctl") => 300,  // 5 min (slow to load)
+        p if p.starts_with("source:systemctl") => 60,    // 1 min
+        p if p.starts_with("source:ls") => 10,           // 10 sec (dir may change)
+        p if p.starts_with("source:lr") => 30,           // 30 sec
+        _ => 5,                                           // 5 sec for dynamic (ps, tcp, etc.)
     }
 }
 
