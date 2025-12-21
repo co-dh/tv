@@ -16,13 +16,13 @@ pub struct ParentInfo {
 
 /// View kind for dispatch
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ViewKind { Table, Meta, Freq, Corr, Folder, Pivot }
+pub enum ViewKind { Table, Meta, Freq, Corr, Pivot }
 
 impl std::fmt::Display for ViewKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", match self {
             Self::Table => "table", Self::Meta => "meta", Self::Freq => "freq",
-            Self::Corr => "corr", Self::Folder => "folder", Self::Pivot => "pivot",
+            Self::Corr => "corr", Self::Pivot => "pivot",
         })
     }
 }

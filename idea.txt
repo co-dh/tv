@@ -27,3 +27,29 @@ each table is a type, with it's own render, it can reuse common function, but no
 [ ] key columns, group by key, 
 [ ] plotting, histo, bar, daily price, candle 
 [ ] 1+, add 1 to all numberic columns . 1- , - 1 ( not -1)
+
+[ ] kind depends on path, path_opt, data, partial, why sqlite need register 
+meta, freq are not a view, but data?
+
+# whoelse is data kind, other than meta?
+
+● freq is also materialized. Looking at the code:
+
+  // freq.rs - computes GROUP BY, stores result
+  let t = plugin.query(&sql, &path_str)?;  // run query
+  let result = add_pct_bar(dynload::to_box_table(&t));  // add Pct/Bar columns
+  ...
+  .data(result)  // store computed result
+
+  | ViewKind | Data Source                                                  |
+  |----------|--------------------------------------------------------------|
+  | Table    | Lazy - fetched via plugin.query(prql, path) on render        |
+  | Folder   | Lazy - fetched via source:ls or source:lr                    |
+  | Meta     | Materialized - column stats computed, registered with sqlite |
+  | Freq     | Materialized - GROUP BY result computed and stored           |
+  | Corr     | Stub                                                         |
+  | Pivot    | Stub                                                         |
+
+  The difference between meta and freq materialization:
+  - meta: calls .register() → stored in sqlite, can filter with PRQL
+  - freq: just .data(result) → stored in memory, filtering would need re-query from parent

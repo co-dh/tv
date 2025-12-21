@@ -41,15 +41,17 @@ pub fn key_str(key: &KeyEvent) -> String {
     }
 }
 
-/// Get current keymap tab based on view type
+/// Get current keymap tab based on view type or name prefix
 pub fn cur_tab(app: &AppContext) -> &'static str {
-    app.view().map(|v| match v.kind {
-        ViewKind::Folder => "folder",
-        ViewKind::Freq => "freq",
-        ViewKind::Meta => "meta",
-        ViewKind::Corr => "corr",
-        ViewKind::Pivot => "pivot",
-        ViewKind::Table => "table",
+    app.view().map(|v| {
+        if v.name.starts_with("ls") { return "folder"; }
+        match v.kind {
+            ViewKind::Freq => "freq",
+            ViewKind::Meta => "meta",
+            ViewKind::Corr => "corr",
+            ViewKind::Pivot => "pivot",
+            ViewKind::Table => "table",
+        }
     }).unwrap_or("table")
 }
 

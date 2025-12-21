@@ -23,15 +23,16 @@
 
 ```
 src/
-├── main.rs            # Entry, event loop, key handling, command picker, -c flag
-├── keyhandler.rs      # Key → command translation (resolves context)
+├── main.rs            # Entry, event loop, -c flag
 ├── app.rs             # AppContext: global state, view stack
 ├── state.rs           # ViewState, ViewStack, cursor/viewport, PRQL chain
-├── keymap.rs          # Kakoune-style keybindings (tab → key → cmd)
-├── picker.rs          # fzf integration for fuzzy selection
-├── theme.rs           # Config loading, colors
-├── dynload.rs         # Plugin loader (C ABI), wraps .so in Rust API
-├── table.rs           # Table trait, Cell/ColType, SimpleTable
+│
+├── input/             # Key handling and parsing
+│   ├── handler.rs     #   Main dispatch: key → command → exec
+│   ├── keyhandler.rs  #   Key → command translation (context-aware)
+│   ├── keymap.rs      #   Kakoune-style keybindings (tab → key → cmd)
+│   ├── parser.rs      #   Command string → Command object
+│   └── prompt.rs      #   fzf prompts: filter, search, command picker
 │
 ├── command/           # Command pattern
 │   ├── mod.rs         #   Command trait
@@ -40,6 +41,10 @@ src/
 │   ├── nav.rs         #   Goto, GotoCol, Page navigation
 │   ├── view.rs        #   Pop, Swap, Dup
 │   └── io/mod.rs      #   From (load via plugin), Save
+│
+├── data/              # Data abstraction
+│   ├── dynload.rs     #   Plugin loader (C ABI), wraps .so in Rust API
+│   └── table.rs       #   Table trait, Cell/ColType, SimpleTable
 │
 ├── plugin/            # View-specific handlers (internal)
 │   ├── mod.rs         #   Plugin trait, Registry
@@ -51,14 +56,18 @@ src/
 │   └── system.rs      #   OS commands (ps, pacman, systemctl, etc.)
 │
 ├── render/
-│   ├── mod.rs
 │   ├── terminal.rs    #   Terminal init/restore
 │   └── renderer.rs    #   TUI rendering, lazy fetch via dynload
+│
+├── util/
+│   ├── picker.rs      #   fzf integration for fuzzy selection
+│   ├── pure.rs        #   Pure functions (PRQL compile, helpers)
+│   └── theme.rs       #   Config loading, colors
 │
 crates/
 ├── tv-plugin-api/     # C ABI types (PluginVtable, CellValue, etc.)
 ├── tv-polars/         # Polars plugin (~100MB .so) - parquet/CSV/gzip
-└── tv-sqlite/         # SQLite plugin (~2MB .so) - in-memory tables
+└── tv-sqlite/         # SQLite plugin (~2MB .so) - in-memory tables, sources
 ```
 
 ## Plugin Architecture

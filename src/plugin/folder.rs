@@ -7,7 +7,7 @@ use crate::command::Command;
 use crate::command::io::From;
 use crate::data::table::Table;
 use crate::plugin::Plugin;
-use crate::state::{ViewKind, ViewState};
+use crate::state::ViewState;
 use anyhow::{anyhow, Result};
 use std::path::{Path, PathBuf};
 
@@ -105,7 +105,7 @@ impl Command for Ls {
         } else {
             (format!("ls:{}", self.dir.display()), format!("source:ls:{}", self.dir.display()))
         };
-        app.stack.push(ViewState::build(id, name).kind(ViewKind::Folder).path(source_path));
+        app.stack.push(ViewState::build(id, name).path(source_path));
         Ok(())
     }
     fn to_str(&self) -> String {
