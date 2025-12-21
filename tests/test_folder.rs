@@ -1,6 +1,6 @@
 //! Folder view (ls) tests - key-based
 mod common;
-use common::run_keys;
+use common::{run_keys, footer};
 
 // Key navigation tests - :ls shows cwd (project root)
 #[test]
@@ -21,7 +21,7 @@ fn test_folder_sort_by_size() {
 #[test]
 fn test_folder_freq() {
     let out = run_keys(":ls<ret><right><right><right><right>F", "tests/data/basic.csv");
-    assert!(out.contains("Freq:dir"), "F on dir column: {}", out);
+    assert!(out.contains("freq dir"), "F on dir column: {}", out);
 }
 
 #[test]
@@ -32,8 +32,11 @@ fn test_folder_multi_select() {
 
 #[test]
 fn test_folder_filter() {
-    let out = run_keys(":ls<ret><backslash>name LIKE '%.csv'<ret>", "tests/data/basic.csv");
-    assert!(out.contains("rows)"), "Folder filter: {}", out);
+    // PRQL: use ~= for regex match
+    let out = run_keys(":ls<ret><backslash>name ~= '\\.csv$'<ret>", "tests/data/basic.csv");
+    let (_, status) = footer(&out);
+    // Filter to only csv files
+    assert!(status.contains("/"), "Folder filter should show row count: {}", status);
 }
 
 #[test]
