@@ -225,7 +225,7 @@ impl ViewState {
     pub fn total_rows(&self) -> usize {
         self.plugin.and_then(|pl| {
             let p = self.path.as_ref()?;
-            let q = format!("{} | aggregate {{n = count this}}", self.prql);
+            let q = format!("{} | cnt", self.prql);
             let sql = crate::util::pure::compile_prql(&q)?;
             let t = pl.query(&sql, p)?;
             match t.cell(0, 0) { Cell::Int(n) => Some(n as usize), _ => None }

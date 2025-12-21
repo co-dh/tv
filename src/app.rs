@@ -137,7 +137,7 @@ impl AppContext {
         v.path.as_ref()
             .and_then(|p| dynload::get_for(p).map(|plugin| (p, plugin)))
             .and_then(|(p, plugin)| {
-                let prql = format!("{} | aggregate {{n = count this}}", v.prql);
+                let prql = format!("{} | cnt", v.prql);
                 pure::compile_prql(&prql).and_then(|sql| plugin.query(&sql, p))
             })
             .and_then(|t| match t.cell(0, 0) { Cell::Int(n) => Some(n as usize), _ => None })

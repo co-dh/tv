@@ -162,7 +162,7 @@ pub fn hints(table: &dyn Table, col_name: &str, _row: usize, file: Option<&str>)
 
     // Try PRQL distinct for parquet files
     if let Some(path) = file.filter(|f| f.ends_with(".parquet")) {
-        let prql = format!("from df | group {{`{}`}} (take 1) | select {{`{}`}} | take 500", col_name, col_name);
+        let prql = format!("from df | uniq `{}` | take 500", col_name);
         if let Some(sql) = pure::compile_prql(&prql) {
             if let Some(plugin) = dynload::get() {
                 if let Some(t) = plugin.query(&sql, path) {
