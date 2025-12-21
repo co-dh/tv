@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/tv-plugin-api", "crates/tv-polars", "crates/tv-sqlite", "crates/tv-duckdb"]
+members = [".", "crates/tv-plugin-api", "crates/tv-polars", "crates/tv-sqlite", "crates/tv-duckdb", "crates/tv-plot"]
 
 [package]
 name = "tv"

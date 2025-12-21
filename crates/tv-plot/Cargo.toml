@@ -1,0 +1,13 @@
+[package]
+name = "tv-plot"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "tv-plot"
+path = "src/main.rs"
+
+[dependencies]
+plotters = { version = "0.3", default-features = false, features = ["bitmap_backend", "line_series"] }
+image = "0.24"
+base64 = "0.22"
