@@ -5,6 +5,9 @@ members = [".", "crates/tv-plugin-api", "crates/tv-polars", "crates/tv-sqlite", 
 name = "tabv"
 version = "0.1.0"
 edition = "2024"
+description = "Fast terminal table viewer for CSV and Parquet files"
+license = "MIT"
+repository = "https://github.com/co-dh/tv"
 
 [profile.release]
 # lto = true        # 95MB vs 119MB, +1m20s build - disabled for faster builds
@@ -12,7 +15,7 @@ edition = "2024"
 # codegen-units = 1
 
 [dependencies]
-tv-plugin-api = { path = "crates/tv-plugin-api" }
+tv-plugin-api = { version = "0.1.0", path = "crates/tv-plugin-api" }
 libloading = "0.8"
 prqlc = "0.13"
 ratatui = "0.30.0-beta.0"
