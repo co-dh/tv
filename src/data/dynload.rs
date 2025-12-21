@@ -9,6 +9,7 @@ use tv_plugin_api::*;
 
 static POLARS: OnceLock<Plugin> = OnceLock::new();
 static SQLITE: OnceLock<Plugin> = OnceLock::new();
+static DUCKDB: OnceLock<Plugin> = OnceLock::new();
 
 /// Plugin wrapper - unified for all backends
 pub struct Plugin {
@@ -83,15 +84,33 @@ pub fn load_sqlite(path: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Load duckdb plugin (alternative to polars for parquet)
+pub fn load_duckdb(path: &str) -> anyhow::Result<()> {
+    let p = Plugin::load(path)?;
+    DUCKDB.set(p).map_err(|_| anyhow::anyhow!("duckdb plugin already loaded"))?;
+    Ok(())
+}
+
 /// Get polars plugin
 pub fn get() -> Option<&'static Plugin> { POLARS.get() }
 
 /// Get sqlite plugin
 pub fn get_sqlite() -> Option<&'static Plugin> { SQLITE.get() }
 
-/// Get plugin for path (routes memory:/source: to sqlite, files to polars)
+/// Get duckdb plugin
+#[allow(dead_code)]
+pub fn get_duckdb() -> Option<&'static Plugin> { DUCKDB.get() }
+
+/// Get plugin for path (routes memory:/source: to sqlite, parquet to duckdb if loaded, else polars)
 pub fn get_for(path: &str) -> Option<&'static Plugin> {
-    if path.starts_with("memory:") || path.starts_with("source:") { SQLITE.get() } else { POLARS.get() }
+    if path.starts_with("memory:") || path.starts_with("source:") {
+        SQLITE.get()
+    } else if path.ends_with(".parquet") {
+        // Prefer duckdb for parquet if loaded, fallback to polars
+        DUCKDB.get().or_else(|| POLARS.get())
+    } else {
+        POLARS.get()
+    }
 }
 
 /// Register in-memory table with sqlite plugin for querying
@@ -226,7 +245,21 @@ pub fn load_plugins() {
     let exe_dir = exe.as_ref().and_then(|p| p.parent());
     let home_lib = dirs::home_dir().map(|h| h.join(".local/lib/tv"));
 
-    // Load polars plugin (optional)
+    // Load duckdb plugin (optional, preferred for parquet)
+    for p in [
+        exe_dir.map(|d| d.join("libtv_duckdb.so")),
+        exe_dir.map(|d| d.join("plugins/libtv_duckdb.so")),
+        home_lib.as_ref().map(|d| d.join("libtv_duckdb.so")),
+    ].into_iter().flatten() {
+        if p.exists() {
+            if let Err(e) = load_duckdb(p.to_str().unwrap_or("")) {
+                eprintln!("Warning: failed to load duckdb plugin: {}", e);
+            }
+            break;
+        }
+    }
+
+    // Load polars plugin (optional, fallback for parquet, handles csv)
     for p in [
         exe_dir.map(|d| d.join("libtv_polars.so")),
         exe_dir.map(|d| d.join("plugins/libtv_polars.so")),

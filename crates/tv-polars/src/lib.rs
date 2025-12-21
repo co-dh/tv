@@ -49,9 +49,9 @@ pub extern "C" fn tv_query(prql_ptr: *const c_char, path: *const c_char) -> Tabl
     if prql_ptr.is_null() || path.is_null() { return std::ptr::null_mut(); }
     let prql = unsafe { from_c_str(prql_ptr) };
     let path = unsafe { from_c_str(path) };
-    dbg(&format!("QUERY path={} prql={}", path, &prql[..prql.len().min(80)]));
 
     cache().get_or_exec(&path, &prql, |sql| {
+        dbg(&format!("EXEC path={} prql={}", path, &prql[..prql.len().min(80)]));
         // Load source
         let lf = if path.ends_with(".parquet") {
             LazyFrame::scan_parquet(PlPath::new(&path), Default::default()).ok()

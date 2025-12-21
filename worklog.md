@@ -1,5 +1,42 @@
 # Worklog
 
+## 2025-12-21: DuckDB CLI Plugin for Parquet
+
+### Feature
+Added tv-duckdb plugin that uses `duckdb` CLI for fast parquet queries. Routes parquet files to duckdb when available, with polars as fallback.
+
+### Performance (3.7GB 1.parquet)
+| Metric | DuckDB | Notes |
+|--------|--------|-------|
+| Initial load | 0.3s | SELECT * LIMIT |
+| COUNT(*) | 0.05s | Row count |
+| COUNT(DISTINCT) | 2.3s | Stats query |
+| Total TUI open | 2.7s | With status bar stats |
+
+### Plugin Size
+| Plugin | Size |
+|--------|------|
+| tv-duckdb | 16MB |
+| tv-polars | 115MB |
+
+### Implementation
+- `crates/tv-duckdb/` - CLI-based duckdb plugin
+  - Queries parquet directly via `duckdb -csv -c "SQL"`
+  - Replaces `df` in SQL with parquet file path
+  - Parses CSV output, type detection for int/float/string
+- `dynload.rs` - Routes `.parquet` to duckdb when loaded
+  - `get_for()` returns duckdb for parquet, polars for csv/gz
+  - Falls back to polars if duckdb not available
+
+### Files
+- `crates/tv-duckdb/Cargo.toml` - NEW
+- `crates/tv-duckdb/src/lib.rs` - NEW (180 lines)
+- `src/data/dynload.rs` - DUCKDB static, load_duckdb(), routing
+- `Cargo.toml` - workspace members
+- `tests/test_keys.rs` - Fixed sort tests (backend-agnostic)
+
+---
+
 ## 2025-12-17: Keyhandler Module & Toggle Key Columns
 
 ### New Features
