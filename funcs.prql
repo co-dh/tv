@@ -1,0 +1,9 @@
+# PRQL functions for tv
+# Prepended to all PRQL queries
+
+# Frequency: group by cols, count, sort desc
+let freq = func c tbl <relation> -> (
+  from tbl
+  group {c} (aggregate {Cnt = count this})
+  sort {-Cnt}
+)

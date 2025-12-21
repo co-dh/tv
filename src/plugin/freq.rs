@@ -67,12 +67,9 @@ impl Command for Frequency {
             (v.id, v.rows(), v.name.clone(), v.path.clone(), v.key_cols(), v.prql.clone())
         };
 
-        // Build PRQL: group by cols, count, sort desc
-        let grp = self.col_names.iter().map(|c| format!("`{}`", c)).collect::<Vec<_>>().join(", ");
-        let prql = format!(
-            "{} | group {{{}}} (aggregate {{Cnt = count this}}) | sort {{-Cnt}}",
-            parent_prql, grp
-        );
+        // Build PRQL using freq function from funcs.prql
+        let cols = self.col_names.iter().map(|c| format!("`{}`", c)).collect::<Vec<_>>().join(", ");
+        let prql = format!("{} | freq {{{}}}", parent_prql, cols);
 
         // Create lazy freq view
         let id = app.next_id();

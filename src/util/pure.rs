@@ -1,11 +1,21 @@
 //! Pure functions - no I/O, no state mutation
 //! These functions only compute and return values
 
-/// Compile PRQL to SQL
+use std::sync::OnceLock;
+
+/// PRQL function library (loaded once from funcs.prql)
+static FUNCS: OnceLock<String> = OnceLock::new();
+
+fn funcs() -> &'static str {
+    FUNCS.get_or_init(|| std::fs::read_to_string("funcs.prql").unwrap_or_default())
+}
+
+/// Compile PRQL to SQL (prepends funcs.prql)
 pub fn compile_prql(prql: &str) -> Option<String> {
     if prql.is_empty() { return None; }
+    let full = format!("{}\n{}", funcs(), prql);
     let opts = prqlc::Options::default().no_format().with_signature_comment(false);
-    match prqlc::compile(prql, &opts) {
+    match prqlc::compile(&full, &opts) {
         Ok(sql) => Some(sql),
         Err(e) => { eprintln!("PRQL compile error: {}", e); None }
     }
