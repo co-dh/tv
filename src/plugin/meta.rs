@@ -86,22 +86,18 @@ fn compute_meta(plugin: &'static dynload::Plugin, path: &str) -> Result<crate::d
     let cols = plugin.query(&schema_sql, path).map(|t| t.col_names()).unwrap_or_default();
     if cols.is_empty() { return Err(anyhow!("empty schema")); }
 
-    // Build SQL for each column's stats: count, distinct, null%, min, max
+    // Build stats for each column using PRQL meta function (this.col escapes keywords)
     let mut rows: Vec<Vec<Cell>> = Vec::new();
     for col in &cols {
-        let q = format!(
-            "SELECT count(\"{col}\") as cnt, count(distinct \"{col}\") as d, \
-             count(*) as total, min(\"{col}\") as mn, max(\"{col}\") as mx \
-             FROM df",
-            col = col
-        );
-        if let Some(t) = plugin.query(&q, path) {
+        let prql = format!("from df | meta this.`{}`", col);
+        let sql = pure::compile_prql(&prql).ok_or_else(|| anyhow!("prql compile failed"))?;
+        if let Some(t) = plugin.query(&sql, path) {
             if t.rows() > 0 {
-                let cnt = t.cell(0, 0);    // count non-null
-                let distinct = t.cell(0, 1);  // distinct
-                let total = t.cell(0, 2);  // total rows
-                let mn = t.cell(0, 3);     // min
-                let mx = t.cell(0, 4);     // max
+                let cnt = t.cell(0, 0);      // count non-null
+                let distinct = t.cell(0, 1); // distinct
+                let total = t.cell(0, 2);    // total rows
+                let mn = t.cell(0, 3);       // min
+                let mx = t.cell(0, 4);       // max
 
                 // Compute null%
                 let tot = match &total { Cell::Int(n) => *n, _ => 1 };

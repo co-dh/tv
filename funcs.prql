@@ -32,3 +32,15 @@ let stats = func c tbl <relation> -> (
     avg = average c
   }
 )
+
+# Column meta: cnt non-null, distinct, total, min, max
+let meta = func c tbl <relation> -> (
+  from tbl
+  aggregate {
+    cnt = s"COUNT({c})",
+    dist = count_distinct c,
+    total = count this,
+    min = min c,
+    max = max c
+  }
+)

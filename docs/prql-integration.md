@@ -51,8 +51,28 @@ from df | filter city == 'NYC' | select {name, value}
 3. On print/display, compile PRQL → SQL → execute via plugin
 4. Plugin handles file loading and query execution
 
+### 8. PRQL Functions
+- Define with `let name = func args tbl <relation> -> (pipeline)`
+- Functions can take column refs and table as args
+- Example: `let freq = func c tbl <relation> -> (from tbl | group {c} (aggregate {Cnt = count this}) | sort {-Cnt})`
+- Call: `from df | freq name` or `from df | freq {col1, col2}` for multi-column
+- Functions are prepended to queries via `funcs.prql` file
+
+### 9. Reserved Keyword Column Names
+- Columns named `count`, `select`, `from` etc conflict with PRQL keywords
+- Backticks alone don't help: `` `count` `` still conflicts
+- Solution: use `this.column` syntax: `this.count`, `this.select`
+- Works in function calls: `from df | meta this.count`
+
+### 10. S-Strings for Raw SQL
+- Use `s"SQL expression"` to embed raw SQL
+- Column refs interpolate: `s"COUNT({c})"` → `COUNT(colname)`
+- Useful when PRQL lacks a feature (e.g., COUNT(column) for non-null count)
+
 ## Gotchas
 
 - Empty `select {}` compiles to `SELECT NULL` - initialize cols list first
 - PRQL expects boolean for filter, not assignment
 - Backticks required for column names with spaces or special chars
+- `count col` gives `COUNT(*)` not `COUNT(col)` - use `s"COUNT({col})"` for non-null count
+- Reserved words as columns: use `this.keyword` not `` `keyword` ``
