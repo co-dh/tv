@@ -21,15 +21,24 @@ let cnt = func tbl <relation> -> (
   aggregate {n = count this}
 )
 
-# Column statistics
+# Numeric column stats (n, min, max, avg, std)
 let stats = func c tbl <relation> -> (
   from tbl
   aggregate {
-    n = count c,
+    n = count this,
     min = min c,
     max = max c,
-    sum = sum c,
-    avg = average c
+    avg = average c,
+    std = stddev c
+  }
+)
+
+# String column stats (count + distinct)
+let cntdist = func c tbl <relation> -> (
+  from tbl
+  aggregate {
+    n = count this,
+    dist = count_distinct c
   }
 )
 

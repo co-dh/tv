@@ -254,12 +254,11 @@ impl ViewState {
             let col_name = schema.col_name(col_idx)?;
             let col_type = schema.col_type(col_idx);
             let is_num = matches!(col_type, ColType::Int | ColType::Float);
-            // Query stats
+            // Query stats using PRQL functions
             let q = if is_num {
-                format!("{} | aggregate {{n = count this, min_v = min this.`{}`, max_v = max this.`{}`, avg_v = average this.`{}`, std_v = stddev this.`{}`}}",
-                    self.prql, col_name, col_name, col_name, col_name)
+                format!("{} | stats this.`{}`", self.prql, col_name)
             } else {
-                format!("{} | aggregate {{n = count this, dist = count_distinct this.`{}`}}", self.prql, col_name)
+                format!("{} | cntdist this.`{}`", self.prql, col_name)
             };
             let t = pl.query(&q, p)?;
             if is_num && t.cols() >= 5 {
