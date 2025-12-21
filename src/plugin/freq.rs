@@ -1,11 +1,8 @@
 //! Freq view plugin - frequency/value counts table
-//! Shows value distribution grouped by one or more columns.
+//! Lazy PRQL view: GROUP BY + COUNT with Pct/Bar computed via SQL
 
 use crate::app::AppContext;
-use crate::data::table::{Cell, ColType, SimpleTable, BoxTable};
-use crate::data::dynload;
 use crate::utils::unquote;
-use crate::util::pure;
 use crate::command::Command;
 use crate::command::executor::CommandExecutor;
 use crate::command::transform::FilterIn;
@@ -13,32 +10,6 @@ use crate::command::view::Pop;
 use crate::plugin::Plugin;
 use crate::state::ViewState;
 use anyhow::{anyhow, Result};
-
-/// Add Pct and Bar columns to freq result
-fn add_pct_bar(t: BoxTable) -> BoxTable {
-    let cnt_idx = t.col_names().iter().position(|n| n == "Cnt").unwrap_or(0);
-    let total: i64 = (0..t.rows()).filter_map(|r| match t.cell(r, cnt_idx) {
-        Cell::Int(n) => Some(n), _ => None
-    }).sum();
-
-    let mut names = t.col_names();
-    let mut types: Vec<ColType> = (0..t.cols()).map(|c| t.col_type(c)).collect();
-    names.push("Pct".into());
-    names.push("Bar".into());
-    types.push(ColType::Float);
-    types.push(ColType::Str);
-
-    let data: Vec<Vec<Cell>> = (0..t.rows()).map(|r| {
-        let mut row: Vec<Cell> = (0..t.cols()).map(|c| t.cell(r, c)).collect();
-        let cnt = match t.cell(r, cnt_idx) { Cell::Int(n) => n, _ => 0 };
-        let pct = if total > 0 { 100.0 * cnt as f64 / total as f64 } else { 0.0 };
-        row.push(Cell::Float(pct));
-        row.push(Cell::Str("#".repeat(pct.floor() as usize)));
-        row
-    }).collect();
-
-    Box::new(SimpleTable::new(names, types, data))
-}
 
 pub struct FreqPlugin;
 
@@ -95,23 +66,20 @@ impl Command for Frequency {
             let v = app.req()?;
             (v.id, v.rows(), v.name.clone(), v.path.clone(), v.key_cols(), v.prql.clone())
         };
-        let path_str = path.clone().unwrap_or_default();
 
-        // Build PRQL for freq: group by cols, count, sort desc (using parent prql as base)
-        let plugin = dynload::get_for(&path_str).ok_or_else(|| anyhow!("plugin not loaded"))?;
-        let grp_cols = self.col_names.iter().map(|c| format!("`{}`", c)).collect::<Vec<_>>().join(", ");
-        let prql = format!("{} | group {{{}}} (aggregate {{Cnt = count this}}) | sort {{-Cnt}}", parent_prql, grp_cols);
-        let sql = pure::compile_prql(&prql).ok_or_else(|| anyhow!("prql compile failed"))?;
-        let t = plugin.query(&sql, &path_str).ok_or_else(|| anyhow!("freq query failed"))?;
-        let result = add_pct_bar(dynload::to_box_table(&t));
+        // Build PRQL: group by cols, count, sort desc
+        let grp = self.col_names.iter().map(|c| format!("`{}`", c)).collect::<Vec<_>>().join(", ");
+        let prql = format!(
+            "{} | group {{{}}} (aggregate {{Cnt = count this}}) | sort {{-Cnt}}",
+            parent_prql, grp
+        );
 
-        // Create freq view (name = command shown in tabs)
+        // Create lazy freq view
         let id = app.next_id();
         let name = format!("freq {}", self.col_names.join(" "));
         let freq_col = self.col_names.first().cloned().unwrap_or_default();
         let mut nv = ViewState::build(id, name)
             .prql(&prql)
-            .data(result)
             .parent(parent_id, parent_rows, parent_name, Some(freq_col));
         if let Some(p) = path { nv = nv.path(p); }
         if !key_cols.is_empty() { nv.col_separator = Some(key_cols.len()); }
