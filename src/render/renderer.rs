@@ -50,17 +50,20 @@ impl Renderer {
     /// Render table data
     pub fn render_table(frame: &mut Frame, view: &mut ViewState, area: Rect, selected_cols: &HashSet<usize>, selected_rows: &HashSet<usize>, decimals: usize, theme: &Theme, show_tabs: bool) {
         // Fetch data via plugin using PRQL (compiled to SQL)
-        let (rows_needed, start) = (area.height as usize + 100, view.state.r0);
+        // Round to chunk boundaries to maximize cache hits when scrolling
+        const CHUNK: usize = 1000;
+        let (rows_needed, r0) = (area.height as usize + 100, view.state.r0);
+        let chunk_start = (r0 / CHUNK) * CHUNK;  // round down to chunk
+        let chunk_end = chunk_start + CHUNK.max(rows_needed);  // at least 1 chunk
         let path = view.path.clone();
         let prql = view.prql.clone();
         let lazy_offset = path.as_ref().and_then(|p| {
             let plugin = dynload::get_for(p)?;
             // PRQL: take start..end (1-based, positive range required)
-            let (s, e) = (start + 1, start + rows_needed + 1);
-            let q = format!("{} | take {}..{}", prql, s, e);
+            let q = format!("{} | take {}..{}", prql, chunk_start + 1, chunk_end + 1);
             let t = plugin.query(&q, p)?;
             view.data = dynload::to_box_table(&t);
-            Some(start)
+            Some(chunk_start)
         }).unwrap_or(0);
 
         // Use Table trait for polars-free rendering
