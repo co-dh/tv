@@ -120,7 +120,6 @@ impl Command for DelFiles {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         use crate::util::picker;
         use crate::data::dynload;
-        use crate::util::pure;
         let n = self.paths.len();
         let prompt = if n == 1 {
             let name = Path::new(&self.paths[0]).file_name().and_then(|s| s.to_str()).unwrap_or(&self.paths[0]);
@@ -135,11 +134,10 @@ impl Command for DelFiles {
                     if std::fs::remove_file(path).is_ok() { deleted += 1; }
                 }
                 app.msg(format!("Deleted {} file(s)", deleted));
-                // Refresh via source:ls
+                // Refresh via source:ls (plugin compiles PRQL internally)
                 let source_path = format!("source:ls:{}", self.dir.display());
                 if let Some(plugin) = dynload::get_sqlite() {
-                    let sql = pure::compile_prql("from df").unwrap_or_default();
-                    if let Some(t) = plugin.query(&sql, &source_path) {
+                    if let Some(t) = plugin.query("from df", &source_path) {
                         if let Some(view) = app.view_mut() {
                             let rows = t.rows();
                             view.data = dynload::to_box_table(&t);

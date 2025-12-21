@@ -8,3 +8,4 @@ crate-type = ["rlib", "cdylib"]
 
 [dependencies]
 lru = "0.16"
+prqlc = "0.13"

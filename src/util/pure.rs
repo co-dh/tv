@@ -1,26 +1,6 @@
 //! Pure functions - no I/O, no state mutation
 //! These functions only compute and return values
 
-use std::sync::OnceLock;
-
-/// PRQL function library (loaded once from funcs.prql)
-static FUNCS: OnceLock<String> = OnceLock::new();
-
-fn funcs() -> &'static str {
-    FUNCS.get_or_init(|| std::fs::read_to_string("funcs.prql").unwrap_or_default())
-}
-
-/// Compile PRQL to SQL (prepends funcs.prql)
-pub fn compile_prql(prql: &str) -> Option<String> {
-    if prql.is_empty() { return None; }
-    let full = format!("{}\n{}", funcs(), prql);
-    let opts = prqlc::Options::default().no_format().with_signature_comment(false);
-    match prqlc::compile(&full, &opts) {
-        Ok(sql) => Some(sql),
-        Err(e) => { eprintln!("PRQL compile error: {}", e); None }
-    }
-}
-
 /// Convert custom ~= operator to SQL LIKE
 /// `col ~= 'pattern'` → `col LIKE '%pattern%'`
 #[must_use]
@@ -213,37 +193,5 @@ mod tests {
     #[test]
     fn test_append_sort_after_filter() {
         assert_eq!(append_sort("from df | filter x > 5 | sort {`a`}", "b", false), "from df | filter x > 5 | sort {`b`}");
-    }
-
-    #[test]
-    fn test_compile_prql_sort_take_range() {
-        let prql = "from df | sort {size} | take 1..11";
-        let result = super::compile_prql(prql);
-        eprintln!("PRQL: {}", prql);
-        eprintln!("Result: {:?}", result);
-        assert!(result.is_some(), "compile_prql should succeed for: {}", prql);
-        // Check SQL has LIMIT/OFFSET
-        let sql = result.unwrap();
-        eprintln!("SQL: {}", sql);
-        assert!(sql.contains("LIMIT") || sql.contains("OFFSET"), "SQL should have LIMIT/OFFSET: {}", sql);
-    }
-
-    #[test]
-    fn test_compile_prql_take_with_offset() {
-        // Test take 301..351 should generate LIMIT with OFFSET
-        let prql = "from df | take 301..351";
-        let result = super::compile_prql(prql);
-        eprintln!("PRQL: {}", prql);
-        let sql = result.unwrap();
-        eprintln!("SQL: {}", sql);
-        // Should have OFFSET 300 and LIMIT 50
-        assert!(sql.contains("OFFSET") || sql.contains("offset"), "SQL should have OFFSET for range starting at 301: {}", sql);
-
-        // Test take 1..51 (offset 0) - no OFFSET needed
-        let prql = "from df | take 1..51";
-        let result = super::compile_prql(prql);
-        eprintln!("PRQL: {}", prql);
-        let sql = result.unwrap();
-        eprintln!("SQL (offset 0): {}", sql);
     }
 }

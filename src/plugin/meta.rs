@@ -2,7 +2,6 @@
 
 use crate::app::AppContext;
 use crate::utils::unquote;
-use crate::util::pure;
 use crate::command::Command;
 use crate::command::executor::CommandExecutor;
 use crate::command::transform::Xkey;
@@ -81,38 +80,28 @@ impl Command for Metadata {
 
 /// Compute column metadata via PRQL - returns BoxTable
 fn compute_meta(plugin: &'static dynload::Plugin, path: &str) -> Result<crate::data::table::BoxTable> {
-    // Get column names via PRQL schema query
-    let schema_sql = pure::compile_prql("from df | take 1").ok_or_else(|| anyhow!("prql compile failed"))?;
-    let cols = plugin.query(&schema_sql, path).map(|t| t.col_names()).unwrap_or_default();
-    if cols.is_empty() { return Err(anyhow!("empty schema")); }
+    // Get column names via PRQL (plugin compiles internally)
+    let cols = plugin.query("from df | take 1", path)
+        .ok_or_else(|| anyhow!("empty schema"))?
+        .col_names();
 
     // Build stats for each column using PRQL meta function (this.col escapes keywords)
-    let mut rows: Vec<Vec<Cell>> = Vec::new();
-    for col in &cols {
-        let prql = format!("from df | meta this.`{}`", col);
-        let sql = pure::compile_prql(&prql).ok_or_else(|| anyhow!("prql compile failed"))?;
-        if let Some(t) = plugin.query(&sql, path) {
-            if t.rows() > 0 {
-                let cnt = t.cell(0, 0);      // count non-null
-                let distinct = t.cell(0, 1); // distinct
-                let total = t.cell(0, 2);    // total rows
-                let mn = t.cell(0, 3);       // min
-                let mx = t.cell(0, 4);       // max
+    let rows: Vec<Vec<Cell>> = cols.iter().filter_map(|col| {
+        let t = plugin.query(&format!("from df | meta this.`{}`", col), path)?;
+        if t.rows() == 0 { return None; }
+        let cnt = t.cell(0, 0);      // count non-null
+        let distinct = t.cell(0, 1); // distinct
+        let total = t.cell(0, 2);    // total rows
+        let mn = t.cell(0, 3);       // min
+        let mx = t.cell(0, 4);       // max
 
-                // Compute null%
-                let tot = match &total { Cell::Int(n) => *n, _ => 1 };
-                let cnt_val = match &cnt { Cell::Int(n) => *n, _ => 0 };
-                let null_pct = if tot > 0 { format!("{:.1}", 100.0 * (tot - cnt_val) as f64 / tot as f64) } else { "0".into() };
+        // Compute null%
+        let tot = match &total { Cell::Int(n) => *n, _ => 1 };
+        let cnt_val = match &cnt { Cell::Int(n) => *n, _ => 0 };
+        let null_pct = if tot > 0 { format!("{:.1}", 100.0 * (tot - cnt_val) as f64 / tot as f64) } else { "0".into() };
 
-                rows.push(vec![
-                    Cell::Str(col.clone()),
-                    cnt, distinct,
-                    Cell::Str(null_pct),
-                    mn, mx,
-                ]);
-            }
-        }
-    }
+        Some(vec![Cell::Str(col.clone()), cnt, distinct, Cell::Str(null_pct), mn, mx])
+    }).collect();
 
     // Build table
     let names = vec!["column", "count", "distinct", "null%", "min", "max"]

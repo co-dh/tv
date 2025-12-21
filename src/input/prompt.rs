@@ -11,7 +11,7 @@ use crate::data::dynload;
 use crate::data::table::Table;
 use crate::input::handler::{dispatch, run};
 use crate::input::parser::parse;
-use crate::util::{picker, pure, theme};
+use crate::util::{picker, theme};
 
 /// Search with fzf (/)
 pub fn do_search(app: &mut AppContext) -> Result<()> {
@@ -160,18 +160,13 @@ pub fn prompt(app: &mut AppContext, prompt_str: &str) -> Result<Option<String>> 
 pub fn hints(table: &dyn Table, col_name: &str, _row: usize, file: Option<&str>) -> Vec<String> {
     let mut items = Vec::new();
 
-    // Try PRQL distinct for parquet files
-    if let Some(path) = file.filter(|f| f.ends_with(".parquet")) {
-        let prql = format!("from df | uniq `{}` | take 500", col_name);
-        if let Some(sql) = pure::compile_prql(&prql) {
-            if let Some(plugin) = dynload::get() {
-                if let Some(t) = plugin.query(&sql, path) {
-                    for r in 0..t.rows() {
-                        let v = t.cell(r, 0).format(10);
-                        if v != "null" { items.push(unquote(&v)); }
-                    }
-                }
-            }
+    // Try PRQL distinct for parquet files (plugin compiles PRQL)
+    if let Some(t) = file.filter(|f| f.ends_with(".parquet"))
+        .and_then(|path| dynload::get()?.query(&format!("from df | uniq `{}` | take 500", col_name), path))
+    {
+        for r in 0..t.rows() {
+            let v = t.cell(r, 0).format(10);
+            if v != "null" { items.push(unquote(&v)); }
         }
     } else {
         // Get distinct values from in-memory table

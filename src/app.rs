@@ -132,13 +132,12 @@ impl AppContext {
     /// Get total rows via PRQL count query (plugin caches it)
     fn total_rows(v: &ViewState) -> usize {
         use crate::data::dynload;
-        use crate::util::pure;
         use crate::data::table::{Table, Cell};
         v.path.as_ref()
             .and_then(|p| dynload::get_for(p).map(|plugin| (p, plugin)))
             .and_then(|(p, plugin)| {
                 let prql = format!("{} | cnt", v.prql);
-                pure::compile_prql(&prql).and_then(|sql| plugin.query(&sql, p))
+                plugin.query(&prql, p)
             })
             .and_then(|t| match t.cell(0, 0) { Cell::Int(n) => Some(n as usize), _ => None })
             .unwrap_or_else(|| v.rows())

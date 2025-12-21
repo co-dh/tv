@@ -1,12 +1,14 @@
 //! Plugin API for tv backends
-//! Simple interface: query(sql, path) -> table
+//! Simple interface: query(prql, path) -> table
 
 use std::ffi::{c_char, c_void, CStr, CString};
 use std::ptr;
 
 pub use lru::LruCache;
 
-pub const PLUGIN_API_VERSION: u32 = 1;
+pub mod prql;
+
+pub const PLUGIN_API_VERSION: u32 = 2;
 
 /// Cell type tag
 #[repr(C)]
@@ -38,11 +40,11 @@ pub type TableHandle = *mut c_void;
 pub struct PluginVtable {
     pub version: u32,
     pub name: *const c_char,
-    /// Execute SQL on source, return handle to result (null on error).
+    /// Execute PRQL on source, return handle to result (null on error).
     /// Result stays in plugin memory until result_free() is called.
-    /// sql: SQL query (table name is "df")
+    /// prql: PRQL query (table name is "df"), compiled to SQL by plugin
     /// path: file path or "memory:id" for registered tables
-    pub query: extern "C" fn(sql: *const c_char, path: *const c_char) -> TableHandle,
+    pub query: extern "C" fn(prql: *const c_char, path: *const c_char) -> TableHandle,
     /// Release result handle and free associated memory
     pub result_free: extern "C" fn(TableHandle),
     /// Number of rows in query result
@@ -58,8 +60,8 @@ pub struct PluginVtable {
     /// Free string returned by col_name or cell
     pub str_free: extern "C" fn(*mut c_char),
     /// Save query result to file (parquet/csv). Returns 0 on success, 1 on error.
-    /// sql: SQL query, path_in: source file, path_out: destination file
-    pub save: extern "C" fn(sql: *const c_char, path_in: *const c_char, path_out: *const c_char) -> u8,
+    /// prql: PRQL query (compiled by plugin), path_in: source file, path_out: destination file
+    pub save: extern "C" fn(prql: *const c_char, path_in: *const c_char, path_out: *const c_char) -> u8,
 }
 
 // === C string helpers ===

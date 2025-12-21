@@ -13,10 +13,10 @@ fn test_polars_plugin_query() {
 
     assert_eq!(vt.version, PLUGIN_API_VERSION);
 
-    // Query parquet file
-    let sql = CString::new("SELECT * FROM df LIMIT 5").unwrap();
+    // Query parquet file (PRQL - plugin compiles to SQL)
+    let prql = CString::new("from df | take 5").unwrap();
     let path = CString::new("tests/data/sample.parquet").unwrap();
-    let h = (vt.query)(sql.as_ptr(), path.as_ptr());
+    let h = (vt.query)(prql.as_ptr(), path.as_ptr());
     assert!(!h.is_null(), "query should return table");
 
     let rows = (vt.result_rows)(h);
@@ -45,10 +45,10 @@ fn test_plugin_csv_query() {
     let init: Symbol<extern "C" fn() -> PluginVtable> = unsafe { lib.get(b"tv_plugin_init") }.expect("get init");
     let vt = init();
 
-    // Query CSV file
-    let sql = CString::new("SELECT * FROM df LIMIT 3").unwrap();
+    // Query CSV file (PRQL - plugin compiles to SQL)
+    let prql = CString::new("from df | take 3").unwrap();
     let path = CString::new("tests/data/sample.csv").unwrap();
-    let h = (vt.query)(sql.as_ptr(), path.as_ptr());
+    let h = (vt.query)(prql.as_ptr(), path.as_ptr());
     assert!(!h.is_null(), "CSV query should return table");
 
     let rows = (vt.result_rows)(h);
@@ -64,10 +64,10 @@ fn test_plugin_freq_query() {
     let init: Symbol<extern "C" fn() -> PluginVtable> = unsafe { lib.get(b"tv_plugin_init") }.expect("get init");
     let vt = init();
 
-    // Freq query - GROUP BY
-    let sql = CString::new("SELECT cat_city, count(*) as Cnt FROM df GROUP BY cat_city ORDER BY Cnt DESC LIMIT 10").unwrap();
+    // Freq query using PRQL freq function
+    let prql = CString::new("from df | freq {cat_city} | take 10").unwrap();
     let path = CString::new("tests/data/sample.parquet").unwrap();
-    let h = (vt.query)(sql.as_ptr(), path.as_ptr());
+    let h = (vt.query)(prql.as_ptr(), path.as_ptr());
     assert!(!h.is_null(), "freq query should return table");
 
     let rows = (vt.result_rows)(h);

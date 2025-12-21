@@ -106,14 +106,12 @@ fn get_source(path: &str) -> Option<Arc<SimpleTable>> {
 
 // ── Query Result Cache (LRU) ─────────────────────────────────────────────────
 
-use std::num::NonZeroUsize;
-use tv_plugin_api::LruCache;
+use tv_plugin_api::prql::QueryCache;
 
-/// Query cache: (path, sql) -> SimpleTable
-static QUERY_CACHE: OnceLock<Mutex<LruCache<(String, String), Box<SimpleTable>>>> = OnceLock::new();
+static CACHE: OnceLock<QueryCache<SimpleTable>> = OnceLock::new();
 
-fn query_cache() -> &'static Mutex<LruCache<(String, String), Box<SimpleTable>>> {
-    QUERY_CACHE.get_or_init(|| Mutex::new(LruCache::new(NonZeroUsize::new(100).unwrap())))
+fn cache() -> &'static QueryCache<SimpleTable> {
+    CACHE.get_or_init(|| QueryCache::new(100))
 }
 
 /// Register table for "memory:id" path access
@@ -191,42 +189,29 @@ pub extern "C" fn tv_plugin_init() -> PluginVtable {
 #[unsafe(no_mangle)]
 pub extern "C" fn tv_save(_sql: *const c_char, _path_in: *const c_char, _path_out: *const c_char) -> u8 { 1 }
 
-/// Execute SQL on table (memory:id or source:type:args) - LRU cached
+/// Execute PRQL on table (memory:id or source:type:args) - LRU cached by PRQL
 #[unsafe(no_mangle)]
-pub extern "C" fn tv_query(sql: *const c_char, path: *const c_char) -> TableHandle {
-    if sql.is_null() || path.is_null() { return std::ptr::null_mut(); }
-    let sql = unsafe { from_c_str(sql) };
+pub extern "C" fn tv_query(prql_ptr: *const c_char, path: *const c_char) -> TableHandle {
+    if prql_ptr.is_null() || path.is_null() { return std::ptr::null_mut(); }
+    let prql = unsafe { from_c_str(prql_ptr) };
     let path = unsafe { from_c_str(path) };
-    dbg(&format!("QUERY path={} sql={}", path, &sql[..sql.len().min(80)]));
+    dbg(&format!("QUERY path={} prql={}", path, &prql[..prql.len().min(80)]));
 
-    let key = (path.clone(), sql.clone());
+    cache().get_or_exec(&path, &prql, |sql| {
+        // Get source table
+        let table: Arc<SimpleTable> = if path.starts_with("source:") {
+            get_source(&path)?
+        } else {
+            get_registered(parse_path(&path)?)?
+        };
+        dbg(&format!("SOURCE {}x{}", table.rows(), table.cols()));
 
-    // Check LRU query cache
-    if let Ok(mut guard) = query_cache().lock() {
-        if let Some(t) = guard.get(&key) {
-            dbg("QCACHE HIT");
-            return t.as_ref() as *const SimpleTable as TableHandle;
+        // Execute SQL
+        match exec_sql(&table, sql) {
+            Ok(r) => { dbg(&format!("RESULT {}x{}", r.rows(), r.cols())); Some(r) }
+            Err(e) => { dbg(&format!("SQL ERR {}", e)); None }
         }
-        dbg(&format!("QCACHE MISS (entries={})", guard.len()));
-    }
-
-    // Get source table
-    let table: Arc<SimpleTable> = if path.starts_with("source:") {
-        match get_source(&path) { Some(t) => t, None => return std::ptr::null_mut() }
-    } else {
-        let id = match parse_path(&path) { Some(id) => id, None => return std::ptr::null_mut() };
-        match get_registered(id) { Some(t) => t, None => return std::ptr::null_mut() }
-    };
-    dbg(&format!("SOURCE {}x{}", table.rows(), table.cols()));
-
-    // Execute SQL and cache in LRU
-    let result = match exec_sql(&table, &sql) { Ok(r) => r, Err(e) => { dbg(&format!("SQL ERR {}", e)); return std::ptr::null_mut(); } };
-    dbg(&format!("RESULT {}x{}", result.rows(), result.cols()));
-    if let Ok(mut guard) = query_cache().lock() {
-        guard.put(key.clone(), Box::new(result));
-        return guard.get(&key).unwrap().as_ref() as *const SimpleTable as TableHandle;
-    }
-    std::ptr::null_mut()
+    }).unwrap_or(std::ptr::null()) as TableHandle
 }
 
 /// No-op: query cache owns the result

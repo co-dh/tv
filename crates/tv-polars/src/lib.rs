@@ -2,9 +2,9 @@
 
 use polars::prelude::*;
 use std::ffi::c_char;
-use std::num::NonZeroUsize;
-use std::sync::Mutex;
-use tv_plugin_api::{*, LruCache};
+use std::sync::OnceLock;
+use tv_plugin_api::*;
+use tv_plugin_api::prql::QueryCache;
 
 /// Debug log to ~/.tv/debug.log
 fn dbg(msg: &str) {
@@ -16,14 +16,11 @@ fn dbg(msg: &str) {
     let _ = writeln!(f, "[{}] POLARS {}", ts, msg);
 }
 
-/// Query cache: (path, sql) -> DataFrame
-static CACHE: Mutex<Option<LruCache<(String, String), Box<DataFrame>>>> = Mutex::new(None);
+/// Query cache: (path, prql) -> DataFrame
+static CACHE: OnceLock<QueryCache<DataFrame>> = OnceLock::new();
 
-fn cache() -> &'static Mutex<Option<LruCache<(String, String), Box<DataFrame>>>> {
-    let mut guard = CACHE.lock().unwrap();
-    if guard.is_none() { *guard = Some(LruCache::new(NonZeroUsize::new(100).unwrap())); }
-    drop(guard);
-    &CACHE
+fn cache() -> &'static QueryCache<DataFrame> {
+    CACHE.get_or_init(|| QueryCache::new(100))
 }
 
 static NAME: &[u8] = b"polars\0";
@@ -46,52 +43,33 @@ pub extern "C" fn tv_plugin_init() -> PluginVtable {
     }
 }
 
-/// Execute SQL on file (cached with LRU)
+/// Execute PRQL on file (cached by PRQL with LRU)
 #[unsafe(no_mangle)]
-pub extern "C" fn tv_query(sql: *const c_char, path: *const c_char) -> TableHandle {
-    if sql.is_null() || path.is_null() { return std::ptr::null_mut(); }
-    let sql = unsafe { from_c_str(sql) };
+pub extern "C" fn tv_query(prql_ptr: *const c_char, path: *const c_char) -> TableHandle {
+    if prql_ptr.is_null() || path.is_null() { return std::ptr::null_mut(); }
+    let prql = unsafe { from_c_str(prql_ptr) };
     let path = unsafe { from_c_str(path) };
-    dbg(&format!("query path={} sql={}", path, &sql[..sql.len().min(80)]));
+    dbg(&format!("QUERY path={} prql={}", path, &prql[..prql.len().min(80)]));
 
-    let key = (path.clone(), sql.clone());
+    cache().get_or_exec(&path, &prql, |sql| {
+        // Load source
+        let lf = if path.ends_with(".parquet") {
+            LazyFrame::scan_parquet(PlPath::new(&path), Default::default()).ok()
+        } else if path.ends_with(".csv") {
+            CsvReadOptions::default()
+                .with_has_header(true)
+                .try_into_reader_with_file_path(Some(path.clone().into()))
+                .and_then(|r| r.finish())
+                .map(|df| df.lazy())
+                .ok()
+        } else { None }?;
 
-    // Check LRU cache
-    if let Ok(mut guard) = cache().lock() {
-        if let Some(ref mut c) = *guard {
-            if let Some(df) = c.get(&key) {
-                dbg("cache HIT");
-                return df.as_ref() as *const DataFrame as TableHandle;
-            }
-            dbg(&format!("cache MISS (entries={})", c.len()));
+        // Execute SQL
+        match exec_sql(lf, sql) {
+            Ok(df) => { dbg(&format!("RESULT rows={}", df.height())); Some(df) }
+            Err(e) => { dbg(&format!("SQL ERR {}", e)); None }
         }
-    }
-
-    // Execute query
-    let lf = if path.ends_with(".parquet") {
-        LazyFrame::scan_parquet(PlPath::new(&path), Default::default()).ok()
-    } else if path.ends_with(".csv") {
-        CsvReadOptions::default()
-            .with_has_header(true)
-            .try_into_reader_with_file_path(Some(path.clone().into()))
-            .and_then(|r| r.finish())
-            .map(|df| df.lazy())
-            .ok()
-    } else { None };
-
-    let df = lf.and_then(|lf| exec_sql(lf, &sql).ok());
-    if let Some(df) = df {
-        dbg(&format!("query OK rows={}", df.height()));
-        if let Ok(mut guard) = cache().lock() {
-            if let Some(ref mut c) = *guard {
-                c.put(key.clone(), Box::new(df));
-                return c.get(&key).unwrap().as_ref() as *const DataFrame as TableHandle;
-            }
-        }
-    } else {
-        dbg("query FAILED");
-    }
-    std::ptr::null_mut()
+    }).unwrap_or(std::ptr::null()) as TableHandle
 }
 
 fn exec_sql(lf: LazyFrame, sql: &str) -> PolarsResult<DataFrame> {
@@ -166,14 +144,18 @@ pub extern "C" fn tv_str_free(p: *mut c_char) {
     unsafe { free_c_str(p); }
 }
 
-/// Save query result to file (parquet/csv)
+/// Save query result to file (parquet/csv). Takes PRQL, compiles internally.
 #[unsafe(no_mangle)]
-pub extern "C" fn tv_save(sql: *const c_char, path_in: *const c_char, path_out: *const c_char) -> u8 {
-    if sql.is_null() || path_in.is_null() || path_out.is_null() { return 1; }
-    let sql = unsafe { from_c_str(sql) };
+pub extern "C" fn tv_save(prql_ptr: *const c_char, path_in: *const c_char, path_out: *const c_char) -> u8 {
+    use tv_plugin_api::prql;
+    if prql_ptr.is_null() || path_in.is_null() || path_out.is_null() { return 1; }
+    let prql_str = unsafe { from_c_str(prql_ptr) };
     let path_in = unsafe { from_c_str(path_in) };
     let path_out = unsafe { from_c_str(path_out) };
     dbg(&format!("save {} -> {}", path_in, path_out));
+
+    // Compile PRQL to SQL
+    let Some(sql) = prql::compile(&prql_str) else { return 1; };
 
     // Load source
     let lf = if path_in.ends_with(".parquet") {

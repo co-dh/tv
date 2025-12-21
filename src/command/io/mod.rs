@@ -4,7 +4,6 @@ use crate::app::AppContext;
 use crate::command::Command;
 use crate::data::dynload;
 use crate::state::ViewState;
-use crate::util::pure;
 use anyhow::{anyhow, Result};
 
 /// Load file command (CSV, Parquet, or gzipped CSV)
@@ -41,12 +40,10 @@ impl Command for Save {
 
         // For file-backed views, use plugin to save via PRQL
         if let Some(path_in) = &v.path {
-            if let Some(sql) = pure::compile_prql(&v.prql) {
-                if let Some(plugin) = dynload::get() {
-                    if plugin.save(&sql, path_in, out) {
-                        app.msg(format!("Saved {}", out));
-                        return Ok(());
-                    }
+            if let Some(plugin) = dynload::get() {
+                if plugin.save(&v.prql, path_in, out) {
+                    app.msg(format!("Saved {}", out));
+                    return Ok(());
                 }
             }
         }

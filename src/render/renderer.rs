@@ -58,8 +58,7 @@ impl Renderer {
             // PRQL: take start..end (1-based, positive range required)
             let (s, e) = (start + 1, start + rows_needed + 1);
             let q = format!("{} | take {}..{}", prql, s, e);
-            let sql = crate::util::pure::compile_prql(&q)?;
-            let t = plugin.query(&sql, p)?;
+            let t = plugin.query(&q, p)?;
             view.data = dynload::to_box_table(&t);
             Some(start)
         }).unwrap_or(0);
@@ -398,22 +397,13 @@ impl Renderer {
             ])
         }).collect();
 
-        // Add PRQL and SQL if mode 2
+        // Add PRQL if mode 2
         if !prql_lines.is_empty() {
             lines.push(Line::from(Span::styled("─────", Style::default().fg(RColor::DarkGray))));
             for pl in prql_lines {
                 // Truncate long lines
                 let s = if pl.len() > 55 { format!("{}…", &pl[..54]) } else { pl.to_string() };
                 lines.push(Line::from(Span::styled(s, prql_style)));
-            }
-            // Show compiled SQL
-            if let Some(sql) = crate::util::pure::compile_prql(prql) {
-                lines.push(Line::from(Span::styled("─ SQL ─", Style::default().fg(RColor::DarkGray))));
-                let sql_style = Style::default().fg(RColor::Yellow);
-                for chunk in sql.as_bytes().chunks(55) {
-                    let s = String::from_utf8_lossy(chunk);
-                    lines.push(Line::from(Span::styled(s.to_string(), sql_style)));
-                }
             }
         }
 
@@ -425,11 +415,10 @@ impl Renderer {
     fn render_commands_box(frame: &mut Frame, stack_len: usize, area: Rect, theme: &Theme) {
         use ratatui::widgets::{Block, Borders, Paragraph, Clear};
         use ratatui::text::{Line, Span};
-        use crate::util::pure;
 
         // Fetch commands from sqlite plugin
         let cmds: Vec<(String, String)> = dynload::get_sqlite()
-            .and_then(|p| pure::compile_prql("from df").and_then(|sql| p.query(&sql, "source:commands")))
+            .and_then(|p| p.query("from df", "source:commands"))
             .map(|t| (0..t.rows()).map(|r| (t.cell(r, 0).format(10), t.cell(r, 1).format(10))).collect())
             .unwrap_or_default();
 

@@ -226,8 +226,7 @@ impl ViewState {
         self.plugin.and_then(|pl| {
             let p = self.path.as_ref()?;
             let q = format!("{} | cnt", self.prql);
-            let sql = crate::util::pure::compile_prql(&q)?;
-            let t = pl.query(&sql, p)?;
+            let t = pl.query(&q, p)?;
             match t.cell(0, 0) { Cell::Int(n) => Some(n as usize), _ => None }
         }).unwrap_or_else(|| self.rows())
     }
@@ -237,8 +236,7 @@ impl ViewState {
         self.plugin.and_then(|pl| {
             let p = self.path.as_ref()?;
             let q = format!("{} | derive {{_row = row_number this}} | filter {} | select {{_row}}", self.prql, expr);
-            let sql = crate::util::pure::compile_prql(&q)?;
-            let t = pl.query(&sql, p)?;
+            let t = pl.query(&q, p)?;
             Some((0..t.rows()).filter_map(|r| {
                 match t.cell(r, 0) { Cell::Int(n) => Some((n - 1) as usize), _ => None }
             }).collect())
@@ -249,12 +247,10 @@ impl ViewState {
     #[must_use]
     pub fn col_stats_plugin(&self, col_idx: usize) -> ColStats {
         use crate::data::table::ColType;
-        use crate::util::pure;
         self.plugin.and_then(|pl| {
             let p = self.path.as_ref()?;
             // Get schema from current view's PRQL
-            let sql = pure::compile_prql(&format!("{} | take 1", self.prql))?;
-            let schema = pl.query(&sql, p)?;
+            let schema = pl.query(&format!("{} | take 1", self.prql), p)?;
             let col_name = schema.col_name(col_idx)?;
             let col_type = schema.col_type(col_idx);
             let is_num = matches!(col_type, ColType::Int | ColType::Float);
@@ -265,7 +261,7 @@ impl ViewState {
             } else {
                 format!("{} | aggregate {{n = count this, dist = count_distinct this.`{}`}}", self.prql, col_name)
             };
-            let t = pure::compile_prql(&q).and_then(|sql| pl.query(&sql, p))?;
+            let t = pl.query(&q, p)?;
             if is_num && t.cols() >= 5 {
                 let min = match t.cell(0, 1) { Cell::Float(f) => format!("{:.2}", f), Cell::Int(i) => i.to_string(), _ => String::new() };
                 let max = match t.cell(0, 2) { Cell::Float(f) => format!("{:.2}", f), Cell::Int(i) => i.to_string(), _ => String::new() };
