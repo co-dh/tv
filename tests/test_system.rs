@@ -72,6 +72,16 @@ fn test_ps_filter_last_col_visible() {
 }
 
 #[test]
+fn test_command_picker_partial_match() {
+    // Bug: typing partial "jour" and selecting "journalctl [n]" should run journalctl
+    // fzf_cmd extracts command word from selection when query isn't a valid command
+    let out = run_keys(":jour<ret>", "tests/data/basic.csv");
+    let (tab, _) = footer(&out);
+    // Should show journalctl view (not error about "jour" command)
+    assert!(tab.contains("journalctl"), "Partial 'jour' should select journalctl: {}", tab);
+}
+
+#[test]
 fn test_save_and_load() {
     let id = tid();
     let out_csv = format!("tmp/tv_save_{}.csv", id);

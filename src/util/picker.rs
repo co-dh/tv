@@ -8,14 +8,32 @@ pub fn fzf(items: Vec<String>, prompt: &str) -> Result<Option<String>> {
     fzf_with(items, prompt, None)
 }
 
-/// Simple fzf with optional pre-filled query (for testing)
-/// Returns query if it's a custom command (not in selections), else first selection
+/// Simple fzf - prefer selection, fallback to query for custom input
 pub fn fzf_with(items: Vec<String>, prompt: &str, pre_query: Option<&str>) -> Result<Option<String>> {
     let (sels, query) = fzf_multi_header(items, prompt, None, pre_query)?;
-    // If query differs from selections, user typed a custom command - return it
-    if !query.is_empty() && sels.iter().all(|s| s != &query) { Ok(Some(query)) }
-    else if let Some(s) = sels.into_iter().next() { Ok(Some(s)) }
+    // Prefer selection, fallback to query
+    if let Some(s) = sels.into_iter().next() { Ok(Some(s)) }
+    else if !query.is_empty() { Ok(Some(query)) }
     else { Ok(None) }
+}
+
+/// fzf for command picker - return query if it matches a command word, else selection's command
+pub fn fzf_cmd(items: Vec<String>, prompt: &str, pre_query: Option<&str>) -> Result<Option<String>> {
+    let (sels, query) = fzf_multi_header(items.clone(), prompt, None, pre_query)?;
+    // Check if query matches any command word (first word of items)
+    let cmd_words: Vec<&str> = items.iter().map(|s| s.split_whitespace().next().unwrap_or("")).collect();
+    if !query.is_empty() && cmd_words.contains(&query.as_str()) {
+        // Query is a valid command word - use it
+        Ok(Some(query))
+    } else if let Some(s) = sels.into_iter().next() {
+        // Use selection's command word (strip placeholders)
+        Ok(Some(s.split_whitespace().next().unwrap_or(&s).to_string()))
+    } else if !query.is_empty() {
+        // Custom command
+        Ok(Some(query))
+    } else {
+        Ok(None)
+    }
 }
 /// fzf with multi-select - returns selections only
 /// Use Tab to select multiple, or type comma-separated names

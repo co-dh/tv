@@ -43,7 +43,7 @@ pub fn do_command_picker(app: &mut AppContext) -> Result<()> {
     ].iter().map(|s| s.to_string()).collect();
     // Pop pre-filled query from test_input if available (for --keys mode)
     let pre_query = if app.test_input.is_empty() { None } else { Some(app.test_input.remove(0)) };
-    let result = picker::fzf_with(cmd_list, ": ", pre_query.as_deref());
+    let result = picker::fzf_cmd(cmd_list, ": ", pre_query.as_deref());
     app.needs_clear = true;
     if let Ok(Some(selected)) = result {
         // Try full command first, then just the command word (for items like "ps")
