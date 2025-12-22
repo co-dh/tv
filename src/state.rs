@@ -2,8 +2,8 @@ use crate::data::table::{BoxTable, ColStats, SimpleTable, Cell, Table};
 use crate::data::dynload::{self, Plugin};
 use std::collections::HashSet;
 
-/// Reserved rows in viewport (header + footer_header + status)
-pub const RESERVED_ROWS: usize = 3;
+/// Reserved rows in viewport (header + footer_header + status + tabs)
+pub const RESERVED_ROWS: usize = 4;
 
 /// Parent view info (for derived views like meta/freq)
 #[derive(Clone, Debug, Default)]
@@ -283,11 +283,18 @@ impl std::fmt::Display for ViewState {
 
 /// View stack
 #[derive(Default)]
-pub struct StateStack { stack: Vec<ViewState> }
+pub struct StateStack {
+    stack: Vec<ViewState>,
+    viewport: (u16, u16),  // cached viewport for new views when stack is empty
+}
 
 impl StateStack {
+    /// Set viewport (call when terminal resizes)
+    pub fn set_viewport(&mut self, rows: u16, cols: u16) { self.viewport = (rows, cols); }
+
     pub fn push(&mut self, mut v: ViewState) {
-        if let Some(cur) = self.stack.last() { v.state.viewport = cur.state.viewport; }
+        // Inherit viewport from current view, or use cached viewport if stack empty
+        v.state.viewport = self.stack.last().map(|c| c.state.viewport).unwrap_or(self.viewport);
         self.stack.push(v);
     }
     pub fn pop(&mut self) -> Option<ViewState> { self.stack.pop() }

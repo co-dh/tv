@@ -105,6 +105,7 @@ impl AppContext {
 
     /// Update viewport size (terminal rows/cols)
     pub fn viewport(&mut self, rows: u16, cols: u16) {
+        self.stack.set_viewport(rows, cols);  // cache for new views
         if let Some(v) = self.stack.cur_mut() { v.state.viewport = (rows, cols); }
     }
 
@@ -139,9 +140,10 @@ impl AppContext {
         }
     }
 
-    /// Get page size for page up/down (viewport - header - footer_header - status)
+    /// Get page size for page up/down (viewport - reserved rows)
     pub fn page(&self) -> isize {
-        self.view().map(|v| (v.state.viewport.0 as isize).saturating_sub(3)).unwrap_or(10)
+        use crate::state::RESERVED_ROWS;
+        self.view().map(|v| (v.state.viewport.0 as isize).saturating_sub(RESERVED_ROWS as isize)).unwrap_or(10)
     }
 
     // ── Elm Architecture: run/draw/handle_events ─────────────────────────────
