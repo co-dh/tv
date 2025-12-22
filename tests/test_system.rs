@@ -163,6 +163,64 @@ fn test_journalctl_command() {
 }
 
 #[test]
+fn test_journalctl_dates_valid() {
+    // Bug: native journal reader showed 1970 dates due to wrong timestamp field
+    let out = run_keys(":journalctl<ret>", "");
+    let year = Utc::now().format("%Y").to_string();
+    // First data row should have current year (not 1970)
+    let row1 = out.lines().nth(1).unwrap_or("");
+    assert!(!row1.contains("1970"), "Date should not be 1970: {}", row1);
+    // Should contain recent year somewhere in output
+    assert!(out.contains(&year) || out.contains("2024"), "Should have recent dates: {}", out);
+}
+
+#[test]
+fn test_journalctl_boot_index() {
+    // Boot 0 = current boot, should have today's date
+    // Bug: boot indices were arbitrary based on file read order
+    // Filter to boot == 0 to check current boot entries
+    let out = run_keys(":journalctl<ret>:filter boot == 0<ret>", "");
+    let today = Utc::now().format("%Y-%m-%d").to_string();
+    // First data row should have today's date
+    let row1 = out.lines().nth(1).unwrap_or("");
+    assert!(row1.contains(&today), "Boot 0 should have today's date {}: {}", today, row1);
+}
+
+#[test]
+fn test_source_page_down() {
+    // Bug: Ctrl+D (page down) doesn't work on source: views
+    let before = run_keys(":ps<ret>", "");
+    let after = run_keys(":ps<ret><c-d>", "");
+    // Extract row number from status line "0/393" -> 0
+    let get_row = |s: &str| {
+        s.lines().last()
+            .and_then(|l| l.split_whitespace().last())
+            .and_then(|s| s.split('/').next())
+            .and_then(|s| s.parse::<usize>().ok())
+            .unwrap_or(0)
+    };
+    let r1 = get_row(&before);
+    let r2 = get_row(&after);
+    assert!(r2 > r1, "Page down should move cursor: before={} after={}", r1, r2);
+}
+
+#[test]
+fn test_journalctl_freq_date_sort() {
+    // Bug: freq date can't sort on date column with [ or ]
+    // Navigate to date column, freq, then sort ascending on date
+    let out = run_keys(":journalctl<ret><right>F[", "");
+    // Extract first 5 dates from data rows
+    let dates: Vec<&str> = out.lines().skip(1).take(5)
+        .filter_map(|l| l.split_whitespace().next())
+        .collect();
+    assert!(dates.len() >= 3, "Should have dates: {:?}", dates);
+    // Dates should be sorted ascending (lexicographic works for YYYY-MM-DD)
+    for i in 1..dates.len() {
+        assert!(dates[i-1] <= dates[i], "Dates should be ascending: {:?}", dates);
+    }
+}
+
+#[test]
 fn test_pacman_sort_unicode_description() {
     // Sort on description column (col 9) which may contain unicode chars like fancy quotes
     // This crashed due to byte-slicing non-ASCII strings

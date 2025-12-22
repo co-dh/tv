@@ -93,9 +93,10 @@ pub fn xkey_cmd(keys: &[String]) -> String {
 }
 
 /// Append sort to PRQL, replacing previous sort if consecutive
+/// Uses this.col to avoid PRQL reserved names (date, time, etc)
 #[must_use]
 pub fn append_sort(prql: &str, col: &str, desc: bool) -> String {
-    let sort_expr = if desc { format!("-`{}`", col) } else { format!("`{}`", col) };
+    let sort_expr = if desc { format!("-this.`{}`", col) } else { format!("this.`{}`", col) };
     // Check if ends with | sort {...} - replace it
     if let Some(i) = prql.rfind(" | sort {") {
         format!("{} | sort {{{}}}", &prql[..i], sort_expr)
@@ -182,16 +183,16 @@ mod tests {
 
     #[test]
     fn test_append_sort_new() {
-        assert_eq!(append_sort("from df", "col", false), "from df | sort {`col`}");
+        assert_eq!(append_sort("from df", "col", false), "from df | sort {this.`col`}");
     }
 
     #[test]
     fn test_append_sort_replace() {
-        assert_eq!(append_sort("from df | sort {`a`}", "b", true), "from df | sort {-`b`}");
+        assert_eq!(append_sort("from df | sort {`a`}", "b", true), "from df | sort {-this.`b`}");
     }
 
     #[test]
     fn test_append_sort_after_filter() {
-        assert_eq!(append_sort("from df | filter x > 5 | sort {`a`}", "b", false), "from df | filter x > 5 | sort {`b`}");
+        assert_eq!(append_sort("from df | filter x > 5 | sort {`a`}", "b", false), "from df | filter x > 5 | sort {this.`b`}");
     }
 }

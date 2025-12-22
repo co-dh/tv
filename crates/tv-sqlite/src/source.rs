@@ -339,47 +339,58 @@ fn systemctl() -> Result<SimpleTable, std::io::Error> {
 
 // ── Journal Logs ─────────────────────────────────────────────────────────────
 
-/// Journal logs from journalctl (all entries with boot info)
+/// Journal logs via native journal reader (fast, no shell)
 fn journalctl(_n: usize) -> Result<SimpleTable, std::io::Error> {
-    // Build boot ID -> index map (0=current, -1=prev, ...)
+    use systemd_journal_reader::JournalReader;
+
+    // Build boot ID -> index map from journalctl (0=current, -1=prev, etc)
     let boots_text = run_cmd("journalctl", &["--list-boots", "--no-pager"])?;
     let boot_map: HashMap<String, i64> = boots_text.lines().skip(1).filter_map(|line| {
         let p: Vec<&str> = line.split_whitespace().collect();
         if p.len() >= 2 { Some((p[1].to_string(), p[0].parse().unwrap_or(0))) } else { None }
     }).collect();
 
-    // Parse JSON output for boot ID
-    let text = run_cmd("journalctl", &["--no-pager", "-o", "json"])?;
+    // Find journal directory
+    let machine_id = std::fs::read_to_string("/etc/machine-id")
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+    let journal_dir = std::path::PathBuf::from("/var/log/journal").join(&machine_id);
+
     let (mut boots, mut dates, mut times, mut units, mut msgs) = (vec![], vec![], vec![], vec![], vec![]);
-    for line in text.lines() {
-        let boot_id = extract_json(line, "_BOOT_ID").unwrap_or_default();
-        let boot_idx = boot_map.get(&boot_id).copied().unwrap_or(0);
-        let ts: i64 = extract_json(line, "__REALTIME_TIMESTAMP").and_then(|s| s.parse().ok()).unwrap_or(0);
-        let dt = chrono::DateTime::from_timestamp_micros(ts);
-        let date = dt.map(|d| d.format("%Y-%m-%d").to_string()).unwrap_or_default();
-        let time = dt.map(|d| d.format("%H:%M:%S").to_string()).unwrap_or_default();
-        let unit = extract_json(line, "SYSLOG_IDENTIFIER").unwrap_or_default();
-        let msg = extract_json(line, "MESSAGE").unwrap_or_default();
-        boots.push(Cell::Int(boot_idx));
-        dates.push(Cell::Str(date));
-        times.push(Cell::Str(time));
-        units.push(Cell::Str(unit));
-        msgs.push(Cell::Str(msg));
+
+    // Read all journal files
+    if let Ok(entries) = std::fs::read_dir(&journal_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().map(|e| e == "journal").unwrap_or(false) {
+                if let Ok(file) = std::fs::File::open(&path) {
+                    if let Ok(mut reader) = JournalReader::new(file) {
+                        while let Some(entry) = reader.next_entry() {
+                            let f = &entry.fields;
+                            let boot_id = f.get("_BOOT_ID").map(|v| v.to_string()).unwrap_or_default();
+                            let bidx = boot_map.get(&boot_id).copied().unwrap_or(0);
+                            let dt = chrono::DateTime::from_timestamp_micros(entry.realtime as i64);
+                            let date = dt.map(|d| d.format("%Y-%m-%d").to_string()).unwrap_or_default();
+                            let time = dt.map(|d| d.format("%H:%M:%S").to_string()).unwrap_or_default();
+                            let unit = f.get("SYSLOG_IDENTIFIER").map(|v| v.to_string()).unwrap_or_default();
+                            let msg = f.get("MESSAGE").map(|v| v.to_string()).unwrap_or_default();
+                            boots.push(Cell::Int(bidx));
+                            dates.push(Cell::Str(date));
+                            times.push(Cell::Str(time));
+                            units.push(Cell::Str(unit));
+                            msgs.push(Cell::Str(msg));
+                        }
+                    }
+                }
+            }
+        }
     }
+
     Ok(cols_to_table(vec![
         ("boot", ColType::Int, boots), ("date", ColType::Str, dates),
         ("time", ColType::Str, times), ("unit", ColType::Str, units),
         ("message", ColType::Str, msgs),
     ]))
-}
-
-/// Extract JSON field value (simple, no serde dependency)
-fn extract_json(json: &str, key: &str) -> Option<String> {
-    let pat = format!("\"{}\":\"", key);
-    let start = json.find(&pat)? + pat.len();
-    let rest = &json[start..];
-    let end = rest.find('"')?;
-    Some(rest[..end].replace("\\n", "\n").replace("\\t", "\t"))
 }
 
 // ── Pacman Packages ──────────────────────────────────────────────────────────
