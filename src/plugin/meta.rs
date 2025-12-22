@@ -62,8 +62,8 @@ impl Command for Metadata {
             (v.rows(), v.name.clone(), v.path.clone().unwrap_or_default())
         };
 
-        // Get column metadata via plugin SQL
-        let plugin = dynload::get().ok_or_else(|| anyhow!("plugin not loaded"))?;
+        // Get column metadata via plugin SQL (use correct plugin for path)
+        let plugin = dynload::get_for(&path).ok_or_else(|| anyhow!("plugin not loaded"))?;
         let meta = compute_meta(plugin, &path)?;
 
         // Register meta table in memory for filtering

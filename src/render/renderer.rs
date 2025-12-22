@@ -104,8 +104,10 @@ impl Renderer {
         }
 
         // Shift if cursor column exceeds screen
+        // Don't shift cursor's left edge past x=0 (would make it invisible)
         if let Some(cursor_right) = xs.get(state.cc + 1).copied().filter(|&r| r > screen_width) {
-            let shift = xs.iter().find(|&&x| x > cursor_right - screen_width).copied().unwrap_or(0);
+            let cursor_left = xs.get(state.cc).copied().unwrap_or(0);
+            let shift = (cursor_right - screen_width).min(cursor_left);
             for x in xs.iter_mut() { *x -= shift; }
         }
 
@@ -318,10 +320,10 @@ impl Renderer {
     fn col_width(table: &dyn Table, col_idx: usize, state: &TableState, decimals: usize, is_last: bool) -> u16 {
         const MIN_WIDTH: usize = 3;
         let col_name = table.col_name(col_idx).unwrap_or_default();
-        // Last col: no limit. Text cols: 80. Numeric: 30. Path: 80.
+        // Last col: no limit. Text cols: 120. Numeric: 30. Path: 120.
         let max_limit = if is_last { usize::MAX }
-            else if col_name == "path" { 80 }
-            else if table.col_type(col_idx) == ColType::Str { 80 }
+            else if col_name == "path" { 120 }
+            else if table.col_type(col_idx) == ColType::Str { 120 }
             else { 30 };
 
         let mut max_w = col_name.len();

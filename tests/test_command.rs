@@ -202,8 +202,9 @@ fn test_swap_views() {
     // Create filter view, then S to swap back to original
     let out = run_keys(":filter a > 2<ret>S", "tests/data/basic.csv");
     let (tab, _) = footer(&out);
-    // Two views: original and filtered, both show basic (may be truncated)
-    assert!(tab.matches("basic").count() >= 2, "Should show basic twice: {}", tab);
+    // Two views: original and filtered (filter shows command)
+    assert!(tab.contains("basic"), "Should show original: {}", tab);
+    assert!(tab.contains("filter a > 2"), "Should show filter: {}", tab);
 }
 
 // Test lr shows relative paths

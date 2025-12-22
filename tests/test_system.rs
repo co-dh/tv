@@ -45,6 +45,33 @@ fn test_meta_shows_all_cols() {
 }
 
 #[test]
+fn test_meta_on_ps() {
+    // M should work on source:ps (uses sqlite plugin, not polars)
+    let out = run_keys(":ps<ret>M", "tests/data/basic.csv");
+    let (tab, status) = footer(&out);
+    // Should be in meta view with 11 columns (ps has 11 cols)
+    assert!(tab.contains("meta"), "Should be in meta view: {}", tab);
+    assert!(status.contains("0/11"), "ps has 11 cols: {}", status);
+    // Should show column names
+    assert!(out.contains("user"), "Should show user col: {}", out);
+    assert!(out.contains("command"), "Should show command col: {}", out);
+}
+
+#[test]
+fn test_ps_filter_last_col_visible() {
+    // Bug: after filtering ps, navigating to last column shows blank
+    // ps | filter command ~= 'chro' then focus on command column
+    let out = run_keys(":ps<ret>:filter command ~= 'chro'<ret>llllllllll", "tests/data/basic.csv");
+    // Header should show command column
+    let hdr = header(&out);
+    assert!(hdr.contains("command"), "Header should show command: {}", hdr);
+    // Data row should not be blank - should contain 'chro' pattern
+    let data = out.lines().nth(1).unwrap_or("");
+    let non_ws = data.chars().filter(|c| !c.is_whitespace()).count();
+    assert!(non_ws > 0, "Last col should show data after filter: '{}'", data);
+}
+
+#[test]
 fn test_save_and_load() {
     let id = tid();
     let out_csv = format!("tmp/tv_save_{}.csv", id);

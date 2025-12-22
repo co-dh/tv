@@ -39,10 +39,10 @@ pub fn combine_filters(prev: Option<&str>, new: &str) -> String {
     }
 }
 
-/// Build display name for filtered view
+/// Build display name for filtered view (shows command)
 #[must_use]
-pub fn filter_name(parent: &str, expr: &str) -> String {
-    format!("{} & {}", parent, expr)
+pub fn filter_name(_parent: &str, expr: &str) -> String {
+    format!("filter {}", expr)
 }
 
 /// Build PRQL filter for multiple values (col == a || col == b)

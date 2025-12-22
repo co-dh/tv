@@ -126,3 +126,16 @@ fn test_page_down_scrolls() {
     let r2 = first_row(&with_pgdn);
     assert_ne!(r1, r2, "Page down should scroll view: before={:?} after={:?}", r1, r2);
 }
+
+#[test]
+fn test_last_col_visible() {
+    // Navigate to last column - should still show data, not blank screen
+    // ps has many columns, navigating to last should still render
+    let output = run_keys(":ps<ret>llllllllllllllllllll", "tests/data/basic.csv");
+    // Header line (line 0) should have the last column name visible
+    let hdr = output.lines().next().unwrap_or("");
+    // Data should be visible - at least first data row shouldn't be empty
+    let data = output.lines().nth(1).unwrap_or("");
+    let non_ws = data.chars().filter(|c| !c.is_whitespace()).count();
+    assert!(non_ws > 0, "Last col should show data, got blank. Header: '{}', Data: '{}'", hdr, data);
+}
