@@ -80,6 +80,20 @@ duckdb mydb.duckdb "CREATE VIEW trades AS SELECT * FROM read_parquet('data.parqu
 tabv "adbc:duckdb://mydb.duckdb?table=trades"
 ```
 
+#### Building ADBC SQLite Driver
+
+DuckDB works out of the box (uses system libduckdb.so). For SQLite ADBC support, build from source:
+
+```bash
+git clone --depth 1 https://github.com/apache/arrow-adbc.git
+cd arrow-adbc
+mkdir build && cd build
+cmake ../c -DADBC_DRIVER_SQLITE=ON -DCMAKE_BUILD_TYPE=Release
+make -j8
+sudo cp driver/sqlite/libadbc_driver_sqlite.so* /usr/local/lib/
+sudo ldconfig
+```
+
 ### Navigating Your Data
 
 Use arrow keys or vim-style movement:
