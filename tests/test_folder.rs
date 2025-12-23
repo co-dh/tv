@@ -90,3 +90,11 @@ fn test_folder_path_is_containing_dir() {
         }
     }
 }
+
+#[test]
+fn test_folder_backspace_parent() {
+    // Backspace should navigate to parent folder
+    let out = run_keys(":ls tests/data<ret><bs>", "");
+    // Should now be in tests folder (parent of tests/data)
+    assert!(out.contains("folder:") && out.contains("tests"), "Backspace should go to parent: {}", out);
+}

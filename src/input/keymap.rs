@@ -89,6 +89,8 @@ impl KeyMap {
             ("meta", "1", "sel_single"),
             // Corr view
             ("corr", "<ret>", "goto_col"),
+            // Folder view
+            ("folder", "<bs>", "parent"),
         ]
     }
 
@@ -233,6 +235,7 @@ impl KeyMap {
             "table" => hints.push(("<ret>".to_string(), "sel+edit", 0)),
             "folder" => {
                 hints.push(("<ret>".to_string(), "open", 0));
+                hints.push(("<bs>".to_string(), "parent", 0));
                 hints.push(("D".to_string(), "del file", 0));
             }
             _ => {}

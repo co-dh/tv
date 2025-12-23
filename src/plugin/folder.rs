@@ -81,6 +81,7 @@ impl Plugin for FolderPlugin {
                     Some(Box::new(From { file_path: path }))
                 }
             }
+            "parent" => dir.parent().map(|p| Box::new(Ls { dir: p.to_path_buf(), recursive: false }) as Box<dyn Command>),
             _ => None,
         }
     }
