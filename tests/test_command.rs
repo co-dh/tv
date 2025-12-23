@@ -313,3 +313,15 @@ fn test_aggregate_prql_name() {
         "Tab should show terse PRQL group/aggregate: {}", tab);
 }
 
+// Test multi-column freq enter filters by ALL key columns
+#[test]
+fn test_multi_column_freq_enter() {
+    // multi_freq.csv: a,b,c with (1,x)=2rows, (1,y)=1, (2,x)=1, (2,y)=2
+    // freq a,b shows 4 combinations, sorted by count desc: (1,x)=2, (2,y)=2, ...
+    // Enter on first row should filter to a=1 AND b=x (2 rows)
+    let out = run_keys(":freq a,b<ret><ret>", "tests/data/multi_freq.csv");
+    let (_, status) = footer(&out);
+    // Should show 2 rows (a=1 AND b=x)
+    assert!(status.ends_with("/2"), "Should filter to 2 rows: {}", status);
+}
+

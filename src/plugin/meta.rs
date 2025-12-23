@@ -67,7 +67,7 @@ impl Command for Metadata {
         let id = app.next_id();
         let view = state::ViewState::build(id, "meta")
             .data(meta)
-            .parent(0, parent_rows, &parent_name, None)
+            .parent(0, parent_rows, &parent_name, vec![])
             .register();
         app.stack.push(view);
         Ok(())

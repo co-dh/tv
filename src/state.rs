@@ -21,7 +21,7 @@ pub struct ParentInfo {
     pub id: usize,
     pub rows: usize,
     pub name: String,
-    pub freq_col: Option<String>,
+    pub freq_cols: Vec<String>,  // freq key columns (for multi-col filtering)
 }
 
 
@@ -137,8 +137,8 @@ impl ViewState {
     /// Set path for querying
     pub fn path(mut self, p: impl Into<String>) -> Self { self.path = Some(p.into()); self }
     /// Set parent info
-    pub fn parent(mut self, id: usize, rows: usize, name: impl Into<String>, freq_col: Option<String>) -> Self {
-        self.parent = Some(ParentInfo { id, rows, name: name.into(), freq_col }); self
+    pub fn parent(mut self, id: usize, rows: usize, name: impl Into<String>, freq_cols: Vec<String>) -> Self {
+        self.parent = Some(ParentInfo { id, rows, name: name.into(), freq_cols }); self
     }
     /// Register data for in-memory querying, set path to mem:id
     pub fn register(mut self) -> Self {
@@ -363,7 +363,7 @@ mod tests {
         let v = ViewState::build(0, "freq col")
             .prql("from df|group{col}(aggregate{Cnt=count this})|sort{-Cnt}")
             .data(empty())
-            .parent(1, 100, "parent", Some("col".into()));
+            .parent(1, 100, "parent", vec!["col".into()]);
         assert!(v.prql.contains("group"));
         assert!(v.is_row_sel());
     }
