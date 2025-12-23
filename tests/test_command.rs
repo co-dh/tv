@@ -50,8 +50,9 @@ fn test_select_single() {
 fn test_delcol_multi() {
     // Navigate to city (col 1), space to select, right to value (col 2), space, D
     let out = run_keys("<right><space><right><space>D", "tests/data/full.csv");
-    assert!(!out.contains("city"), "Should not have city: {}", out);
-    assert!(out.contains("name"), "Should still have name");
+    let hdr = header(&out);
+    assert!(!hdr.contains("city"), "Header should not have city: {}", hdr);
+    assert!(hdr.contains("name"), "Header should have name: {}", hdr);
 }
 
 #[test]
