@@ -10,6 +10,7 @@ use tv_plugin_api::*;
 static POLARS: OnceLock<Plugin> = OnceLock::new();
 static SQLITE: OnceLock<Plugin> = OnceLock::new();
 static DUCKDB: OnceLock<Plugin> = OnceLock::new();
+static ADBC: OnceLock<Plugin> = OnceLock::new();
 
 /// Plugin wrapper - unified for all backends
 pub struct Plugin {
@@ -92,6 +93,13 @@ pub fn load_duckdb(path: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Load adbc plugin (for external databases: postgres://, mysql://)
+pub fn load_adbc(path: &str) -> anyhow::Result<()> {
+    let p = Plugin::load(path)?;
+    ADBC.set(p).map_err(|_| anyhow::anyhow!("adbc plugin already loaded"))?;
+    Ok(())
+}
+
 /// Get polars plugin
 pub fn get() -> Option<&'static Plugin> { POLARS.get() }
 
@@ -102,11 +110,16 @@ pub fn get_sqlite() -> Option<&'static Plugin> { SQLITE.get() }
 #[allow(dead_code)]
 pub fn get_duckdb() -> Option<&'static Plugin> { DUCKDB.get() }
 
-/// Get plugin for path (routes memory:/source: to sqlite, else polars)
-/// DuckDB only used when explicitly requested via get_duckdb()
+/// Get adbc plugin
+pub fn get_adbc() -> Option<&'static Plugin> { ADBC.get() }
+
+/// Get plugin for path (routes by prefix)
+/// memory:/source: → sqlite, adbc: → adbc, else polars
 pub fn get_for(path: &str) -> Option<&'static Plugin> {
     if path.starts_with("memory:") || path.starts_with("source:") {
         SQLITE.get()
+    } else if path.starts_with("adbc:") {
+        ADBC.get()
     } else {
         POLARS.get()
     }
@@ -283,5 +296,19 @@ pub fn load_plugins() {
         eprintln!("Error: sqlite plugin not found. Searched:");
         for p in &sqlite_paths { eprintln!("  {:?}", p); }
         std::process::exit(1);
+    }
+
+    // Load adbc plugin (optional, for postgres://, mysql://)
+    for p in [
+        exe_dir.map(|d| d.join("libtv_adbc.so")),
+        exe_dir.map(|d| d.join("plugins/libtv_adbc.so")),
+        home_lib.as_ref().map(|d| d.join("libtv_adbc.so")),
+    ].into_iter().flatten() {
+        if p.exists() {
+            if let Err(e) = load_adbc(p.to_str().unwrap_or("")) {
+                eprintln!("Warning: failed to load adbc plugin: {}", e);
+            }
+            break;
+        }
     }
 }
