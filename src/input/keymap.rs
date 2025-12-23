@@ -200,6 +200,7 @@ impl KeyMap {
             "save" => Some(("save", 4)),
             // Transform
             "xkey" => Some(("xkey", 3)),
+            "aggregate" => Some(("agg", 3)),
             // Display
             "decimals_inc" => Some(("dec++", 5)),
             "decimals_dec" => Some(("dec--", 5)),
