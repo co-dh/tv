@@ -37,8 +37,8 @@ pub struct AppContext {
 impl Default for AppContext {
     /// Create app context with default settings, keymap, theme, plugins
     fn default() -> Self {
-        let history_file = dirs::home_dir()
-            .map(|h| h.join(".tv").join("history"))
+        let history_file = std::env::var("HOME").ok()
+            .map(|h| PathBuf::from(h).join(".tv").join("history"))
             .unwrap_or_else(|| PathBuf::from("history"));
         if let Some(dir) = history_file.parent() { let _ = std::fs::create_dir_all(dir); }
         Self {

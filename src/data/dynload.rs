@@ -255,7 +255,7 @@ pub fn to_box_table(pt: &PluginTable) -> BoxTable {
 pub fn load_plugins() {
     let exe = std::env::current_exe().ok();
     let exe_dir = exe.as_ref().and_then(|p| p.parent());
-    let home_lib = dirs::home_dir().map(|h| h.join(".local/lib/tv"));
+    let home_lib = std::env::var("HOME").ok().map(|h| std::path::PathBuf::from(h).join(".local/lib/tv"));
 
     // DuckDB disabled by default - use polars for type detection
     // To enable: add CLI flag --duckdb

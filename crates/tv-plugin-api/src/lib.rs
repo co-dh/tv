@@ -82,3 +82,18 @@ pub unsafe fn from_c_str(p: *const c_char) -> String {
 pub unsafe fn free_c_str(p: *mut c_char) {
     if !p.is_null() { unsafe { drop(CString::from_raw(p)); } }
 }
+
+/// Log message to ~/.tv/debug.log with timestamp (std only, no chrono/dirs)
+pub fn dbg(prefix: &str, msg: &str) {
+    use std::io::Write;
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let Some(home) = std::env::var("HOME").ok() else { return };
+    let dir = format!("{}/.tv", home);
+    let _ = std::fs::create_dir_all(&dir);
+    let log = format!("{}/debug.log", dir);
+    let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&log) else { return };
+    let d = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+    let secs = d.as_secs();
+    let (h, m, s) = ((secs / 3600) % 24, (secs / 60) % 60, secs % 60);
+    let _ = writeln!(f, "[{:02}:{:02}:{:02}.{:03}] {} {}", h, m, s, d.subsec_millis(), prefix, msg);
+}

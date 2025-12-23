@@ -12,25 +12,26 @@
 
 
 use std::ffi::{c_char, c_void};
-use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::OnceLock;
 use tv_plugin_api::*;
+use tv_plugin_api::prql::QueryCache;
 use adbc_core::{Driver, Database, Connection, Statement};
 use adbc_core::options::{AdbcVersion, OptionDatabase, OptionValue};
 use adbc_driver_manager::ManagedDriver;
 use arrow_array::*;
 use arrow_schema::*;
 
-// Result storage - maps handle to query result
-static RESULTS: Mutex<Option<HashMap<usize, QueryResult>>> = Mutex::new(None);
-static NEXT_ID: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(1);
+// Query cache: (path, prql) -> QueryResult
+static CACHE: OnceLock<QueryCache<QueryResult>> = OnceLock::new();
+fn cache() -> &'static QueryCache<QueryResult> {
+    CACHE.get_or_init(|| QueryCache::new(100))
+}
 
 /// Query result with schema and data
 struct QueryResult {
     schema: SchemaRef,
     batches: Vec<RecordBatch>,
     rows: usize,
-    is_sqlite: bool, // SQLite ADBC has allocator mismatch, must leak
 }
 
 impl QueryResult {
@@ -124,21 +125,12 @@ fn cell_from_batch(batch: &RecordBatch, row: usize, col: usize) -> CCell {
     }
 }
 
-/// Store result and return handle
-fn store_result(r: QueryResult) -> *mut c_void {
-    let id = NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    let mut guard = RESULTS.lock().unwrap();
-    let map = guard.get_or_insert_with(HashMap::new);
-    map.insert(id, r);
-    id as *mut c_void
-}
-
-/// Get result by handle
+/// Get result from handle (cache owns the data)
 fn get_result<F, T>(h: *mut c_void, f: F) -> T
 where F: FnOnce(&QueryResult) -> T, T: Default {
-    let id = h as usize;
-    let guard = RESULTS.lock().unwrap();
-    guard.as_ref().and_then(|m| m.get(&id)).map(f).unwrap_or_default()
+    if h.is_null() { return T::default(); }
+    let r = unsafe { &*(h as *const QueryResult) };
+    f(r)
 }
 
 /// Parse ADBC path: adbc:driver://conn_string?table=name
@@ -234,69 +226,53 @@ fn query_adbc(driver_name: &str, conn_str: &str, sql: &str) -> Result<QueryResul
         .collect::<Result<Vec<_>, _>>()?;
     let rows = batches.iter().map(|b| b.num_rows()).sum();
 
-    let is_sqlite = driver_name == "adbc_driver_sqlite";
-    Ok(QueryResult { schema, batches, rows, is_sqlite })
+    Ok(QueryResult { schema, batches, rows })
 }
 
 // === Plugin exports ===
 
-/// Query external database via ADBC
-/// path: adbc:driver://connection?table=tablename
-/// prql: PRQL query (from df → replaced with actual table name)
+/// Replace "df" with actual table name in SQL
+fn replace_table(sql: &str, table: &str) -> String {
+    sql.replace("\"df\"", &format!("\"{}\"", table))
+       .replace(" df ", &format!(" \"{}\" ", table))
+       .replace(" df\n", &format!(" \"{}\"\n", table))
+       .replace("FROM df", &format!("FROM \"{}\"", table))
+}
+
+/// Query external database via ADBC (cached)
 #[no_mangle]
 pub extern "C" fn tv_query(prql_ptr: *const c_char, path_ptr: *const c_char) -> *mut c_void {
+    if prql_ptr.is_null() || path_ptr.is_null() { return std::ptr::null_mut(); }
     let prql = unsafe { from_c_str(prql_ptr) };
     let path = unsafe { from_c_str(path_ptr) };
 
-    // Parse path
+    // Parse path to get driver info
     let (driver, conn_str, table) = match parse_path(&path) {
         Some(p) => p,
-        None => {
-            eprintln!("ADBC: invalid path format. Use adbc:driver://conn?table=name");
-            return std::ptr::null_mut();
-        }
+        None => return std::ptr::null_mut(),
     };
+    if table.is_empty() { return std::ptr::null_mut(); }
 
-    if table.is_empty() {
-        eprintln!("ADBC: missing ?table= in path");
-        return std::ptr::null_mut();
-    }
-
-    // Compile PRQL to SQL, replace "df" with actual table name
-    let sql = match prql::compile(&prql) {
-        Some(s) => s.replace("\"df\"", &format!("\"{}\"", table))
-                    .replace(" df ", &format!(" \"{}\" ", table))
-                    .replace(" df\n", &format!(" \"{}\"\n", table))
-                    .replace("FROM df", &format!("FROM \"{}\"", table)),
-        None => {
-            eprintln!("ADBC: PRQL compile failed");
-            return std::ptr::null_mut();
+    cache().get_or_exec(&path, &prql, |sql| {
+        dbg("ADBC", &format!("EXEC [{}] {}", driver.strip_prefix("adbc_driver_").unwrap_or(&driver),
+            prql.lines().next().unwrap_or(&prql)));
+        let sql = replace_table(sql, &table);
+        match query_adbc(&driver, &conn_str, &sql) {
+            Ok(r) => {
+                dbg("ADBC", &format!("ok: {} rows", r.rows));
+                Some(r)
+            }
+            Err(e) => {
+                dbg("ADBC", &format!("err: {}", e));
+                None
+            }
         }
-    };
-
-    // Execute query
-    match query_adbc(&driver, &conn_str, &sql) {
-        Ok(r) => store_result(r),
-        Err(e) => {
-            eprintln!("ADBC error: {}", e);
-            std::ptr::null_mut()
-        }
-    }
+    }).unwrap_or(std::ptr::null()) as *mut c_void
 }
 
+/// No-op: cache owns the QueryResult
 #[no_mangle]
-pub extern "C" fn tv_result_free(h: *mut c_void) {
-    let id = h as usize;
-    let mut guard = RESULTS.lock().unwrap();
-    if let Some(map) = guard.as_mut() {
-        // Check if we should leak (SQLite has allocator mismatch)
-        let should_leak = map.get(&id).map(|r| r.is_sqlite).unwrap_or(false);
-        if !should_leak {
-            map.remove(&id);
-        }
-        // SQLite results are leaked to avoid segfault on drop
-    }
-}
+pub extern "C" fn tv_result_free(_h: *mut c_void) {}
 
 #[no_mangle]
 pub extern "C" fn tv_result_rows(h: *mut c_void) -> usize {

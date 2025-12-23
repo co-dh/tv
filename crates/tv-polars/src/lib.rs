@@ -6,16 +6,6 @@ use std::sync::OnceLock;
 use tv_plugin_api::*;
 use tv_plugin_api::prql::QueryCache;
 
-/// Debug log to ~/.tv/debug.log
-fn dbg(msg: &str) {
-    use std::io::Write;
-    let Some(home) = dirs::home_dir() else { return };
-    let log = home.join(".tv").join("debug.log");
-    let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(log) else { return };
-    let ts = chrono::Local::now().format("%H:%M:%S%.3f");
-    let _ = writeln!(f, "[{}] POLARS {}", ts, msg);
-}
-
 /// Query cache: (path, prql) -> DataFrame
 static CACHE: OnceLock<QueryCache<DataFrame>> = OnceLock::new();
 
@@ -51,7 +41,7 @@ pub extern "C" fn tv_query(prql_ptr: *const c_char, path: *const c_char) -> Tabl
     let path = unsafe { from_c_str(path) };
 
     cache().get_or_exec(&path, &prql, |sql| {
-        dbg(&format!("EXEC path={} prql={}", path, &prql[..prql.len().min(80)]));
+        dbg("POLARS", &format!("EXEC path={} prql={}", path, &prql[..prql.len().min(80)]));
         // Load source (gz auto-detected by magic bytes)
         let lf = if path.ends_with(".parquet") {
             LazyFrame::scan_parquet(PlPath::new(&path), Default::default()).ok()
@@ -67,7 +57,7 @@ pub extern "C" fn tv_query(prql_ptr: *const c_char, path: *const c_char) -> Tabl
         // Execute SQL
         match exec_sql(lf, sql) {
             Ok(df) => Some(df),
-            Err(e) => { dbg(&format!("ERR {}", e)); None }
+            Err(e) => { dbg("POLARS", &format!("ERR {}", e)); None }
         }
     }).unwrap_or(std::ptr::null()) as TableHandle
 }
@@ -152,7 +142,7 @@ pub extern "C" fn tv_save(prql_ptr: *const c_char, path_in: *const c_char, path_
     let prql_str = unsafe { from_c_str(prql_ptr) };
     let path_in = unsafe { from_c_str(path_in) };
     let path_out = unsafe { from_c_str(path_out) };
-    dbg(&format!("save {} -> {}", path_in, path_out));
+    dbg("POLARS", &format!("save {} -> {}", path_in, path_out));
 
     // Compile PRQL to SQL
     let Some(sql) = prql::compile(&prql_str) else { return 1; };

@@ -3,6 +3,8 @@ mod common;
 use common::{run_keys, footer, header};
 use std::fs;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
+use std::path::PathBuf;
 use chrono::Utc;
 
 // tid() only for save tests (need unique filenames)
@@ -274,11 +276,14 @@ fn test_pacman_rsize_column() {
 #[test]
 fn test_cargo_command() {
     // Pre-populate cache with known value
-    let cache_dir = dirs::cache_dir().unwrap().join("tv");
+    let cache_dir = std::env::var("XDG_CACHE_HOME").ok()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(std::env::var("HOME").unwrap()).join(".cache"))
+        .join("tv");
     fs::create_dir_all(&cache_dir).ok();
     let cache_path = cache_dir.join("cargo_versions.csv");
     // Add adler2 with known latest version (visible in output)
-    let now = Utc::now().timestamp();
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
     fs::write(&cache_path, format!("name,version,timestamp\nadler2,99.0.0,{}\n", now)).ok();
 
     // :cargo to list project dependencies (like pacman for Rust)

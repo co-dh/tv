@@ -3,15 +3,8 @@
 
 mod source;
 
-/// Debug log to ~/.tv/debug.log
-fn dbg(msg: &str) {
-    use std::io::Write;
-    let Some(home) = dirs::home_dir() else { return };
-    let log = home.join(".tv").join("debug.log");
-    let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(log) else { return };
-    let ts = chrono::Local::now().format("%H:%M:%S%.3f");
-    let _ = writeln!(f, "[{}] {}", ts, msg);
-}
+/// Debug log wrapper for this plugin
+fn log(msg: &str) { tv_plugin_api::dbg("SQLITE", msg); }
 
 use rusqlite::ffi;
 use rusqlite::vtab::{read_only_module, Context, CreateVTab, IndexInfo, VTab, VTabConfig, VTabConnection, VTabCursor, VTabKind, Values};
@@ -92,13 +85,13 @@ fn get_source(path: &str) -> Option<Arc<SimpleTable>> {
     // Return cached if fresh
     if let Some(entry) = cache.get(path) {
         if entry.ts.elapsed() < ttl {
-            dbg(&format!("SRC CACHE HIT {} {}x{}", path, entry.table.rows(), entry.table.cols()));
+            log(&format!("SRC CACHE HIT {} {}x{}", path, entry.table.rows(), entry.table.cols()));
             return Some(entry.table.clone());
         }
     }
 
     // Generate new and cache
-    dbg(&format!("SRC CACHE MISS {}", path));
+    log(&format!("SRC CACHE MISS {}", path));
     let table = Arc::new(source::query(path)?);
     cache.insert(path.to_string(), CachedSource { table: table.clone(), ts: std::time::Instant::now() });
     Some(table)
@@ -195,7 +188,7 @@ pub extern "C" fn tv_query(prql_ptr: *const c_char, path: *const c_char) -> Tabl
     if prql_ptr.is_null() || path.is_null() { return std::ptr::null_mut(); }
     let prql = unsafe { from_c_str(prql_ptr) };
     let path = unsafe { from_c_str(path) };
-    dbg(&format!("QUERY path={} prql={}", path, &prql[..prql.len().min(80)]));
+    log(&format!("QUERY path={} prql={}", path, &prql[..prql.len().min(80)]));
 
     cache().get_or_exec(&path, &prql, |sql| {
         // Get source table
@@ -204,12 +197,12 @@ pub extern "C" fn tv_query(prql_ptr: *const c_char, path: *const c_char) -> Tabl
         } else {
             get_registered(parse_path(&path)?)?
         };
-        dbg(&format!("SOURCE {}x{}", table.rows(), table.cols()));
+        log(&format!("SOURCE {}x{}", table.rows(), table.cols()));
 
         // Execute SQL
         match exec_sql(&table, sql) {
-            Ok(r) => { dbg(&format!("RESULT {}x{}", r.rows(), r.cols())); Some(r) }
-            Err(e) => { dbg(&format!("SQL ERR {}", e)); None }
+            Ok(r) => { log(&format!("RESULT {}x{}", r.rows(), r.cols())); Some(r) }
+            Err(e) => { log(&format!("SQL ERR {}", e)); None }
         }
     }).unwrap_or(std::ptr::null()) as TableHandle
 }
