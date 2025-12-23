@@ -354,3 +354,19 @@ fn test_aggregate_requires_key() {
             "Should show key error: {}", status);
 }
 
+// Test aggregate with multiple selected columns
+#[test]
+fn test_aggregate_multi_col() {
+    // full.csv: name,city,value,score
+    // Set city as key, select value and score, aggregate with sum
+    // After !: display is city | name, value, score (cursor on city = col 0)
+    // Move right twice to value (col 2), space to select
+    // Move right to score (col 3), space to select
+    // Press b, fzf gets "sum" from test_input
+    let out = run_keys("<right>!<right><right><space><right><space>bsum<ret>", "tests/data/full.csv");
+    let hdr = header(&out);
+    // Should have both value_sum and score_sum in header
+    assert!(hdr.contains("value_sum"), "Should have value_sum: {}", hdr);
+    assert!(hdr.contains("score_sum"), "Should have score_sum: {}", hdr);
+}
+

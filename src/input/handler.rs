@@ -152,20 +152,38 @@ pub fn handle_cmd(app: &mut AppContext, cmd: &str) -> Result<bool> {
         }
         "convert" => { app.msg("Use derive for type conversion (PRQL syntax)"); }
         "aggregate" => {
-            let info = app.view().map(|v| (v.key_cols.clone(), v.col_name(v.data_col(v.state.cc))));
-            if let Some((keys, Some(col))) = info {
+            // Get key cols and columns to aggregate (selected or current)
+            let info = app.view().map(|v| {
+                let cols: Vec<String> = if v.selected_cols.is_empty() {
+                    v.col_name(v.data_col(v.state.cc)).into_iter().collect()
+                } else {
+                    v.selected_cols.iter().filter_map(|&i| v.col_name(v.data_col(i))).collect()
+                };
+                (v.key_cols.clone(), cols)
+            });
+            if let Some((keys, cols)) = info {
                 if keys.is_empty() {
                     app.msg("Set key columns first with ! (xkey)");
+                } else if cols.is_empty() {
+                    app.msg("No columns to aggregate");
                 } else {
-                    // Show PRQL: group {keys} (aggregate {funcs col}), hint for multi-select
-                    let prompt = format!("group {{{}}} (agg {{? {}}}) [Tab=multi]: ", keys.join(","), col);
-                    let result = picker::fzf_multi(vec!["count".into(), "sum".into(), "mean".into(), "min".into(), "max".into(), "std".into()], &prompt);
-                    app.needs_clear = true;
-                    if let Ok(funcs) = result {
-                        if !funcs.is_empty() {
-                            let agg_funcs: Vec<(String, String)> = funcs.into_iter().map(|f| (f, col.clone())).collect();
-                            run(app, Box::new(Agg { keys, funcs: agg_funcs }));
-                        }
+                    // Show PRQL: group {keys} (aggregate {funcs cols}), hint for multi-select
+                    let prompt = format!("group {{{}}} (agg {{? {}}}) [Tab=multi]: ", keys.join(","), cols.join(","));
+                    // Test mode: use test_input, else fzf
+                    let funcs: Vec<String> = if !app.test_input.is_empty() {
+                        app.test_input.remove(0).split(',').map(|s| s.trim().to_string()).collect()
+                    } else {
+                        let result = picker::fzf_multi(vec!["count".into(), "sum".into(), "mean".into(), "min".into(), "max".into(), "std".into()], &prompt);
+                        app.needs_clear = true;
+                        result.unwrap_or_default()
+                    };
+                    if !funcs.is_empty() {
+                        // Apply each func to each col
+                        let agg_funcs: Vec<(String, String)> = funcs.iter()
+                            .flat_map(|f| cols.iter().map(move |c| (f.clone(), c.clone())))
+                            .collect();
+                        run(app, Box::new(Agg { keys, funcs: agg_funcs }));
+                        if let Some(v) = app.view_mut() { v.selected_cols.clear(); }
                     }
                 }
             }

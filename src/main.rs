@@ -88,8 +88,8 @@ fn key_to_char(s: &str) -> &str {
 }
 
 fn extract_prompts(keys: &[String]) -> (Vec<String>, Vec<String>) {
-    // Keys that trigger prompts: : ^ \ s (command picker, rename, filter, select)
-    let prompt_keys = [":", "^", "<backslash>", "s"];
+    // Keys that trigger prompts: : ^ \ s b (command, rename, filter, select, aggregate)
+    let prompt_keys = [":", "^", "<backslash>", "s", "b"];
     let mut out_keys = Vec::new();
     let mut test_input = Vec::new();
     let mut i = 0;
