@@ -1,6 +1,28 @@
 //! Pure functions - no I/O, no state mutation
 //! These functions only compute and return values
 
+/// PRQL reserved words that need backtick quoting
+const RESERVED: &[&str] = &[
+    "date", "time", "from", "select", "filter", "take", "group", "aggregate",
+    "derive", "sort", "join", "window", "func", "let", "prql", "case", "type",
+    "module", "internal", "true", "false", "null", "and", "or", "not", "in",
+    "into", "average", "count", "min", "max", "sum", "stddev", "first", "last",
+];
+
+/// Quote column name only if reserved word or has special chars
+#[must_use]
+pub fn qcol(col: &str) -> String {
+    if RESERVED.contains(&col.to_lowercase().as_str()) || col.contains(|c: char| !c.is_alphanumeric() && c != '_') {
+        format!("`{}`", col)
+    } else { col.to_string() }
+}
+
+/// Quote multiple columns, join with comma (no spaces)
+#[must_use]
+pub fn qcols(cols: &[String]) -> String {
+    cols.iter().map(|c| qcol(c)).collect::<Vec<_>>().join(",")
+}
+
 /// Convert custom ~= operator to SQL LIKE
 /// `col ~= 'pattern'` → `col LIKE '%pattern%'`
 #[must_use]
@@ -48,8 +70,9 @@ pub fn filter_name(_parent: &str, expr: &str) -> String {
 /// Build PRQL filter for multiple values (col == a || col == b)
 #[must_use]
 pub fn in_clause(col: &str, values: &[String], is_str: bool) -> String {
+    let c = qcol(col);
     let q = if is_str { "'" } else { "" };
-    values.iter().map(|v| format!("`{}` == {}{}{}", col, q, v, q)).collect::<Vec<_>>().join(" || ")
+    values.iter().map(|v| format!("{}=={}{}{}", c, q, v, q)).collect::<Vec<_>>().join("||")
 }
 
 /// Toggle columns in/out of key list
@@ -66,22 +89,22 @@ pub fn toggle_keys(current: &[String], to_toggle: &[String]) -> Vec<String> {
     keys
 }
 
-/// Build xkey command from key list
+/// Build xkey command from key list (terse format)
 #[must_use]
 pub fn xkey_cmd(keys: &[String]) -> String {
-    if keys.is_empty() { "xkey".into() } else { format!("xkey {}", keys.join(",")) }
+    if keys.is_empty() { "xkey".into() } else { format!("xkey{{{}}}", qcols(keys)) }
 }
 
 /// Append sort to PRQL, replacing previous sort if consecutive
-/// Uses this.col to avoid PRQL reserved names (date, time, etc)
 #[must_use]
 pub fn append_sort(prql: &str, col: &str, desc: bool) -> String {
-    let sort_expr = if desc { format!("-this.`{}`", col) } else { format!("this.`{}`", col) };
-    // Check if ends with | sort {...} - replace it
-    if let Some(i) = prql.rfind(" | sort {") {
-        format!("{} | sort {{{}}}", &prql[..i], sort_expr)
+    let c = qcol(col);
+    let expr = if desc { format!("-this.{}", c) } else { format!("this.{}", c) };
+    // Replace existing sort or append
+    if let Some(i) = prql.rfind("|sort{") {
+        format!("{}|sort{{{}}}", &prql[..i], expr)
     } else {
-        format!("{} | sort {{{}}}", prql, sort_expr)
+        format!("{}|sort{{{}}}", prql, expr)
     }
 }
 
@@ -113,13 +136,19 @@ mod tests {
     #[test]
     fn test_in_clause_str() {
         let vals = vec!["a".into(), "b".into()];
-        assert_eq!(in_clause("col", &vals, true), "`col` == 'a' || `col` == 'b'");
+        assert_eq!(in_clause("col", &vals, true), "col=='a'||col=='b'");
     }
 
     #[test]
     fn test_in_clause_num() {
         let vals = vec!["1".into(), "2".into()];
-        assert_eq!(in_clause("col", &vals, false), "`col` == 1 || `col` == 2");
+        assert_eq!(in_clause("col", &vals, false), "col==1||col==2");
+    }
+
+    #[test]
+    fn test_in_clause_reserved() {
+        let vals = vec!["a".into()];
+        assert_eq!(in_clause("date", &vals, true), "`date`=='a'");
     }
 
     #[test]
@@ -144,21 +173,51 @@ mod tests {
     #[test]
     fn test_xkey_cmd_cols() {
         let keys = vec!["a".into(), "b".into()];
-        assert_eq!(xkey_cmd(&keys), "xkey a,b");
+        assert_eq!(xkey_cmd(&keys), "xkey{a,b}");
+    }
+
+    #[test]
+    fn test_xkey_cmd_reserved() {
+        let keys = vec!["date".into(), "time".into()];
+        assert_eq!(xkey_cmd(&keys), "xkey{`date`,`time`}");
     }
 
     #[test]
     fn test_append_sort_new() {
-        assert_eq!(append_sort("from df", "col", false), "from df | sort {this.`col`}");
+        assert_eq!(append_sort("from df", "col", false), "from df|sort{this.col}");
+    }
+
+    #[test]
+    fn test_append_sort_desc() {
+        assert_eq!(append_sort("from df", "col", true), "from df|sort{-this.col}");
+    }
+
+    #[test]
+    fn test_append_sort_reserved() {
+        assert_eq!(append_sort("from df", "date", false), "from df|sort{this.`date`}");
     }
 
     #[test]
     fn test_append_sort_replace() {
-        assert_eq!(append_sort("from df | sort {`a`}", "b", true), "from df | sort {-this.`b`}");
+        assert_eq!(append_sort("from df|sort{a}", "b", true), "from df|sort{-this.b}");
     }
 
     #[test]
-    fn test_append_sort_after_filter() {
-        assert_eq!(append_sort("from df | filter x > 5 | sort {`a`}", "b", false), "from df | filter x > 5 | sort {this.`b`}");
+    fn test_qcol_normal() {
+        assert_eq!(qcol("name"), "name");
+        assert_eq!(qcol("col_1"), "col_1");
+    }
+
+    #[test]
+    fn test_qcol_reserved() {
+        assert_eq!(qcol("date"), "`date`");
+        assert_eq!(qcol("time"), "`time`");
+        assert_eq!(qcol("from"), "`from`");
+    }
+
+    #[test]
+    fn test_qcol_special() {
+        assert_eq!(qcol("col name"), "`col name`");
+        assert_eq!(qcol("col-1"), "`col-1`");
     }
 }

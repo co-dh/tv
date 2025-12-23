@@ -1,51 +1,33 @@
-//! File I/O commands (load/save) - uses plugin interface
+//! File I/O commands (load/save) - uses DuckDB backend
 
 use crate::app::AppContext;
 use crate::command::Command;
-use crate::data::dynload;
+use crate::data::backend;
 use crate::state::ViewState;
 use anyhow::{anyhow, Result};
-
-/// Check if path is a data file ADBC+DuckDB can read
-fn is_data_file(p: &str) -> bool {
-    let exts = [".parquet", ".pq", ".csv", ".csv.gz", ".json"];
-    exts.iter().any(|e| p.ends_with(e))
-}
 
 /// Load file command (CSV, Parquet, or gzipped CSV)
 pub struct From { pub file_path: String }
 
 impl Command for From {
-    /// Load file - lazy, data fetched on render
-    /// Default: ADBC+DuckDB for files, --backend polars forces polars plugin
+    /// Load file - lazy, data fetched on render via DuckDB
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         let p = &self.file_path;
-        // Route: already prefixed paths use their plugin, else use backend preference
-        let path = if p.starts_with("memory:") || p.starts_with("source:") || p.starts_with("adbc:") {
-            p.clone()
-        } else if app.backend.as_deref() == Some("polars") {
-            p.clone()  // --backend polars: use polars plugin
-        } else if dynload::get_adbc().is_some() && is_data_file(p) {
-            format!("adbc:duckdb://{}", p)  // Default: ADBC+DuckDB
-        } else {
-            p.clone()  // Fallback: polars
-        };
-        dynload::get_for(&path).ok_or_else(|| anyhow!("no plugin for: {}", p))?;
         let id = app.next_id();
-        let name = format!("from {}", p);
-        app.stack.push(ViewState::build(id, &name).path(&path));
-        app.msg(format!("Loaded {}", name));
+        let basename = std::path::Path::new(p).file_name().and_then(|s| s.to_str()).unwrap_or(p);
+        app.stack.push(ViewState::build(id, basename).path(p));
+        app.msg(format!("Loaded {}", basename));
         Ok(())
     }
 
     fn to_str(&self) -> String { format!("from {}", self.file_path) }
 }
 
-/// Save file command (parquet/csv via plugin)
+/// Save file command (parquet/csv via backend)
 pub struct Save { pub file_path: String }
 
 impl Command for Save {
-    /// Save view to file (parquet/csv via plugin, or in-memory CSV fallback)
+    /// Save view to file (parquet/csv via DuckDB, or in-memory CSV fallback)
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         let v = app.req()?;
         let out = &self.file_path;
@@ -55,15 +37,11 @@ impl Command for Save {
         let is_csv = out.ends_with(".csv");
         if !is_pq && !is_csv { return Err(anyhow!("Only .parquet/.csv supported")); }
 
-        // For file-backed views, use plugin to save via PRQL
+        // For file-backed views, use backend to save via PRQL
         if let Some(path_in) = &v.path {
-            // Try matching plugin first, then polars fallback
-            let plugins = [dynload::get_for(path_in), dynload::get()];
-            for plugin in plugins.into_iter().flatten() {
-                if plugin.save(&v.prql, path_in, out) {
-                    app.msg(format!("Saved {}", out));
-                    return Ok(());
-                }
+            if backend::save(&v.prql, path_in, out) {
+                app.msg(format!("Saved {}", out));
+                return Ok(());
             }
         }
 

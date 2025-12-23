@@ -9,7 +9,6 @@ mod state;
 mod util;
 mod utils;
 
-use data::dynload;
 use input::on_key;
 
 use anyhow::Result;
@@ -24,13 +23,11 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
 
-    // Load plugins from standard locations
-    dynload::load_plugins();
-
-    // Parse flags first (before early returns)
+    // Parse flags first (before plugin loading)
     let raw_save = args.iter().any(|a| a == "--raw");
     let backend_idx = args.iter().position(|a| a == "--backend");
     let backend = backend_idx.and_then(|i| args.get(i + 1).cloned());
+
     let keys_idx = args.iter().position(|a| a == "--keys");
     // Find file arg: skip args that are flag values (after --backend, --keys)
     let skip_indices: Vec<usize> = [backend_idx.map(|i| i + 1), keys_idx.map(|i| i + 1)]

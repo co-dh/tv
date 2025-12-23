@@ -7,9 +7,10 @@ use crate::command::executor::CommandExecutor;
 use crate::command::transform::Xkey;
 use crate::command::view::Pop;
 use crate::plugin::Plugin;
-use crate::data::table::{Cell, ColType, SimpleTable, Table};
-use crate::data::dynload;
+use crate::data::table::{Cell, ColType, SimpleTable};
+use crate::data::backend;
 use crate::state;
+use crate::util::pure::qcol;
 use anyhow::{anyhow, Result};
 
 pub struct MetaPlugin;
@@ -44,29 +45,25 @@ fn sel_cols(app: &AppContext, allow_all: bool) -> Option<Vec<String>> {
     let mut rows: Vec<usize> = if v.selected_rows.is_empty() {
         if allow_all { (0..v.data.rows()).collect() } else { vec![v.state.cr] }
     } else { v.selected_rows.iter().copied().collect() };
-    rows.sort();  // preserve parent column order
+    rows.sort();
     Some(rows.iter().filter_map(|&r| {
         let s = v.data.cell(r, name_idx).format(10);
         if s.is_empty() || s == "null" { None } else { Some(unquote(&s)) }
     }).collect())
 }
 
-/// Metadata command - show column stats via plugin SQL
+/// Metadata command - show column stats via backend
 pub struct Metadata;
 
 impl Command for Metadata {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
-        // Get view info before mutation
         let (parent_rows, parent_name, path) = {
             let v = app.req()?;
             (v.rows(), v.name.clone(), v.path.clone().unwrap_or_default())
         };
 
-        // Get column metadata via plugin SQL (use correct plugin for path)
-        let plugin = dynload::get_for(&path).ok_or_else(|| anyhow!("plugin not loaded"))?;
-        let meta = compute_meta(plugin, &path)?;
+        let meta = compute_meta(&path)?;
 
-        // Register meta table in memory for filtering
         let id = app.next_id();
         let view = state::ViewState::build(id, "meta")
             .data(meta)
@@ -79,37 +76,28 @@ impl Command for Metadata {
 }
 
 /// Compute column metadata via PRQL - returns BoxTable
-fn compute_meta(plugin: &'static dynload::Plugin, path: &str) -> Result<crate::data::table::BoxTable> {
-    // Get column names via PRQL (plugin compiles internally)
-    let cols = plugin.query(&crate::state::take_chunk("from df", 0), path)
+fn compute_meta(path: &str) -> Result<crate::data::table::BoxTable> {
+    let cols = backend::query(&crate::state::take_chunk("from df", 0), path)
         .ok_or_else(|| anyhow!("empty schema"))?
         .col_names();
 
-    // Build stats for each column using PRQL meta function (this.col escapes keywords)
     let rows: Vec<Vec<Cell>> = cols.iter().filter_map(|col| {
-        let t = plugin.query(&format!("from df | meta this.`{}`", col), path)?;
+        let t = backend::query(&format!("from df|meta this.{}", qcol(col)), path)?;
         if t.rows() == 0 { return None; }
-        let cnt = t.cell(0, 0);      // count non-null
-        let distinct = t.cell(0, 1); // distinct
-        let total = t.cell(0, 2);    // total rows
-        let mn = t.cell(0, 3);       // min
-        let mx = t.cell(0, 4);       // max
-
-        // Compute null%
-        let tot = match &total { Cell::Int(n) => *n, _ => 1 };
-        let cnt_val = match &cnt { Cell::Int(n) => *n, _ => 0 };
+        let cnt = t.cell(0, 0);
+        let distinct = t.cell(0, 1);
+        let total = t.cell(0, 2);
+        let mn = t.cell(0, 3);
+        let mx = t.cell(0, 4);
+        let tot = match total { Cell::Int(n) => n, _ => 1 };
+        let cnt_val = match cnt { Cell::Int(n) => n, _ => 0 };
         let null_pct = if tot > 0 { format!("{:.1}", 100.0 * (tot - cnt_val) as f64 / tot as f64) } else { "0".into() };
-
-        Some(vec![Cell::Str(col.clone()), cnt, distinct, Cell::Str(null_pct), mn, mx])
+        Some(vec![Cell::Str(col.to_string()), cnt, distinct, Cell::Str(null_pct), mn, mx])
     }).collect();
 
-    // Build table
     let names = vec!["column", "count", "distinct", "null%", "min", "max"]
         .into_iter().map(String::from).collect();
-    let types = vec![
-        ColType::Str, ColType::Int, ColType::Int,
-        ColType::Str, ColType::Str, ColType::Str,
-    ];
+    let types = vec![ColType::Str, ColType::Int, ColType::Int, ColType::Str, ColType::Str, ColType::Str];
     Ok(Box::new(SimpleTable::new(names, types, rows)))
 }
 

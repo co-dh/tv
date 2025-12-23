@@ -3,8 +3,6 @@ mod common;
 use common::{run_keys, footer, header};
 use std::fs;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
-use std::path::PathBuf;
 use chrono::Utc;
 
 // tid() only for save tests (need unique filenames)
@@ -154,41 +152,6 @@ fn test_systemctl_command() {
 }
 
 #[test]
-fn test_journalctl_command() {
-    // :journalctl 50 to get 50 log entries
-    let out = run_keys(":journalctl 50<ret>", "");
-    let (tab, _) = footer(&out);
-    let hdr = header(&out).trim_start();
-    assert!(tab.contains("journalctl"), "Tab should show journalctl: {}", tab);
-    assert!(!hdr.starts_with('#'), "Header should not start with #: {}", hdr);
-    assert!(hdr.contains("message"), "Header should have message: {}", hdr);
-}
-
-#[test]
-fn test_journalctl_dates_valid() {
-    // Bug: native journal reader showed 1970 dates due to wrong timestamp field
-    let out = run_keys(":journalctl<ret>", "");
-    let year = Utc::now().format("%Y").to_string();
-    // First data row should have current year (not 1970)
-    let row1 = out.lines().nth(1).unwrap_or("");
-    assert!(!row1.contains("1970"), "Date should not be 1970: {}", row1);
-    // Should contain recent year somewhere in output
-    assert!(out.contains(&year) || out.contains("2024"), "Should have recent dates: {}", out);
-}
-
-#[test]
-fn test_journalctl_boot_index() {
-    // Boot 0 = current boot, should have today's date
-    // Bug: boot indices were arbitrary based on file read order
-    // Filter to boot == 0 to check current boot entries
-    let out = run_keys(":journalctl<ret>:filter boot == 0<ret>", "");
-    let today = Utc::now().format("%Y-%m-%d").to_string();
-    // First data row should have today's date
-    let row1 = out.lines().nth(1).unwrap_or("");
-    assert!(row1.contains(&today), "Boot 0 should have today's date {}: {}", today, row1);
-}
-
-#[test]
 fn test_source_page_down() {
     // Bug: Ctrl+D (page down) doesn't work on source: views
     let before = run_keys(":ps<ret>", "");
@@ -204,22 +167,6 @@ fn test_source_page_down() {
     let r1 = get_row(&before);
     let r2 = get_row(&after);
     assert!(r2 > r1, "Page down should move cursor: before={} after={}", r1, r2);
-}
-
-#[test]
-fn test_journalctl_freq_date_sort() {
-    // Bug: freq date can't sort on date column with [ or ]
-    // Navigate to date column, freq, then sort ascending on date
-    let out = run_keys(":journalctl<ret><right>F[", "");
-    // Extract first 5 dates from data rows
-    let dates: Vec<&str> = out.lines().skip(1).take(5)
-        .filter_map(|l| l.split_whitespace().next())
-        .collect();
-    assert!(dates.len() >= 3, "Should have dates: {:?}", dates);
-    // Dates should be sorted ascending (lexicographic works for YYYY-MM-DD)
-    for i in 1..dates.len() {
-        assert!(dates[i-1] <= dates[i], "Dates should be ascending: {:?}", dates);
-    }
 }
 
 #[test]
@@ -271,35 +218,6 @@ fn test_pacman_rsize_column() {
     for i in 1..rsizes.len() {
         assert!(rsizes[i-1] >= rsizes[i], "Rsizes should be descending: {:?}", rsizes);
     }
-}
-
-#[test]
-fn test_cargo_command() {
-    // Pre-populate cache with known value
-    let cache_dir = std::env::var("XDG_CACHE_HOME").ok()
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(std::env::var("HOME").unwrap()).join(".cache"))
-        .join("tv");
-    fs::create_dir_all(&cache_dir).ok();
-    let cache_path = cache_dir.join("cargo_versions.csv");
-    // Add adler2 with known latest version (visible in output)
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
-    fs::write(&cache_path, format!("name,version,timestamp\nadler2,99.0.0,{}\n", now)).ok();
-
-    // :cargo to list project dependencies (like pacman for Rust)
-    let out = run_keys(":cargo<ret>", "");
-    let (tab, _) = footer(&out);
-    let hdr = header(&out).trim_start();
-    assert!(tab.contains("cargo"), "Tab should show cargo: {}", tab);
-    assert!(!hdr.starts_with('#'), "Header should not start with #: {}", hdr);
-    assert!(hdr.contains("name"), "Header should have name: {}", hdr);
-    assert!(hdr.contains("size(k)"), "Header should have size(k): {}", hdr);
-    assert!(hdr.contains("deps"), "Header should have deps: {}", hdr);
-    assert!(hdr.contains("req_by"), "Header should have req_by: {}", hdr);
-    assert!(hdr.contains("platform"), "Header should have platform: {}", hdr);
-    assert!(hdr.contains("latest"), "Header should have latest: {}", hdr);
-    // Check cached version shows up
-    assert!(out.contains("99.0.0"), "Should show cached latest version 99.0.0: {}", out);
 }
 
 #[test]

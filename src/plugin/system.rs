@@ -1,13 +1,10 @@
-//! System plugin - routes OS commands to sqlite plugin or ADBC
-//! Simple sources via shell → SQLite import → ADBC query
-//! Complex sources (journalctl, pacman) use sqlite plugin APIs
+//! System plugin - routes OS commands to ADBC via source:xxx paths
 
 use crate::app::AppContext;
 use crate::command::Command;
 use crate::plugin::Plugin;
 use crate::state::ViewState;
 use anyhow::Result;
-use tv_plugin_api::source;
 
 /// Known system commands (cmd, has_arg)
 const SYS_CMDS: &[(&str, bool)] = &[
@@ -38,21 +35,12 @@ impl Plugin for SystemPlugin {
     }
 }
 
-/// Generic system command - routes to sqlite source or ADBC
+/// Generic system command - routes to source:xxx path
 pub struct SourceCmd { pub cmd: String, pub arg: Option<String> }
 
 impl Command for SourceCmd {
+    /// Route to source:xxx path - ADBC handles via source module
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
-        // --backend sqlite forces sqlite plugin, otherwise try ADBC
-        let use_sqlite = app.backend.as_deref() == Some("sqlite");
-        if !use_sqlite {
-            if let Some(path) = source::source(&self.cmd) {
-                let id = app.next_id();
-                app.stack.push(ViewState::build(id, self.cmd.clone()).path(path));
-                return Ok(());
-            }
-        }
-        // Sqlite plugin for complex sources or when forced
         let (name, src) = match &self.arg {
             Some(a) => (format!("{}:{}", self.cmd, a), format!("source:{}:{}", self.cmd, a)),
             None => (self.cmd.clone(), format!("source:{}", self.cmd)),

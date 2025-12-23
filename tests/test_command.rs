@@ -155,7 +155,7 @@ fn test_freq_after_meta() {
     // View meta, then q to return, then freq on current col
     let out = run_keys("MqF", "tests/data/basic.csv");
     let (tab, _) = footer(&out);
-    assert!(tab.contains("| freq a"), "tab: {}", tab);
+    assert!(tab.contains("freq a"), "tab: {}", tab);
 }
 
 #[test]
@@ -208,10 +208,9 @@ fn test_swap_views() {
     assert!(tab.contains("filter a > 2"), "Should show filter: {}", tab);
 }
 
-// Test lr shows relative paths
+// Test lr shows relative paths (uses ADBC/DuckDB)
 #[test]
 fn test_lr_paths() {
-    // lr on tests/data should show relative paths
     let out = run_keys(":lr tests/data<ret>", "tests/data/basic.csv");
     assert!(out.contains("basic.csv"), "lr should show paths: {}", out);
 }
@@ -219,29 +218,24 @@ fn test_lr_paths() {
 // Test lr enter on csv opens file
 #[test]
 fn test_lr_enter_csv() {
-    // lr tests/data, filter to numeric.csv, enter should open it
     let out = run_keys(":lr tests/data<ret><backslash>path ~= 'numeric'<ret><ret>", "tests/data/basic.csv");
-    // After enter on csv, should open the file (show x,y,z columns)
     assert!(out.contains("x") && out.contains("y"), "Should open csv: {}", out);
 }
 
 // Test lr filter by extension and open
 #[test]
 fn test_lr_filter_extension_open() {
-    // lr tests/data, filter for meta_test.parquet, enter to open
     let out = run_keys(":lr tests/data<ret><backslash>path ~= 'meta_test'<ret><ret>", "tests/data/basic.csv");
-    // After enter, should open parquet (show a, b columns)
     assert!(out.contains("a") || out.contains("b"), "Should open parquet after filter: {}", out);
 }
 
-// Test sort on folder view (uses sqlite vtable)
+// Test sort on folder view
 #[test]
 fn test_lr_sort_size() {
-    // lr tests/data, move to size column, sort ascending
-    let out = run_keys(":lr tests/data<ret><right>[", "tests/data/basic.csv");
+    // lr has columns: name, path, size, modified, dir - need 2 rights to reach size
+    let out = run_keys(":lr tests/data<ret><right><right>[", "tests/data/basic.csv");
     let lines: Vec<&str> = out.lines().collect();
     assert!(lines.len() > 2, "Should have data rows: {}", out);
-    // First data row (line 1, after header line 0) should be smallest file
     let first = lines.get(1).unwrap_or(&"");
     assert!(first.contains("null_col.csv"), "Smallest file should be first after sort: {}", out);
 }
@@ -309,13 +303,13 @@ fn test_aggregate_multi_col() {
     assert!(hdr.contains("score_sum"), "Should have score_sum: {}", hdr);
 }
 
-// Test aggregate tab string is valid PRQL expression
+// Test aggregate tab string is valid PRQL expression (terse format)
 #[test]
 fn test_aggregate_prql_name() {
     let out = run_keys("<right>!<right><right><space><right><space>bsum<ret>", "tests/data/full.csv");
     let (tab, _) = footer(&out);
-    // Tab should show valid PRQL: group {...} (aggregate {...})
-    assert!(tab.contains("group {") && tab.contains("(aggregate {"),
-        "Tab should show valid PRQL group/aggregate: {}", tab);
+    // Tab should show terse PRQL: group{...}(aggregate{...})
+    assert!(tab.contains("group{") && tab.contains("(aggregate{"),
+        "Tab should show terse PRQL group/aggregate: {}", tab);
 }
 

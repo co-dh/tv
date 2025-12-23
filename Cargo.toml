@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/tv-plugin-api", "crates/tv-polars", "crates/tv-sqlite", "crates/tv-plot", "crates/tv-adbc"]
+members = [".", "crates/tv-plot"]
 
 [package]
 name = "tabv"
@@ -15,14 +15,18 @@ strip = true
 # codegen-units = 1
 
 [dependencies]
-tv-plugin-api = { version = "0.1.0", path = "crates/tv-plugin-api" }
-libloading = "0.8"
 prqlc = "0.13"
 ratatui = "0.30.0-beta.0"
 anyhow = "1.0"
 thiserror = "2.0"
 nix = { version = "0.30", features = ["fs", "process"] }
 serde_json = "1.0"
+lru = "0.12"
+# ADBC for DuckDB backend
+adbc_core = "0.21"
+adbc_driver_manager = "0.21"
+arrow-array = "55"
+arrow-schema = "55"
 
 [dev-dependencies]
 chrono = "0.4"

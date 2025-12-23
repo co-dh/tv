@@ -9,6 +9,7 @@ use crate::command::transform::FilterIn;
 use crate::command::view::Pop;
 use crate::plugin::Plugin;
 use crate::state::ViewState;
+use crate::util::pure::qcols;
 use anyhow::{anyhow, Result};
 
 pub struct FreqPlugin;
@@ -60,20 +61,14 @@ pub struct Frequency { pub col_names: Vec<String> }
 impl Command for Frequency {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         if app.is_loading() { return Err(anyhow!("Wait for loading to complete")); }
-
-        // Get view info before mutation
         let (parent_id, parent_rows, parent_name, path, key_cols, parent_prql) = {
             let v = app.req()?;
             (v.id, v.rows(), v.name.clone(), v.path.clone(), v.key_cols.clone(), v.prql.clone())
         };
-
-        // Build PRQL using freq function from funcs.prql
-        let cols = self.col_names.iter().map(|c| format!("`{}`", c)).collect::<Vec<_>>().join(", ");
-        let prql = format!("{} | freq {{{}}}", parent_prql, cols);
-
-        // Create lazy freq view
+        let cols = qcols(&self.col_names);
+        let prql = format!("{}|freq{{{}}}", parent_prql, cols);
         let id = app.next_id();
-        let name = format!("freq {}", self.col_names.join(" "));
+        let name = format!("freq {}", self.col_names.join(","));
         let freq_col = self.col_names.first().cloned().unwrap_or_default();
         let mut nv = ViewState::build(id, name)
             .prql(&prql)
@@ -83,7 +78,6 @@ impl Command for Frequency {
         app.stack.push(nv);
         Ok(())
     }
-
     fn to_str(&self) -> String { format!("freq {}", self.col_names.join(",")) }
 }
 

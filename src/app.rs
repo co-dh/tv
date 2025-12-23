@@ -119,15 +119,14 @@ impl AppContext {
         }
     }
 
-    /// Get total rows via PRQL count query (plugin caches it)
+    /// Get total rows via PRQL count query (cached)
     fn total_rows(v: &ViewState) -> usize {
-        use crate::data::dynload;
-        use crate::data::table::{Table, Cell};
+        use crate::data::backend;
+        use crate::data::table::Cell;
         v.path.as_ref()
-            .and_then(|p| dynload::get_for(p).map(|plugin| (p, plugin)))
-            .and_then(|(p, plugin)| {
+            .and_then(|p| {
                 let prql = format!("{} | cnt", v.prql);
-                plugin.query(&prql, p)
+                backend::query(&prql, p)
             })
             .and_then(|t| match t.cell(0, 0) { Cell::Int(n) => Some(n as usize), _ => None })
             .unwrap_or_else(|| v.rows())

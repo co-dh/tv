@@ -1,5 +1,5 @@
 use crate::app::AppContext;
-use crate::data::dynload;
+use crate::data::backend;
 use crate::data::table::{Cell, ColType, Table};
 use crate::utils::commify;
 use crate::state::{TableState, ViewState};
@@ -67,9 +67,8 @@ impl Renderer {
         let path = view.path.clone();
         let prql = view.prql.clone();
         let lazy_offset = path.as_ref().and_then(|p| {
-            let plugin = dynload::get_for(p)?;
-            let t = plugin.query(&take_chunk(&prql, r0), p)?;
-            view.data = dynload::to_box_table(&t);
+            let t = backend::query(&take_chunk(&prql, r0), p)?;
+            view.data = t;
             Some(chunk_start)
         }).unwrap_or(0);
 
@@ -626,8 +625,6 @@ mod tests {
         use std::collections::HashSet;
         use crate::util::theme::Theme;
 
-        // Load sqlite plugin for test
-        let _ = crate::data::dynload::load_sqlite("./target/release/libtv_sqlite.so");
 
         // Create folder data (unsorted)
         let table = SimpleTable::new(
@@ -685,8 +682,6 @@ mod tests {
         use std::collections::HashSet;
         use crate::util::theme::Theme;
 
-        // Load sqlite plugin
-        let _ = crate::data::dynload::load_sqlite("./target/release/libtv_sqlite.so");
 
         // Create folder data (unsorted: b=200, a=100, c=50)
         let table = SimpleTable::new(
@@ -747,8 +742,6 @@ mod tests {
         use std::collections::HashSet;
         use crate::util::theme::Theme;
 
-        // Load sqlite plugin
-        let _ = crate::data::dynload::load_sqlite("./target/release/libtv_sqlite.so");
 
         // Create folder data (unsorted: b=200, a=100, c=50)
         let table = SimpleTable::new(
@@ -809,8 +802,6 @@ mod tests {
         use std::collections::HashSet;
         use crate::util::theme::Theme;
 
-        // Load sqlite plugin
-        let _ = crate::data::dynload::load_sqlite("./target/release/libtv_sqlite.so");
 
         // Create data with string values
         let table = SimpleTable::new(
@@ -908,9 +899,6 @@ mod tests {
         use crate::command::Command;
         use crate::app::AppContext;
 
-        // Load plugins
-        let _ = crate::data::dynload::load_polars("./target/release/libtv_polars.so");
-        let _ = crate::data::dynload::load_sqlite("./target/release/libtv_sqlite.so");
 
         let mut app = AppContext::default();
         let mut from_cmd = From { file_path: "tests/data/sample.parquet".to_string() };

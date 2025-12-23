@@ -4,7 +4,7 @@
 use crate::app::AppContext;
 use crate::data::table::{Table, ColType};
 use crate::command::Command;
-use crate::util::pure;
+use crate::util::pure::{self, qcol, qcols};
 use anyhow::{anyhow, Result};
 
 /// Get schema as (name, type) pairs from Table
@@ -40,7 +40,7 @@ impl Command for Filter {
         if app.is_loading() { return Err(anyhow!("Wait for loading to complete")); }
         let id = app.next_id();
         let v = app.req()?;
-        let prql = format!("{} | filter {}", v.prql, pure::to_prql_filter(&self.expr));
+        let prql = format!("{}|filter {}", v.prql, pure::to_prql_filter(&self.expr));
         let name = pure::filter_name(&v.name, &self.expr);
         let mut nv = v.clone();
         nv.id = id;
@@ -63,13 +63,9 @@ impl Command for Select {
         // Check if first col starts with '{' - raw PRQL select
         let raw = self.col_names.first().map(|s| s.starts_with('{')).unwrap_or(false);
         if raw {
-            // Raw PRQL: select {col1, col2, ...}
-            let expr = self.col_names.join(",");
-            v.prql = format!("{} | select {}", v.prql, expr);
+            v.prql = format!("{}|select {}", v.prql, self.col_names.join(","));
         } else {
-            // Column names: select col1, col2
-            let sel = self.col_names.iter().map(|c| format!("`{}`", c)).collect::<Vec<_>>().join(", ");
-            v.prql = format!("{} | select {{{}}}", v.prql, sel);
+            v.prql = format!("{}|select{{{}}}", v.prql, qcols(&self.col_names));
         }
         v.state.cc = 0;
         Ok(())
@@ -96,14 +92,12 @@ pub struct RenameCol { pub old_name: String, pub new_name: String }
 impl Command for RenameCol {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         let v = app.req_mut()?;
-        // Get cols from data, replace old with new
         let cols: Vec<String> = v.data.col_names().into_iter()
             .map(|c| if c == self.old_name { self.new_name.clone() } else { c })
             .collect();
         // PRQL rename: derive new = old | select (all with new name)
-        v.prql = format!("{} | derive {{{} = `{}`}}", v.prql, self.new_name, self.old_name);
-        let sel = cols.iter().map(|c| format!("`{}`", c)).collect::<Vec<_>>().join(", ");
-        v.prql = format!("{} | select {{{}}}", v.prql, sel);
+        v.prql = format!("{}|derive{{{}={}}}", v.prql, qcol(&self.new_name), qcol(&self.old_name));
+        v.prql = format!("{}|select{{{}}}", v.prql, qcols(&cols));
         v.state.col_widths.clear();
         Ok(())
     }
@@ -120,24 +114,21 @@ impl Command for Agg {
         if self.funcs.is_empty() { return Err(anyhow!("No aggregations")); }
         let id = app.next_id();
         let v = app.req()?;
-        let parent_prql = v.prql.clone();
-        // Build PRQL aggregation expressions
+        // Build agg expressions: col_fn=fn col
         let agg_exprs: Vec<String> = self.funcs.iter().map(|(func, col)| {
-            match func.as_str() {
-                "count" => format!("{}_cnt = count `{}`", col, col),
-                "sum" => format!("{}_sum = sum `{}`", col, col),
-                "mean" => format!("{}_avg = average `{}`", col, col),
-                "min" => format!("{}_min = min `{}`", col, col),
-                "max" => format!("{}_max = max `{}`", col, col),
-                "std" => format!("{}_std = stddev `{}`", col, col),
-                _ => format!("{} = {} `{}`", col, func, col),
-            }
+            let c = qcol(col);
+            let suffix = match func.as_str() {
+                "count" => "cnt", "sum" => "sum", "mean" => "avg",
+                "min" => "min", "max" => "max", "std" => "std", _ => func,
+            };
+            let fn_name = if func == "mean" { "average" } else if func == "std" { "stddev" } else { func };
+            format!("{}_{} = {} {}", col, suffix, fn_name, c)
         }).collect();
-        let keys_str = self.keys.iter().map(|k| format!("`{}`", k)).collect::<Vec<_>>().join(", ");
-        let prql = format!("{} | group {{{}}} (aggregate {{{}}})", parent_prql, keys_str, agg_exprs.join(", "));
-        // Create new view with aggregation - PRQL-like name
+        let keys_str = qcols(&self.keys);
+        let prql = format!("{}|group{{{}}}(aggregate{{{}}})", v.prql, keys_str, agg_exprs.join(","));
+        // Terse name for tab
         let aggs_short: Vec<String> = self.funcs.iter().map(|(f, c)| format!("{} {}", f, c)).collect();
-        let name = format!("group {{{}}} (aggregate {{{}}})", keys_str, aggs_short.join(", "));
+        let name = format!("group{{{}}}(aggregate{{{}}})", keys_str, aggs_short.join(","));
         let mut nv = crate::state::ViewState::build(id, name).prql(&prql);
         if let Some(p) = &v.path { nv = nv.path(p); }
         app.stack.push(nv);
@@ -155,16 +146,15 @@ impl Command for FilterIn {
         if app.is_loading() { return Err(anyhow!("Wait for loading to complete")); }
         let id = app.next_id();
         let v = app.req()?;
-        // Check if column is string type
         let schema = table_schema(v.data.as_ref());
         let is_str = schema.iter().find(|(n, _)| n == &self.col)
             .map(|(_, t)| matches!(t, ColType::Str)).unwrap_or(true);
         let clause = pure::in_clause(&self.col, &self.values, is_str);
         let filter_expr = pure::to_prql_filter(&clause);
-        let prql = format!("{} | filter {}", v.prql, filter_expr);
+        let prql = format!("{}|filter {}", v.prql, filter_expr);
         let mut nv = v.clone();
         nv.id = id;
-        nv.name = format!("filter {}", filter_expr);  // tab shows command
+        nv.name = format!("filter {}", filter_expr);
         nv.prql = prql;
         app.stack.push(nv);
         Ok(())
@@ -195,7 +185,7 @@ pub struct Take { pub n: usize }
 impl Command for Take {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         let v = app.req_mut()?;
-        v.prql = format!("{} | take {}", v.prql, self.n);
+        v.prql = format!("{}|take {}", v.prql, self.n);
         Ok(())
     }
     fn to_str(&self) -> String { format!("take {}", self.n) }
@@ -222,12 +212,10 @@ impl Command for Derive {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         let v = app.req_mut()?;
         if self.col_name.starts_with('{') {
-            // Raw PRQL: derive {name = expr, ...}
-            v.prql = format!("{} | derive {}", v.prql, self.col_name);
+            v.prql = format!("{}|derive {}", v.prql, self.col_name);
         } else {
-            // Column copy: derive col_copy = col
             let new_name = format!("{}_copy", self.col_name);
-            v.prql = format!("{} | derive {{{} = `{}`}}", v.prql, new_name, self.col_name);
+            v.prql = format!("{}|derive{{{}={}}}", v.prql, new_name, qcol(&self.col_name));
         }
         v.state.col_widths.clear();
         Ok(())

@@ -7,7 +7,7 @@ use std::io::{self, Write};
 use crate::app::AppContext;
 use crate::command::executor::CommandExecutor;
 use crate::command::transform::Filter;
-use crate::data::{dynload, table::Table};
+use crate::data::{backend, table::Table};
 use crate::input::handler::run;
 use crate::input::parser::parse;
 use crate::util::picker;
@@ -128,9 +128,9 @@ pub fn prompt(app: &mut AppContext, prompt_str: &str) -> Result<Option<String>> 
 pub fn hints(table: &dyn Table, col_name: &str, _row: usize, file: Option<&str>) -> Vec<String> {
     let mut items = Vec::new();
 
-    // Try PRQL distinct for parquet files (plugin compiles PRQL)
-    if let Some(t) = file.filter(|f| f.ends_with(".parquet"))
-        .and_then(|path| dynload::get()?.query(&format!("from df | uniq `{}` | take 500", col_name), path))
+    // Try PRQL distinct for data files
+    if let Some(t) = file.filter(|f| f.ends_with(".parquet") || f.ends_with(".csv"))
+        .and_then(|path| backend::query(&format!("from df | uniq `{}` | take 500", col_name), path))
     {
         for r in 0..t.rows() {
             let v = t.cell(r, 0).format(10);

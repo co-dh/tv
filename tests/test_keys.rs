@@ -18,7 +18,7 @@ fn test_freq_enter_filters_parent_shows_filter_command() {
     // F on column b creates freq, Enter selects first value (x), filters parent to 3 rows
     let output = run_keys("<right>F<ret>", "tests/data/basic.csv");
     let (tab, status) = footer(&output);
-    assert!(tab.contains("filter `b` == 'x'"), "tab: {}", tab);
+    assert!(tab.contains("filter b=='x'"), "tab: {}", tab);
     assert!(status.contains("0/3"), "status: {}", status);
 }
 

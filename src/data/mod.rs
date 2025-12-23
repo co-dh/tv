@@ -1,4 +1,5 @@
-//! Data layer: table abstractions and plugin loading
+//! Data layer: table abstractions and DuckDB backend
 
 pub mod table;
-pub mod dynload;
+pub mod backend;
+mod source;

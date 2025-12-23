@@ -12,8 +12,18 @@ use crate::plugin::folder::Ls;
 
 /// Parse command string into Command object
 pub fn parse(line: &str, app: &mut AppContext) -> Option<Box<dyn Command>> {
-    let (cmd, arg) = line.split_once(' ').map(|(c, a)| (c, a.trim())).unwrap_or((line, ""));
-    let cmd = cmd.to_lowercase();
+    let (cmd_raw, arg) = line.split_once(' ').map(|(c, a)| (c, a.trim())).unwrap_or((line, ""));
+
+    // Handle xkey{} before lowercasing (column names are case-sensitive)
+    if cmd_raw.to_lowercase().starts_with("xkey{") && cmd_raw.ends_with('}') {
+        let inner = &cmd_raw[5..cmd_raw.len()-1];
+        let keys: Vec<String> = inner.split(',')
+            .map(|s| s.trim().trim_matches('`').to_string())
+            .filter(|s| !s.is_empty()).collect();
+        return Some(Box::new(Xkey { keys }));
+    }
+
+    let cmd = cmd_raw.to_lowercase();
 
     // Core commands (not in plugins)
     match cmd.as_str() {

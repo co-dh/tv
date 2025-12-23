@@ -5,7 +5,6 @@ use crate::app::AppContext;
 use crate::utils::unquote;
 use crate::command::Command;
 use crate::command::io::From;
-use crate::data::table::Table;
 use crate::plugin::Plugin;
 use crate::state::ViewState;
 use anyhow::{anyhow, Result};
@@ -119,7 +118,8 @@ pub struct DelFiles { pub paths: Vec<String>, pub dir: PathBuf }
 impl Command for DelFiles {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         use crate::util::picker;
-        use crate::data::dynload;
+        use crate::data::backend;
+        use crate::data::table::SimpleTable;
         let n = self.paths.len();
         let prompt = if n == 1 {
             let name = Path::new(&self.paths[0]).file_name().and_then(|s| s.to_str()).unwrap_or(&self.paths[0]);
@@ -134,16 +134,17 @@ impl Command for DelFiles {
                     if std::fs::remove_file(path).is_ok() { deleted += 1; }
                 }
                 app.msg(format!("Deleted {} file(s)", deleted));
-                // Refresh via source:ls (plugin compiles PRQL internally)
+                // Refresh via source:ls
                 let source_path = format!("source:ls:{}", self.dir.display());
-                if let Some(plugin) = dynload::get_sqlite() {
-                    if let Some(t) = plugin.query("from df", &source_path) {
-                        if let Some(view) = app.view_mut() {
-                            let rows = t.rows();
-                            view.data = dynload::to_box_table(&t);
-                            view.selected_rows.clear();
-                            if view.state.cr >= rows { view.state.cr = rows.saturating_sub(1); }
-                        }
+                if let Some(t) = backend::query("from df", &source_path) {
+                    if let Some(view) = app.view_mut() {
+                        let rows = t.rows();
+                        let names = t.col_names();
+                        let types: Vec<_> = (0..t.cols()).map(|i| t.col_type(i)).collect();
+                        let data: Vec<Vec<_>> = (0..t.rows()).map(|r| (0..t.cols()).map(|c| t.cell(r, c)).collect()).collect();
+                        view.data = Box::new(SimpleTable::new(names, types, data));
+                        view.selected_rows.clear();
+                        if view.state.cr >= rows { view.state.cr = rows.saturating_sub(1); }
                     }
                 }
             }

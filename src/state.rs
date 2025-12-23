@@ -1,5 +1,5 @@
-use crate::data::table::{BoxTable, ColStats, SimpleTable, Cell, Table};
-use crate::data::dynload::{self, Plugin};
+use crate::data::table::{BoxTable, ColStats, SimpleTable, Cell};
+use crate::data::backend;
 use std::collections::HashSet;
 
 /// Reserved rows in viewport (header + footer_header + status + tabs)
@@ -12,7 +12,7 @@ pub const CHUNK: usize = 1000;
 pub fn take_chunk(prql: &str, offset: usize) -> String {
     let start = (offset / CHUNK) * CHUNK;
     let end = start + CHUNK;
-    format!("{} | take {}..{}", prql, start + 1, end + 1)
+    format!("{}|take {}..{}", prql, start + 1, end + 1)
 }
 
 /// Parent view info (for derived views like meta/freq)
@@ -88,7 +88,6 @@ pub struct ViewState {
     pub name: String,
     pub prql: String,                    // query chain
     pub path: Option<String>,            // query path (file, memory:id, source:...)
-    pub plugin: Option<&'static Plugin>, // cached plugin ref
     pub data: BoxTable,                  // current viewport data
     pub state: TableState,
     pub parent: Option<ParentInfo>,
@@ -110,7 +109,7 @@ impl Clone for ViewState {
         ));
         Self {
             id: self.id, name: self.name.clone(),
-            prql: self.prql.clone(), path: self.path.clone(), plugin: self.plugin, data,
+            prql: self.prql.clone(), path: self.path.clone(), data,
             state: self.state.clone(), parent: self.parent.clone(),
             selected_cols: self.selected_cols.clone(), selected_rows: self.selected_rows.clone(),
             key_cols: self.key_cols.clone(), deleted_cols: self.deleted_cols.clone(), partial: self.partial,
@@ -125,7 +124,7 @@ impl ViewState {
     pub fn build(id: usize, name: impl Into<String>) -> Self {
         Self {
             id, name: name.into(), prql: "from df".into(),
-            path: None, plugin: None, data: Self::empty(), state: TableState::default(),
+            path: None, data: Self::empty(), state: TableState::default(),
             parent: None, selected_cols: HashSet::new(), selected_rows: HashSet::new(),
             key_cols: Vec::new(), deleted_cols: Vec::new(), partial: false,
         }
@@ -135,18 +134,15 @@ impl ViewState {
     pub fn prql(mut self, p: impl Into<String>) -> Self { self.prql = p.into(); self }
     pub fn data(mut self, d: BoxTable) -> Self { self.data = d; self }
     pub fn partial(mut self) -> Self { self.partial = true; self }
-    /// Set path + auto-resolve plugin
-    pub fn path(mut self, p: impl Into<String>) -> Self {
-        let s = p.into(); self.plugin = dynload::get_for(&s); self.path = Some(s); self
-    }
+    /// Set path for querying
+    pub fn path(mut self, p: impl Into<String>) -> Self { self.path = Some(p.into()); self }
     /// Set parent info
     pub fn parent(mut self, id: usize, rows: usize, name: impl Into<String>, freq_col: Option<String>) -> Self {
         self.parent = Some(ParentInfo { id, rows, name: name.into(), freq_col }); self
     }
-    /// Register data with sqlite, set path to memory:id
+    /// Register data for in-memory querying, set path to mem:id
     pub fn register(mut self) -> Self {
-        self.path = dynload::register_table(self.id, self.data.as_ref());
-        self.plugin = self.path.as_ref().and_then(|p| dynload::get_for(p)); self
+        self.path = backend::register_table(self.id, self.data.as_ref()); self
     }
 
     /// Row count from data
@@ -176,9 +172,10 @@ impl ViewState {
     /// Display name with del/xkey suffix (for tabs)
     #[must_use]
     pub fn display_name(&self) -> String {
+        use crate::util::pure::qcols;
         let mut s = self.name.clone();
-        if !self.deleted_cols.is_empty() { s = format!("{} | del {}", s, self.deleted_cols.join(" ")); }
-        if !self.key_cols.is_empty() { s = format!("{} | xkey {}", s, self.key_cols.join(" ")); }
+        if !self.deleted_cols.is_empty() { s = format!("{}|del{{{}}}", s, self.deleted_cols.join(",")); }
+        if !self.key_cols.is_empty() { s = format!("{}|xkey{{{}}}", s, qcols(&self.key_cols)); }
         s
     }
 
@@ -243,47 +240,44 @@ impl ViewState {
         }
     }
 
-    /// Total rows via plugin (or in-memory fallback)
+    /// Total rows via backend (or in-memory fallback)
     #[must_use]
     pub fn total_rows(&self) -> usize {
-        self.plugin.and_then(|pl| {
-            let p = self.path.as_ref()?;
-            let q = format!("{} | cnt", self.prql);
-            let t = pl.query(&q, p)?;
+        self.path.as_ref().and_then(|p| {
+            let q = format!("{}|cnt", self.prql);
+            let t = backend::query(&q, p)?;
             match t.cell(0, 0) { Cell::Int(n) => Some(n as usize), _ => None }
         }).unwrap_or_else(|| self.rows())
     }
 
     /// Select rows matching PRQL filter, return matching row indices (0-based)
     pub fn sel_rows(&self, expr: &str) -> Vec<usize> {
-        self.plugin.and_then(|pl| {
-            let p = self.path.as_ref()?;
-            let q = format!("{} | derive {{_row = row_number this}} | filter {} | select {{_row}}", self.prql, expr);
-            let t = pl.query(&q, p)?;
+        self.path.as_ref().and_then(|p| {
+            let q = format!("{}|derive{{_row=row_number this}}|filter {}|select{{_row}}", self.prql, expr);
+            let t = backend::query(&q, p)?;
             Some((0..t.rows()).filter_map(|r| {
                 match t.cell(r, 0) { Cell::Int(n) => Some((n - 1) as usize), _ => None }
             }).collect())
         }).unwrap_or_default()
     }
 
-    /// Column stats via plugin (or in-memory fallback)
+    /// Column stats via backend (or in-memory fallback)
     #[must_use]
     pub fn col_stats_plugin(&self, col_idx: usize) -> ColStats {
         use crate::data::table::ColType;
-        self.plugin.and_then(|pl| {
-            let p = self.path.as_ref()?;
-            // Get schema from current view's PRQL
-            let schema = pl.query(&take_chunk(&self.prql, self.state.r0), p)?;
+        use crate::util::pure::qcol;
+        self.path.as_ref().and_then(|p| {
+            let schema = backend::query(&take_chunk(&self.prql, self.state.r0), p)?;
             let col_name = schema.col_name(col_idx)?;
             let col_type = schema.col_type(col_idx);
             let is_num = matches!(col_type, ColType::Int | ColType::Float);
-            // Query stats using PRQL functions
+            let c = qcol(&col_name);
             let q = if is_num {
-                format!("{} | stats this.`{}`", self.prql, col_name)
+                format!("{}|stats this.{}", self.prql, c)
             } else {
-                format!("{} | cntdist this.`{}`", self.prql, col_name)
+                format!("{}|cntdist this.{}", self.prql, c)
             };
-            let t = pl.query(&q, p)?;
+            let t = backend::query(&q, p)?;
             if is_num && t.cols() >= 5 {
                 let min = match t.cell(0, 1) { Cell::Float(f) => format!("{:.2}", f), Cell::Int(i) => i.to_string(), _ => String::new() };
                 let max = match t.cell(0, 2) { Cell::Float(f) => format!("{:.2}", f), Cell::Int(i) => i.to_string(), _ => String::new() };
@@ -357,7 +351,7 @@ mod tests {
     #[test]
     fn test_prql_freq() {
         let v = ViewState::build(0, "freq col")
-            .prql("from df | group {`col`} (aggregate {Cnt = count this}) | sort {-Cnt}")
+            .prql("from df|group{col}(aggregate{Cnt=count this})|sort{-Cnt}")
             .data(empty())
             .parent(1, 100, "parent", Some("col".into()));
         assert!(v.prql.contains("group"));
@@ -374,14 +368,14 @@ mod tests {
     fn test_display_name_xkey() {
         let mut v = ViewState::build(0, "view").data(empty());
         v.key_cols = vec!["a".into(), "b".into()];
-        assert_eq!(v.display_name(), "view | xkey a b");
+        assert_eq!(v.display_name(), "view|xkey{a,b}");
     }
 
     #[test]
     fn test_display_name_del() {
         let mut v = ViewState::build(0, "view").data(empty());
         v.deleted_cols = vec!["x".into()];
-        assert_eq!(v.display_name(), "view | del x");
+        assert_eq!(v.display_name(), "view|del{x}");
     }
 
     #[test]
@@ -389,6 +383,13 @@ mod tests {
         let mut v = ViewState::build(0, "view").data(empty());
         v.deleted_cols = vec!["x".into()];
         v.key_cols = vec!["a".into()];
-        assert_eq!(v.display_name(), "view | del x | xkey a");
+        assert_eq!(v.display_name(), "view|del{x}|xkey{a}");
+    }
+
+    #[test]
+    fn test_display_name_reserved() {
+        let mut v = ViewState::build(0, "view").data(empty());
+        v.key_cols = vec!["date".into(), "time".into()];
+        assert_eq!(v.display_name(), "view|xkey{`date`,`time`}");
     }
 }
