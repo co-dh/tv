@@ -58,9 +58,9 @@ pub struct Frequency { pub col_names: Vec<String> }
 impl Command for Frequency {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         if app.is_loading() { return Err(anyhow!("Wait for loading to complete")); }
-        let (parent_id, parent_rows, parent_name, path, key_cols, parent_prql) = {
+        let (parent_id, parent_rows, parent_name, path, parent_prql) = {
             let v = app.req()?;
-            (v.id, v.rows(), v.name.clone(), v.path.clone(), v.key_cols.clone(), v.prql.clone())
+            (v.id, v.rows(), v.name.clone(), v.path.clone(), v.prql.clone())
         };
         let cols = qcols(&self.col_names);
         let prql = format!("{}|freq{{{}}}", parent_prql, cols);
@@ -70,7 +70,8 @@ impl Command for Frequency {
             .prql(&prql)
             .parent(parent_id, parent_rows, parent_name, self.col_names.clone());
         if let Some(p) = path { nv = nv.path(p); }
-        nv.key_cols = key_cols;
+        // Set freq columns as key_cols for | separator display
+        nv.key_cols = self.col_names.clone();
         app.stack.push(nv);
         Ok(())
     }

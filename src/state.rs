@@ -410,4 +410,12 @@ mod tests {
         v.key_cols = vec!["a".into()];
         assert_eq!(v.display_name(), "freq a");
     }
+
+    #[test]
+    fn test_display_name_freq_multi_col_no_xkey() {
+        // Multi-column freq should also not show xkey
+        let mut v = ViewState::build(0, "freq a,b").data(empty());
+        v.key_cols = vec!["a".into(), "b".into()];
+        assert_eq!(v.display_name(), "freq a,b");
+    }
 }
