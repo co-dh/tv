@@ -11,6 +11,7 @@ A fast, interactive terminal table viewer for CSV and Parquet files. Built for d
 - **Pivot tables**: Reshape your data with cross-tabulations and custom aggregation functions
 - **System explorer**: Browse running processes, network connections, installed packages, and more as interactive tables
 - **Vim-style navigation**: Use familiar hjkl keys for quick exploration
+- **External databases**: Connect to PostgreSQL, DuckDB, SQLite and other databases via ADBC (Arrow Database Connectivity)
 
 ## Installation
 
@@ -59,6 +60,24 @@ tabv customers.csv        # Plain CSV file
 tabv orders.parquet       # Parquet file (lazy-loaded, handles huge files efficiently)
 tabv logs.csv.gz          # Gzipped CSV (streams first 1000 rows immediately, loads rest in background)
 tabv                      # Start with empty view, press L to load a file
+```
+
+### External Databases
+
+Connect to external databases using ADBC (Arrow Database Connectivity):
+
+```bash
+tabv "adbc:duckdb://path/to/db.duckdb?table=sales"
+tabv "adbc:postgresql://localhost/mydb?table=orders"
+tabv "adbc:sqlite:///path/to/db.sqlite?table=users"
+```
+
+Path format: `adbc:driver://connection?table=tablename`
+
+For DuckDB, you can create a view to query parquet files:
+```bash
+duckdb mydb.duckdb "CREATE VIEW trades AS SELECT * FROM read_parquet('data.parquet');"
+tabv "adbc:duckdb://mydb.duckdb?table=trades"
 ```
 
 ### Navigating Your Data
