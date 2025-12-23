@@ -152,13 +152,17 @@ pub fn handle_cmd(app: &mut AppContext, cmd: &str) -> Result<bool> {
         }
         "convert" => { app.msg("Use derive for type conversion (PRQL syntax)"); }
         "aggregate" => {
-            let has_keys = app.view().map(|v| !v.key_cols.is_empty()).unwrap_or(false);
-            if !has_keys {
-                app.msg("Set key columns first with ! (xkey)");
-            } else if let Some(col) = app.view().and_then(|v| v.col_name(v.state.cc)) {
-                let result = picker::fzf(vec!["count".into(), "sum".into(), "mean".into(), "min".into(), "max".into(), "std".into()], "Aggregate: ");
-                app.needs_clear = true;
-                if let Ok(Some(func)) = result { run(app, Box::new(Agg { col, func })); }
+            let info = app.view().map(|v| (v.key_cols.clone(), v.col_name(v.state.cc)));
+            if let Some((keys, Some(col))) = info {
+                if keys.is_empty() {
+                    app.msg("Set key columns first with ! (xkey)");
+                } else {
+                    // Show PRQL: group {keys} (aggregate {func col})
+                    let prompt = format!("group {{{}}} (agg {{? {}}}): ", keys.join(","), col);
+                    let result = picker::fzf(vec!["count".into(), "sum".into(), "mean".into(), "min".into(), "max".into(), "std".into()], &prompt);
+                    app.needs_clear = true;
+                    if let Ok(Some(func)) = result { run(app, Box::new(Agg { col, func })); }
+                }
             }
         }
         "delete" => {
