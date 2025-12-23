@@ -1,6 +1,6 @@
 //! System plugin - routes OS commands to sqlite plugin or ADBC
-//! Commands like ps, tcp, pacman are implemented in sqlite plugin (source:ps, etc.)
-//! With ADBC backend: runs shell command → imports to SQLite → queries via ADBC
+//! Simple sources (ps, tcp, etc.) use shared tv_plugin_api::source
+//! Complex sources (journalctl, pacman) use sqlite plugin APIs
 
 use crate::app::AppContext;
 use crate::command::Command;
@@ -8,6 +8,7 @@ use crate::plugin::Plugin;
 use crate::state::ViewState;
 use anyhow::Result;
 use std::process::Command as ShellCmd;
+use tv_plugin_api::source;
 
 /// Known system commands (cmd, has_arg)
 const SYS_CMDS: &[(&str, bool)] = &[
@@ -79,32 +80,15 @@ impl Command for SourceCmd {
     }
 }
 
-/// Generate ADBC path for system command (runs shell, imports to SQLite)
+/// Generate ADBC path for system command using shared source module
 fn adbc_source(cmd: &str) -> Option<String> {
     // Check if ADBC SQLite driver exists
     if !std::path::Path::new("/usr/local/lib/libadbc_driver_sqlite.so").exists() {
         return None;
     }
-    // Only simple shell commands here - complex ones (journalctl, pacman, cargo)
-    // need shared API code between sqlite and adbc plugins
-    let (header, shell) = match cmd {
-        "ps" => ("user\tpid\tcpu\tmem\tcmd",
-            r#"ps aux --no-headers | awk '{printf "%s\t%s\t%s\t%s\t%s\n",$1,$2,$3,$4,$11}'"#),
-        "tcp" => ("proto\tlocal\tremote\tstate",
-            r#"ss -tn | tail -n+2 | awk '{printf "tcp\t%s\t%s\t%s\n",$4,$5,$1}'"#),
-        "udp" => ("proto\tlocal\tremote\tstate",
-            r#"ss -un | tail -n+2 | awk '{printf "udp\t%s\t%s\t%s\n",$4,$5,$1}'"#),
-        "env" => ("name\tvalue", r#"env | sed 's/=/\t/'"#),
-        "df" => ("fs\tsize\tused\tavail\tpct\tmount",
-            r#"df -h | awk 'NR>1{printf "%s\t%s\t%s\t%s\t%s\t%s\n",$1,$2,$3,$4,$5,$6}'"#),
-        "mounts" => ("dev\tmount\ttype\topts",
-            r#"mount | awk '{printf "%s\t%s\t%s\t%s\n",$1,$3,$5,$6}'"#),
-        _ => return None, // journalctl, pacman, cargo, lsof use sqlite plugin API
-    };
-    // Run shell command to get data
-    let data = ShellCmd::new("sh").arg("-c").arg(shell).output().ok()?;
-    let data = String::from_utf8_lossy(&data.stdout);
-    let tsv = format!("{}\n{}", header, data);
+    // Get data from shared source module
+    let table = source::get(cmd)?;
+    let tsv = source::to_tsv(&table);
     // Write TSV to temp file
     let db = adbc_sys_db();
     let tsv_path = format!("{}.{}.tsv", db, cmd);

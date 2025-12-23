@@ -7,6 +7,7 @@ use std::ptr;
 pub use lru::LruCache;
 
 pub mod prql;
+pub mod source;
 
 pub const PLUGIN_API_VERSION: u32 = 2;
 
