@@ -25,7 +25,7 @@
 
 ```
 src/
-├── main.rs            # Entry, event loop, -c flag
+├── main.rs            # Entry, event loop, --keys flag
 ├── app.rs             # AppContext: global state, view stack
 ├── state.rs           # ViewState, ViewStack, cursor/viewport, PRQL chain
 │
@@ -42,46 +42,47 @@ src/
 │   ├── transform.rs   #   Filter, Sort, Take, Select - all lazy PRQL
 │   ├── nav.rs         #   Goto, GotoCol, Page navigation
 │   ├── view.rs        #   Pop, Swap, Dup
-│   └── io/mod.rs      #   From (load via plugin), Save
+│   └── io/mod.rs      #   From (load file), Save
 │
-├── data/              # Data abstraction
-│   ├── dynload.rs     #   Plugin loader (C ABI), wraps .so in Rust API
+├── data/              # Data layer (ADBC+DuckDB)
+│   ├── backend.rs     #   DuckDB via ADBC: query, save, register_table
+│   ├── source.rs      #   Source generators: ls, lr, ps, pacman, etc.
 │   └── table.rs       #   Table trait, Cell/ColType, SimpleTable
 │
-├── plugin/            # View-specific handlers (internal)
+├── plugin/            # View-specific handlers
 │   ├── mod.rs         #   Plugin trait, Registry
-│   ├── meta.rs        #   Metadata view (via dynload plugin)
-│   ├── freq.rs        #   Frequency distribution (via dynload plugin)
-│   ├── folder.rs      #   ls/lr file browser
-│   ├── corr.rs        #   Correlation matrix (stub)
-│   ├── pivot.rs       #   Pivot table (stub)
-│   └── system.rs      #   OS commands (ps, pacman, systemctl, etc.)
+│   ├── meta.rs        #   Metadata view (column stats)
+│   ├── freq.rs        #   Frequency distribution
+│   ├── folder.rs      #   ls/lr file browser, bat viewer
+│   ├── corr.rs        #   Correlation matrix
+│   └── system.rs      #   OS commands (ps, pacman, systemctl)
 │
 ├── render/
 │   ├── terminal.rs    #   Terminal init/restore
-│   └── renderer.rs    #   TUI rendering, lazy fetch via dynload
+│   └── renderer.rs    #   TUI rendering, status bar
 │
-├── util/
-│   ├── picker.rs      #   fzf integration for fuzzy selection
-│   ├── pure.rs        #   Pure functions (PRQL compile, helpers)
-│   └── theme.rs       #   Config loading, colors
-│
-crates/
-├── tv-plugin-api/     # C ABI types (PluginVtable, CellValue, etc.)
-├── tv-polars/         # Polars plugin (~100MB .so) - parquet/CSV/gzip
-└── tv-sqlite/         # SQLite plugin (~2MB .so) - in-memory tables, sources
+└── util/
+    ├── picker.rs      #   fzf integration for fuzzy selection
+    ├── pure.rs        #   Pure functions (PRQL compile, helpers)
+    └── theme.rs       #   Config loading, colors
 ```
 
-## Plugin Architecture
+## Data Backend (ADBC+DuckDB)
 ```
-main.rs → dynload::get() → Plugin { vt: PluginVtable }
-                              ├── query(sql, path) → PluginTable
-                              ├── fetch(path, offset, limit)
-                              ├── fetch_where(path, filter, offset, limit)
-                              ├── count(path), count_where(path, filter)
-                              ├── freq(path, cols, filter)
-                              ├── distinct(path, col)
-                              └── schema(path)
+backend.rs
+├── query(prql, path) → Box<dyn Table>  # Cached, PRQL→SQL→DuckDB
+├── save(prql, path_in, path_out)       # Export to CSV/Parquet
+├── register_table(id, data) → "mem:id" # In-memory table for views
+├── unregister_table(id)                # Free on view drop
+└── compile_prql(prql) → SQL            # With built-in funcs (freq, stats, etc.)
+
+source.rs
+├── source:ls:{path}   # Directory listing
+├── source:lr:{path}   # Recursive listing
+├── source:ps          # Process list
+├── source:pacman      # Installed packages
+├── source:systemctl   # Systemd services
+└── source:mounts      # Mount points
 ```
 
 ## PRQL Chain
@@ -92,7 +93,14 @@ All transforms are lazy PRQL that get appended to ViewState.prql:
 - Take: `{prql} | take {n}`
 - Derive: `{prql} | derive {new = old}`
 
-PRQL compiles to SQL for execution via plugin.
+Built-in PRQL functions (defined in backend.rs):
+- `freq{col}` - frequency count with Cnt, Pct, Bar
+- `stats col` - n, min, max, avg, std
+- `cnt` - row count
+- `uniq{col}` - distinct values
+- `meta col` - count, distinct, total, min, max
+
+PRQL compiles to SQL for execution via DuckDB.
 
 ## Command Flow
 ```
@@ -120,10 +128,11 @@ KeyEvent → key_str() → keymap.get_command() → keyhandler::to_cmd() → par
 5. **Keymap** - Tab-based bindings (table/folder/freq/meta) with common fallback
 
 ## Design Principles
-- Main crate has no polars dependency - all data ops via plugin .so
-- Small CSV loads to memory, parquet stays on disk (lazy)
-- PRQL for query chaining, compiles to SQL for plugin execution
-- DRY: similar functions share code (e.g., freq is freq_where with empty filter)
+- Single binary with ADBC+DuckDB (libduckdb.so at runtime)
+- Parquet/CSV/JSON read directly via DuckDB (lazy, no memory load)
+- PRQL for query chaining, compiles to SQL for DuckDB execution
+- Source paths (ls, ps, pacman) generate SQL via source.rs
+- Views freed on pop (Drop calls unregister_table)
 
 ## Filter Logic (fzf)
 - fzf shows hints (column values), supports multi-select
@@ -148,5 +157,3 @@ GPU? cache meta.
 
 # Todo
 - load tests/data/nyse/1.parquet M0D is not working, M1<ret> neither.
-- :cargo background fetch still leaks package descriptions to terminal (setsid not enough)
-- Add is_loading() to plugin interface so main crate knows if plugin is still loading
