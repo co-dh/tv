@@ -52,10 +52,10 @@ pub extern "C" fn tv_query(prql_ptr: *const c_char, path: *const c_char) -> Tabl
 
     cache().get_or_exec(&path, &prql, |sql| {
         dbg(&format!("EXEC path={} prql={}", path, &prql[..prql.len().min(80)]));
-        // Load source
+        // Load source (gz auto-detected by magic bytes)
         let lf = if path.ends_with(".parquet") {
             LazyFrame::scan_parquet(PlPath::new(&path), Default::default()).ok()
-        } else if path.ends_with(".csv") {
+        } else if path.ends_with(".csv") || path.ends_with(".gz") {
             CsvReadOptions::default()
                 .with_has_header(true)
                 .try_into_reader_with_file_path(Some(path.clone().into()))
