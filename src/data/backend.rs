@@ -151,7 +151,7 @@ fn parse_path(path: &str) -> Option<PathType> {
 
 /// PRQL function definitions (freq, cnt, stats, etc.)
 const PRQL_FUNCS: &str = r#"
-let freq = func c tbl <relation> -> (from tbl | group {c} (aggregate {Cnt = count this}) | sort {-Cnt})
+let freq = func c tbl <relation> -> (from tbl | group {c} (aggregate {Cnt = count this}) | sort {-Cnt} | derive {Pct = s"ROUND({Cnt} * 100.0 / SUM({Cnt}) OVER(), 1)", Bar = s"REPEAT('#', CAST({Cnt} * 20.0 / MAX({Cnt}) OVER() AS INT))"})
 let uniq = func c tbl <relation> -> (from tbl | group {c} (take 1) | select {c})
 let cnt = func tbl <relation> -> (from tbl | aggregate {n = count this})
 let stats = func c tbl <relation> -> (from tbl | aggregate {n = count this, min = min c, max = max c, avg = average c, std = stddev c})
