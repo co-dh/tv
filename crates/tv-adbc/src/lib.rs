@@ -10,6 +10,7 @@
 //!   adbc:duckdb:///path/to/file.csv
 //!   adbc:duckdb:///path/to/file.json
 
+
 use std::ffi::{c_char, c_void};
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -328,9 +329,41 @@ pub extern "C" fn tv_str_free(p: *mut c_char) {
     unsafe { free_c_str(p); }
 }
 
+/// Save query result to file (DuckDB COPY TO)
 #[no_mangle]
-pub extern "C" fn tv_save(_prql: *const c_char, _path_in: *const c_char, _path_out: *const c_char) -> u8 {
-    1 // Not implemented for ADBC
+pub extern "C" fn tv_save(prql_ptr: *const c_char, path_in_ptr: *const c_char, path_out_ptr: *const c_char) -> u8 {
+    let prql = unsafe { from_c_str(prql_ptr) };
+    let path_in = unsafe { from_c_str(path_in_ptr) };
+    let path_out = unsafe { from_c_str(path_out_ptr) };
+
+    // Only DuckDB supports COPY TO
+    let (driver, conn_str, table) = match parse_path(&path_in) {
+        Some(p) if p.0 == "adbc_driver_duckdb" => p,
+        _ => return 1,
+    };
+
+    // Compile PRQL to SQL
+    let sql = match prql::compile(&prql) {
+        Some(s) => s.replace("\"df\"", &format!("\"{}\"", table))
+                    .replace(" df ", &format!(" \"{}\" ", table))
+                    .replace(" df\n", &format!(" \"{}\"\n", table))
+                    .replace("FROM df", &format!("FROM \"{}\"", table)),
+        None => return 1,
+    };
+
+    // Build COPY TO query
+    let fmt = if path_out.ends_with(".parquet") || path_out.ends_with(".pq") {
+        "PARQUET"
+    } else {
+        "CSV"
+    };
+    let copy_sql = format!("COPY ({}) TO '{}' (FORMAT {})", sql.trim_end_matches(';'), path_out, fmt);
+
+    // Execute via DuckDB
+    match query_adbc(&driver, &conn_str, &copy_sql) {
+        Ok(_) => 0,
+        Err(_) => 1,
+    }
 }
 
 /// Plugin init - returns vtable

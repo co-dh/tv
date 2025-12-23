@@ -1,131 +1,63 @@
-//! System source generators - shared between sqlite and adbc plugins
-//! Returns data as simple tables that plugins can use
+//! System source functions - shell commands to ADBC SQLite
+//! Used by system plugin for ps, tcp, udp, env, df, mounts
 
-use std::process::Command;
+use std::process::Command as ShellCmd;
 
-/// Simple table: column names, types, and row data
-pub struct SourceTable {
-    pub cols: Vec<String>,
-    pub types: Vec<u8>,  // 0=str, 1=int, 2=float
-    pub rows: Vec<Vec<String>>,
-}
+/// Shell source definition: (name, header, shell_cmd)
+const SOURCES: &[(&str, &str, &str)] = &[
+    ("ps", "user\tpid\t%cpu\t%mem\tvsz\trss\ttty\tstat\tstart\ttime\tcommand",
+        r#"ps aux --no-headers | awk '{printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11}'"#),
+    ("tcp", "proto\tlocal\tremote\tstate",
+        r#"ss -tn | tail -n+2 | awk '{printf "tcp\t%s\t%s\t%s\n",$4,$5,$1}'"#),
+    ("udp", "proto\tlocal\tremote\tstate",
+        r#"ss -un | tail -n+2 | awk '{printf "udp\t%s\t%s\t%s\n",$4,$5,$1}'"#),
+    ("env", "name\tvalue", r#"env | sed 's/=/\t/'"#),
+    ("df", "fs\tsize\tused\tavail\tpct\tmount",
+        r#"df -h | awk 'NR>1{printf "%s\t%s\t%s\t%s\t%s\t%s\n",$1,$2,$3,$4,$5,$6}'"#),
+    ("mounts", "dev\tmount\ttype\topts",
+        r#"mount | awk '{printf "%s\t%s\t%s\t%s\n",$1,$3,$5,$6}'"#),
+];
 
-impl SourceTable {
-    fn new(cols: &[&str], types: &[u8]) -> Self {
-        Self {
-            cols: cols.iter().map(|s| s.to_string()).collect(),
-            types: types.to_vec(),
-            rows: Vec::new(),
-        }
-    }
-    fn push(&mut self, row: Vec<String>) { self.rows.push(row); }
-}
+/// SQLite ADBC driver path
+pub const SQLITE_DRIVER: &str = "/usr/local/lib/libadbc_driver_sqlite.so";
 
-/// Run shell command, return stdout
-fn run(cmd: &str) -> Option<String> {
-    Command::new("sh").arg("-c").arg(cmd).output().ok()
-        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
-}
-
-/// Process list
-pub fn ps() -> SourceTable {
-    let mut t = SourceTable::new(&["user", "pid", "cpu", "mem", "cmd"], &[0, 1, 2, 2, 0]);
-    if let Some(out) = run("ps aux --no-headers") {
-        for line in out.lines() {
-            let f: Vec<&str> = line.split_whitespace().collect();
-            if f.len() >= 11 {
-                t.push(vec![f[0].into(), f[1].into(), f[2].into(), f[3].into(), f[10].into()]);
-            }
-        }
-    }
-    t
-}
-
-/// TCP connections
-pub fn tcp() -> SourceTable {
-    let mut t = SourceTable::new(&["proto", "local", "remote", "state"], &[0, 0, 0, 0]);
-    if let Some(out) = run("ss -tn") {
-        for line in out.lines().skip(1) {
-            let f: Vec<&str> = line.split_whitespace().collect();
-            if f.len() >= 5 {
-                t.push(vec!["tcp".into(), f[3].into(), f[4].into(), f[0].into()]);
-            }
-        }
-    }
-    t
-}
-
-/// UDP connections
-pub fn udp() -> SourceTable {
-    let mut t = SourceTable::new(&["proto", "local", "remote", "state"], &[0, 0, 0, 0]);
-    if let Some(out) = run("ss -un") {
-        for line in out.lines().skip(1) {
-            let f: Vec<&str> = line.split_whitespace().collect();
-            if f.len() >= 5 {
-                t.push(vec!["udp".into(), f[3].into(), f[4].into(), f[0].into()]);
-            }
-        }
-    }
-    t
-}
-
-/// Environment variables
-pub fn env() -> SourceTable {
-    let mut t = SourceTable::new(&["name", "value"], &[0, 0]);
-    for (k, v) in std::env::vars() {
-        t.push(vec![k, v]);
-    }
-    t
-}
-
-/// Disk usage
-pub fn df() -> SourceTable {
-    let mut t = SourceTable::new(&["fs", "size", "used", "avail", "pct", "mount"], &[0, 0, 0, 0, 0, 0]);
-    if let Some(out) = run("df -h") {
-        for line in out.lines().skip(1) {
-            let f: Vec<&str> = line.split_whitespace().collect();
-            if f.len() >= 6 {
-                t.push(vec![f[0].into(), f[1].into(), f[2].into(), f[3].into(), f[4].into(), f[5].into()]);
-            }
-        }
-    }
-    t
-}
-
-/// Mount points
-pub fn mounts() -> SourceTable {
-    let mut t = SourceTable::new(&["dev", "mount", "type", "opts"], &[0, 0, 0, 0]);
-    if let Some(out) = run("mount") {
-        for line in out.lines() {
-            let f: Vec<&str> = line.split_whitespace().collect();
-            if f.len() >= 6 {
-                t.push(vec![f[0].into(), f[2].into(), f[4].into(), f[5].into()]);
-            }
-        }
-    }
-    t
-}
-
-/// Get source by name
-pub fn get(name: &str) -> Option<SourceTable> {
-    match name {
-        "ps" => Some(ps()),
-        "tcp" => Some(tcp()),
-        "udp" => Some(udp()),
-        "env" => Some(env()),
-        "df" => Some(df()),
-        "mounts" => Some(mounts()),
-        _ => None,
+/// Get user/process-specific ADBC SQLite database path
+pub fn sys_db() -> String {
+    let pid = std::process::id();
+    if let Ok(dir) = std::env::var("XDG_RUNTIME_DIR") {
+        format!("{}/tv_sys_{}.db", dir, pid)
+    } else {
+        let user = std::env::var("USER").unwrap_or_else(|_| "tv".into());
+        format!("/tmp/tv_sys_{}_{}.db", user, pid)
     }
 }
 
-/// Convert to TSV string (for SQLite import)
-pub fn to_tsv(t: &SourceTable) -> String {
-    let mut s = t.cols.join("\t");
-    s.push('\n');
-    for row in &t.rows {
-        s.push_str(&row.join("\t"));
-        s.push('\n');
-    }
-    s
+/// Check if ADBC SQLite driver is available
+pub fn available() -> bool {
+    std::path::Path::new(SQLITE_DRIVER).exists()
+}
+
+/// Generate ADBC path for system command (shell → SQLite import)
+/// Returns None if driver not available or command not supported
+pub fn source(cmd: &str) -> Option<String> {
+    if !available() { return None; }
+    let (_, header, shell) = SOURCES.iter().find(|(c, _, _)| *c == cmd)?;
+    // Run shell, import to SQLite
+    let data = ShellCmd::new("sh").arg("-c").arg(shell).output().ok()?;
+    let tsv = format!("{}\n{}", header, String::from_utf8_lossy(&data.stdout));
+    let db = sys_db();
+    let tsv_path = format!("{}.{}.tsv", db, cmd);
+    std::fs::write(&tsv_path, &tsv).ok()?;
+    let import_cmd = format!(
+        "sqlite3 '{}' 'DROP TABLE IF EXISTS {}' && sqlite3 '{}' -cmd '.mode tabs' '.import {} {}'",
+        db, cmd, db, tsv_path, cmd
+    );
+    ShellCmd::new("sh").arg("-c").arg(&import_cmd).status().ok()?;
+    std::fs::remove_file(&tsv_path).ok();
+    Some(format!("adbc:sqlite://{}?table={}", db, cmd))
+}
+
+/// Check if command is a known simple source (shell-based)
+pub fn is_simple(cmd: &str) -> bool {
+    SOURCES.iter().any(|(c, _, _)| *c == cmd)
 }

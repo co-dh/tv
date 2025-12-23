@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/tv-plugin-api", "crates/tv-polars", "crates/tv-sqlite", "crates/tv-duckdb", "crates/tv-plot", "crates/tv-adbc"]
+members = [".", "crates/tv-plugin-api", "crates/tv-polars", "crates/tv-sqlite", "crates/tv-plot", "crates/tv-adbc"]
 
 [package]
 name = "tabv"

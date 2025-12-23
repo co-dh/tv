@@ -6,17 +6,34 @@ use crate::data::dynload;
 use crate::state::ViewState;
 use anyhow::{anyhow, Result};
 
+/// Check if path is a data file ADBC+DuckDB can read
+fn is_data_file(p: &str) -> bool {
+    let exts = [".parquet", ".pq", ".csv", ".csv.gz", ".json"];
+    exts.iter().any(|e| p.ends_with(e))
+}
+
 /// Load file command (CSV, Parquet, or gzipped CSV)
 pub struct From { pub file_path: String }
 
 impl Command for From {
     /// Load file - lazy, data fetched on render
+    /// Default: ADBC+DuckDB for files, --backend polars forces polars plugin
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         let p = &self.file_path;
-        dynload::get_for(p).ok_or_else(|| anyhow!("no plugin for: {}", p))?;
+        // Route: already prefixed paths use their plugin, else use backend preference
+        let path = if p.starts_with("memory:") || p.starts_with("source:") || p.starts_with("adbc:") {
+            p.clone()
+        } else if app.backend.as_deref() == Some("polars") {
+            p.clone()  // --backend polars: use polars plugin
+        } else if dynload::get_adbc().is_some() && is_data_file(p) {
+            format!("adbc:duckdb://{}", p)  // Default: ADBC+DuckDB
+        } else {
+            p.clone()  // Fallback: polars
+        };
+        dynload::get_for(&path).ok_or_else(|| anyhow!("no plugin for: {}", p))?;
         let id = app.next_id();
         let name = format!("from {}", p);
-        app.stack.push(ViewState::build(id, &name).path(p));
+        app.stack.push(ViewState::build(id, &name).path(&path));
         app.msg(format!("Loaded {}", name));
         Ok(())
     }
@@ -40,7 +57,9 @@ impl Command for Save {
 
         // For file-backed views, use plugin to save via PRQL
         if let Some(path_in) = &v.path {
-            if let Some(plugin) = dynload::get() {
+            // Try matching plugin first, then polars fallback
+            let plugins = [dynload::get_for(path_in), dynload::get()];
+            for plugin in plugins.into_iter().flatten() {
                 if plugin.save(&v.prql, path_in, out) {
                     app.msg(format!("Saved {}", out));
                     return Ok(());

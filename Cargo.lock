@@ -4866,14 +4866,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tv-duckdb"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "tv-plugin-api",
-]
-
-[[package]]
 name = "tv-plot"
 version = "0.1.0"
 dependencies = [

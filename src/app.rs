@@ -28,6 +28,7 @@ pub struct AppContext {
     pub plugins: Registry,         // plugin registry
     pub bg_saver: Option<Receiver<String>>,      // background save status
     pub raw_save: bool,            // --raw: skip type detection on save
+    pub backend: Option<String>,   // --backend: sqlite uses sqlite plugin, else ADBC
     pub needs_redraw: bool,  // redraw on next frame
     pub needs_clear: bool,   // force full clear (after fzf/bat)
     pub test_input: Vec<String>,   // pre-extracted input for prompts (test mode)
@@ -52,6 +53,7 @@ impl Default for AppContext {
             plugins: Registry::new(std::path::Path::new("cfg/plugins.csv")),
             bg_saver: None,
             raw_save: false,
+            backend: None,
             needs_redraw: false,
             needs_clear: false,
             test_input: Vec::new(),

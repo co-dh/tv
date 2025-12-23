@@ -53,7 +53,7 @@ fn main() -> Result<()> {
         let file = file_arg.as_deref();
         let (keys, test_input) = extract_prompts(&parse_keys(&args[idx + 1]));
         let key_events: Vec<KeyEvent> = keys.iter().map(|s| str_to_key(s)).collect();
-        let mut app = make_app(file, raw_save);
+        let mut app = make_app(file, raw_save, backend.clone());
         app.test_input = test_input;
         let (w, h) = (200, 80);
         let backend = TestBackend::new(w, h);
@@ -69,16 +69,17 @@ fn main() -> Result<()> {
 
     // Initialize ratatui terminal and run TUI
     let mut tui = render::init()?;
-    let mut app = make_app(file_arg.as_deref(), raw_save);
+    let mut app = make_app(file_arg.as_deref(), raw_save, backend);
     app.run(&mut tui, on_key)?;
     render::restore()?;
     Ok(())
 }
 
 /// Create app context and load file if provided
-fn make_app(file: Option<&str>, raw_save: bool) -> AppContext {
+fn make_app(file: Option<&str>, raw_save: bool, backend: Option<String>) -> AppContext {
     let mut app = AppContext::default();
     app.raw_save = raw_save;
+    app.backend = backend;
     if let Some(path) = file {
         if let Err(e) = CommandExecutor::exec(&mut app, Box::new(From { file_path: path.to_string() })) {
             eprintln!("Error loading {}: {}", path, e);
