@@ -1,9 +1,10 @@
 //! DuckDB backend via ADBC - direct integration (no plugin)
+//! Uses persistent driver/database to avoid reloading libduckdb.so
 
 use super::source;
 
 use super::table::{Cell, ColType, Table};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use std::collections::HashMap;
 use std::time::SystemTime;
 use lru::LruCache;
@@ -19,9 +20,12 @@ fn dbg(msg: &str) {
 }
 use adbc_core::{Driver, Database, Connection, Statement};
 use adbc_core::options::{AdbcVersion, OptionDatabase, OptionValue};
-use adbc_driver_manager::ManagedDriver;
+use adbc_driver_manager::{ManagedDriver, ManagedDatabase};
 use arrow_array::*;
 use arrow_schema::*;
+
+// Persistent DuckDB database (loaded once)
+static DUCK_DB: OnceLock<Option<Mutex<ManagedDatabase>>> = OnceLock::new();
 
 // Query cache: (path, prql) -> QueryResult
 static CACHE: Mutex<Option<LruCache<String, QueryResult>>> = Mutex::new(None);
@@ -177,22 +181,41 @@ pub fn compile_prql(prql: &str) -> Option<String> {
     prqlc::compile(&full, &opts).ok()
 }
 
-/// Execute SQL via DuckDB in-memory
-fn query_duckdb(sql: &str) -> Result<QueryResult, String> {
-    let paths = ["/usr/lib/libduckdb.so", "/usr/local/lib/libduckdb.so", "libduckdb.so"];
-    let lib = paths.iter().find(|p| std::path::Path::new(p).exists())
-        .ok_or("libduckdb.so not found")?;
+/// Find libduckdb.so path (env DUCKDB_LIB overrides)
+fn find_duckdb_lib() -> Option<&'static str> {
+    static LIB: OnceLock<Option<String>> = OnceLock::new();
+    LIB.get_or_init(|| {
+        if let Ok(p) = std::env::var("DUCKDB_LIB") {
+            if std::path::Path::new(&p).exists() { return Some(p); }
+        }
+        let paths = ["/usr/lib/libduckdb.so", "/usr/local/lib/libduckdb.so", "libduckdb.so"];
+        paths.iter().find(|p| std::path::Path::new(p).exists()).map(|s| s.to_string())
+    }).as_deref()
+}
 
-    let mut driver = ManagedDriver::load_dynamic_from_filename(lib, Some(b"duckdb_adbc_init"), AdbcVersion::V110)
-        .map_err(|e| format!("driver: {}", e))?;
-
+/// Init persistent DuckDB database (called once)
+fn init_db() -> Option<Mutex<ManagedDatabase>> {
+    let lib = find_duckdb_lib()?;
+    dbg(&format!("ADBC init lib={}", lib));
+    let mut driver = ManagedDriver::load_dynamic_from_filename(lib, Some(b"duckdb_adbc_init"), AdbcVersion::V110).ok()?;
     let opts = vec![(OptionDatabase::Other("path".into()), OptionValue::String("".into()))];
-    let database = driver.new_database_with_opts(opts).map_err(|e| format!("db: {}", e))?;
-    let mut connection = database.new_connection().map_err(|e| format!("conn: {}", e))?;
-    let mut statement = connection.new_statement().map_err(|e| format!("stmt: {}", e))?;
+    let db = driver.new_database_with_opts(opts).ok()?;
+    Some(Mutex::new(db))
+}
 
-    statement.set_sql_query(sql).map_err(|e| format!("sql: {}", e))?;
-    let output = statement.execute().map_err(|e| format!("exec: {}", e))?;
+/// Get persistent DuckDB database
+fn get_db() -> Option<&'static Mutex<ManagedDatabase>> {
+    DUCK_DB.get_or_init(|| init_db()).as_ref()
+}
+
+/// Execute SQL via DuckDB (persistent connection)
+fn query_duckdb(sql: &str) -> Result<QueryResult, String> {
+    let db = get_db().ok_or("DuckDB not available")?.lock().map_err(|e| format!("lock: {}", e))?;
+    let mut conn = db.new_connection().map_err(|e| format!("conn: {}", e))?;
+    let mut stmt = conn.new_statement().map_err(|e| format!("stmt: {}", e))?;
+
+    stmt.set_sql_query(sql).map_err(|e| format!("sql: {}", e))?;
+    let output = stmt.execute().map_err(|e| format!("exec: {}", e))?;
 
     let schema = output.schema();
     let batches: Vec<RecordBatch> = output.map(|r| r.map_err(|e| format!("batch: {}", e)))
@@ -309,7 +332,7 @@ fn table_to_sql(t: &dyn Table) -> String {
     let schema: Vec<String> = cols.iter().zip(&types)
         .map(|(n, ty)| format!("\"{}\" {}", n, ty))
         .collect();
-    let create = format!("CREATE TABLE df({})", schema.join(","));
+    let create = format!("CREATE OR REPLACE TABLE df({})", schema.join(","));
 
     if t.rows() == 0 { return create; }
     let rows: Vec<String> = (0..t.rows()).map(|r| {

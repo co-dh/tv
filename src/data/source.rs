@@ -50,7 +50,7 @@ fn commands() -> SourceData {
     let vals: Vec<String> = rows.iter()
         .map(|(c, d)| format!("('{}','{}')", c, d))
         .collect();
-    SourceData { sql: format!("CREATE TABLE df(command VARCHAR,description VARCHAR);INSERT INTO df VALUES{}", vals.join(",")) }
+    SourceData { sql: format!("CREATE OR REPLACE TABLE df(command VARCHAR,description VARCHAR);INSERT INTO df VALUES{}", vals.join(",")) }
 }
 
 /// Format unix timestamp to ISO datetime
@@ -100,7 +100,7 @@ fn ls(dir: &Path) -> Result<SourceData, std::io::Error> {
         rows.push(format!("('{}','{}',{},'{}','{}')", esc(&name), esc(&abs_str), m.size(), esc(&fmt_time(m.mtime())), is_dir));
     }
 
-    let sql = format!("CREATE TABLE df(name VARCHAR,path VARCHAR,size BIGINT,modified VARCHAR,dir VARCHAR);INSERT INTO df VALUES{}", rows.join(","));
+    let sql = format!("CREATE OR REPLACE TABLE df(name VARCHAR,path VARCHAR,size BIGINT,modified VARCHAR,dir VARCHAR);INSERT INTO df VALUES{}", rows.join(","));
     Ok(SourceData { sql })
 }
 
@@ -125,9 +125,9 @@ fn lr(dir: &Path) -> Result<SourceData, std::io::Error> {
     }
 
     let sql = if rows.is_empty() {
-        "CREATE TABLE df(name VARCHAR,path VARCHAR,size BIGINT,modified VARCHAR,dir VARCHAR)".into()
+        "CREATE OR REPLACE TABLE df(name VARCHAR,path VARCHAR,size BIGINT,modified VARCHAR,dir VARCHAR)".into()
     } else {
-        format!("CREATE TABLE df(name VARCHAR,path VARCHAR,size BIGINT,modified VARCHAR,dir VARCHAR);INSERT INTO df VALUES{}", rows.join(","))
+        format!("CREATE OR REPLACE TABLE df(name VARCHAR,path VARCHAR,size BIGINT,modified VARCHAR,dir VARCHAR);INSERT INTO df VALUES{}", rows.join(","))
     };
     Ok(SourceData { sql })
 }
@@ -149,7 +149,7 @@ fn ps() -> Result<SourceData, std::io::Error> {
         }
     }
 
-    let sql = format!("CREATE TABLE df(user VARCHAR,pid BIGINT,cpu DOUBLE,mem DOUBLE,vsz BIGINT,rss BIGINT,tty VARCHAR,stat VARCHAR,start VARCHAR,time VARCHAR,command VARCHAR);INSERT INTO df VALUES{}", rows.join(","));
+    let sql = format!("CREATE OR REPLACE TABLE df(user VARCHAR,pid BIGINT,cpu DOUBLE,mem DOUBLE,vsz BIGINT,rss BIGINT,tty VARCHAR,stat VARCHAR,start VARCHAR,time VARCHAR,command VARCHAR);INSERT INTO df VALUES{}", rows.join(","));
     Ok(SourceData { sql })
 }
 
@@ -173,9 +173,9 @@ fn parse_net(proto: &str) -> Result<SourceData, std::io::Error> {
     }
 
     let sql = if rows.is_empty() {
-        "CREATE TABLE df(proto VARCHAR,local VARCHAR,remote VARCHAR,state VARCHAR)".into()
+        "CREATE OR REPLACE TABLE df(proto VARCHAR,local VARCHAR,remote VARCHAR,state VARCHAR)".into()
     } else {
-        format!("CREATE TABLE df(proto VARCHAR,local VARCHAR,remote VARCHAR,state VARCHAR);INSERT INTO df VALUES{}", rows.join(","))
+        format!("CREATE OR REPLACE TABLE df(proto VARCHAR,local VARCHAR,remote VARCHAR,state VARCHAR);INSERT INTO df VALUES{}", rows.join(","))
     };
     Ok(SourceData { sql })
 }
@@ -186,7 +186,7 @@ fn env() -> Result<SourceData, std::io::Error> {
         .map(|(k, v)| format!("('{}','{}')", esc(&k), esc(&v)))
         .collect();
 
-    let sql = format!("CREATE TABLE df(name VARCHAR,value VARCHAR);INSERT INTO df VALUES{}", rows.join(","));
+    let sql = format!("CREATE OR REPLACE TABLE df(name VARCHAR,value VARCHAR);INSERT INTO df VALUES{}", rows.join(","));
     Ok(SourceData { sql })
 }
 
@@ -204,7 +204,7 @@ fn df() -> Result<SourceData, std::io::Error> {
         }
     }
 
-    let sql = format!("CREATE TABLE df(filesystem VARCHAR,size VARCHAR,used VARCHAR,avail VARCHAR,pct VARCHAR,mount VARCHAR);INSERT INTO df VALUES{}", rows.join(","));
+    let sql = format!("CREATE OR REPLACE TABLE df(filesystem VARCHAR,size VARCHAR,used VARCHAR,avail VARCHAR,pct VARCHAR,mount VARCHAR);INSERT INTO df VALUES{}", rows.join(","));
     Ok(SourceData { sql })
 }
 
@@ -218,7 +218,7 @@ fn mounts() -> Result<SourceData, std::io::Error> {
         }
     }
 
-    let sql = format!("CREATE TABLE df(device VARCHAR,mount VARCHAR,type VARCHAR,options VARCHAR);INSERT INTO df VALUES{}", rows.join(","));
+    let sql = format!("CREATE OR REPLACE TABLE df(device VARCHAR,mount VARCHAR,type VARCHAR,options VARCHAR);INSERT INTO df VALUES{}", rows.join(","));
     Ok(SourceData { sql })
 }
 
@@ -239,9 +239,9 @@ fn systemctl() -> Result<SourceData, std::io::Error> {
     }
 
     let sql = if rows.is_empty() {
-        "CREATE TABLE df(unit VARCHAR,load VARCHAR,active VARCHAR,sub VARCHAR,description VARCHAR)".into()
+        "CREATE OR REPLACE TABLE df(unit VARCHAR,load VARCHAR,active VARCHAR,sub VARCHAR,description VARCHAR)".into()
     } else {
-        format!("CREATE TABLE df(unit VARCHAR,load VARCHAR,active VARCHAR,sub VARCHAR,description VARCHAR);INSERT INTO df VALUES{}", rows.join(","))
+        format!("CREATE OR REPLACE TABLE df(unit VARCHAR,load VARCHAR,active VARCHAR,sub VARCHAR,description VARCHAR);INSERT INTO df VALUES{}", rows.join(","))
     };
     Ok(SourceData { sql })
 }
@@ -266,9 +266,9 @@ fn lsof(pid: Option<i32>) -> Result<SourceData, std::io::Error> {
     }
 
     let sql = if rows.is_empty() {
-        "CREATE TABLE df(pid BIGINT,fd BIGINT,path VARCHAR)".into()
+        "CREATE OR REPLACE TABLE df(pid BIGINT,fd BIGINT,path VARCHAR)".into()
     } else {
-        format!("CREATE TABLE df(pid BIGINT,fd BIGINT,path VARCHAR);INSERT INTO df VALUES{}", rows.join(","))
+        format!("CREATE OR REPLACE TABLE df(pid BIGINT,fd BIGINT,path VARCHAR);INSERT INTO df VALUES{}", rows.join(","))
     };
     Ok(SourceData { sql })
 }
@@ -365,9 +365,9 @@ fn pacman() -> Result<SourceData, std::io::Error> {
     }
 
     let sql = if rows.is_empty() {
-        "CREATE TABLE df(name VARCHAR,version VARCHAR,\"size(k)\" BIGINT,\"rsize(k)\" BIGINT,deps BIGINT,req_by BIGINT,orphan VARCHAR,reason VARCHAR,installed VARCHAR,description VARCHAR)".into()
+        "CREATE OR REPLACE TABLE df(name VARCHAR,version VARCHAR,\"size(k)\" BIGINT,\"rsize(k)\" BIGINT,deps BIGINT,req_by BIGINT,orphan VARCHAR,reason VARCHAR,installed VARCHAR,description VARCHAR)".into()
     } else {
-        format!("CREATE TABLE df(name VARCHAR,version VARCHAR,\"size(k)\" BIGINT,\"rsize(k)\" BIGINT,deps BIGINT,req_by BIGINT,orphan VARCHAR,reason VARCHAR,installed VARCHAR,description VARCHAR);INSERT INTO df VALUES{}", rows.join(","))
+        format!("CREATE OR REPLACE TABLE df(name VARCHAR,version VARCHAR,\"size(k)\" BIGINT,\"rsize(k)\" BIGINT,deps BIGINT,req_by BIGINT,orphan VARCHAR,reason VARCHAR,installed VARCHAR,description VARCHAR);INSERT INTO df VALUES{}", rows.join(","))
     };
     Ok(SourceData { sql })
 }
