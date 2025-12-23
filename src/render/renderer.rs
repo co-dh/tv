@@ -516,13 +516,21 @@ impl Renderer {
         }
     }
 
-    /// Render empty message
+    /// Render empty message with memory usage
     fn empty_msg(frame: &mut Frame, message: &str, area: Rect) {
         let buf = frame.buffer_mut();
+        // Message in center
         let y = area.height / 2;
         for (i, ch) in message.chars().enumerate() {
             if i >= area.width as usize { break; }
             buf[(i as u16, y)].set_char(ch);
+        }
+        // Memory in bottom right
+        let mem = format!("{}MB", mem_mb());
+        let x = area.width.saturating_sub(mem.len() as u16);
+        let y = area.height.saturating_sub(1);
+        for (i, ch) in mem.chars().enumerate() {
+            buf[(x + i as u16, y)].set_char(ch);
         }
     }
 
