@@ -38,19 +38,26 @@ impl Plugin for FolderPlugin {
             .map(|s| s.split(" & ").next().unwrap_or(s))  // strip filter part
             .map(|s| PathBuf::from(s)).unwrap_or_else(|| PathBuf::from("."));
 
-        // Find column indices
+        // Find column indices (name + path = full path)
         let cols = v.data.col_names();
+        let name_col = cols.iter().position(|c| c == "name")?;
         let path_col = cols.iter().position(|c| c == "path")?;
         let dir_col = cols.iter().position(|c| c == "dir");
+
+        // Helper to get full path from row (path/name)
+        let full_path = |r: usize| -> String {
+            let name = unquote(&v.data.cell(r, name_col).format(10));
+            let containing = unquote(&v.data.cell(r, path_col).format(10));
+            if name == ".." { containing } else { format!("{}/{}", containing, name) }
+        };
 
         // For delete: get all selected paths (or current row)
         if cmd == "delete" {
             let rows: Vec<usize> = if v.selected_rows.is_empty() { vec![v.state.cr] }
                 else { v.selected_rows.iter().copied().collect() };
             let paths: Vec<String> = rows.iter()
-                .map(|&r| v.data.cell(r, path_col).format(10))
+                .map(|&r| full_path(r))
                 .filter(|s| !s.is_empty() && s != "null")
-                .map(|s| unquote(&s))
                 .collect();
             if !paths.is_empty() {
                 return Some(Box::new(DelFiles { paths, dir }));
@@ -59,14 +66,10 @@ impl Plugin for FolderPlugin {
         }
 
         // For enter: get current row info
-        let rel_path = unquote(&v.data.cell(v.state.cr, path_col).format(10));
-        if rel_path.is_empty() || rel_path == "null" { return None; }
+        let path = full_path(v.state.cr);
+        if path.is_empty() || path == "null" { return None; }
         let is_dir = dir_col.map(|c| unquote(&v.data.cell(v.state.cr, c).format(10)) == "x")
             .unwrap_or(false);
-        // For lr (recursive), join base dir with relative path
-        let path = if v.name.starts_with("folder -r:") {
-            dir.join(&rel_path).to_string_lossy().to_string()
-        } else { rel_path };
 
         match cmd {
             "enter" => {

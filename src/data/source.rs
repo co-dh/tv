@@ -75,34 +75,36 @@ fn fmt_time(ts: i64) -> String {
 /// Escape SQL string
 fn esc(s: &str) -> String { s.replace('\'', "''") }
 
-/// Directory listing
+/// Directory listing - path column shows containing folder
 fn ls(dir: &Path) -> Result<SourceData, std::io::Error> {
     let mut rows = Vec::new();
     let mut entries: Vec<_> = fs::read_dir(dir)?.filter_map(|e| e.ok()).collect();
     entries.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
 
     let abs = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+    let abs_str = abs.to_string_lossy();
+    // ".." row: path is parent's parent (grandparent)
     if let Some(p) = abs.parent() {
         let m = p.metadata().ok();
         let sz = m.as_ref().map(|m| m.size() as i64).unwrap_or(0);
         let mt = m.map(|m| fmt_time(m.mtime())).unwrap_or_default();
-        rows.push(format!("('..','{}',{},'{}','x')", esc(&p.to_string_lossy()), sz, esc(&mt)));
+        let pp = p.parent().map(|g| g.to_string_lossy().to_string()).unwrap_or_else(|| "/".into());
+        rows.push(format!("('..','{}',{},'{}','x')", esc(&pp), sz, esc(&mt)));
     }
 
     for e in entries {
         let m = e.metadata()?;
-        let full = e.path().canonicalize().unwrap_or_else(|_| e.path());
         let name = e.file_name().to_string_lossy().to_string();
-        let path = full.to_string_lossy().to_string();
         let is_dir = if m.is_dir() { "x" } else { "" };
-        rows.push(format!("('{}','{}',{},'{}','{}')", esc(&name), esc(&path), m.size(), esc(&fmt_time(m.mtime())), is_dir));
+        // path = containing folder (current dir for all entries)
+        rows.push(format!("('{}','{}',{},'{}','{}')", esc(&name), esc(&abs_str), m.size(), esc(&fmt_time(m.mtime())), is_dir));
     }
 
     let sql = format!("CREATE TABLE df(name VARCHAR,path VARCHAR,size BIGINT,modified VARCHAR,dir VARCHAR);INSERT INTO df VALUES{}", rows.join(","));
     Ok(SourceData { sql })
 }
 
-/// Recursive listing via rg --files
+/// Recursive listing via rg --files - path column shows containing folder
 fn lr(dir: &Path) -> Result<SourceData, std::io::Error> {
     let out = Command::new("rg").args(["--files"]).current_dir(dir).output()?;
     let text = String::from_utf8_lossy(&out.stdout);
@@ -115,8 +117,9 @@ fn lr(dir: &Path) -> Result<SourceData, std::io::Error> {
         let full = dir.join(p);
         if let Ok(m) = full.metadata() {
             let name = full.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-            let path = abs.join(p).to_string_lossy().to_string();
-            rows.push(format!("('{}','{}',{},'{}','{}')", esc(&name), esc(&path), m.size(),
+            // path = containing folder (parent of the file)
+            let parent = abs.join(p).parent().map(|d| d.to_string_lossy().to_string()).unwrap_or_default();
+            rows.push(format!("('{}','{}',{},'{}','{}')", esc(&name), esc(&parent), m.size(),
                 esc(&fmt_time(m.mtime())), if m.is_dir() { "x" } else { "" }));
         }
     }

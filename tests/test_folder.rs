@@ -71,3 +71,22 @@ fn test_folder_open_file() {
     let out = run_keys(":ls<ret><down><ret>", "tests/data/basic.csv");
     assert!(out.len() > 0, "Should produce output");
 }
+
+#[test]
+fn test_folder_path_is_containing_dir() {
+    // path column should show containing folder, not full file path
+    let out = run_keys(":ls tests/data<ret>", "");
+    // All files in tests/data should have path = .../tests/data
+    assert!(out.contains("tests/data"), "Path should show containing dir: {}", out);
+    // File rows should NOT have file extension in path column
+    let lines: Vec<&str> = out.lines().skip(1).take(5).collect();
+    for line in &lines {
+        if line.contains(".csv") || line.contains(".parquet") {
+            // The path column (2nd) should not contain the filename
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 2 {
+                assert!(!parts[1].contains(".csv"), "Path should not contain filename: {}", line);
+            }
+        }
+    }
+}
