@@ -157,8 +157,8 @@ pub fn handle_cmd(app: &mut AppContext, cmd: &str) -> Result<bool> {
                 if keys.is_empty() {
                     app.msg("Set key columns first with ! (xkey)");
                 } else {
-                    // Show PRQL: group {keys} (aggregate {funcs col})
-                    let prompt = format!("group {{{}}} (agg {{? {}}}): ", keys.join(","), col);
+                    // Show PRQL: group {keys} (aggregate {funcs col}), hint for multi-select
+                    let prompt = format!("group {{{}}} (agg {{? {}}}) [Tab=multi]: ", keys.join(","), col);
                     let result = picker::fzf_multi(vec!["count".into(), "sum".into(), "mean".into(), "min".into(), "max".into(), "std".into()], &prompt);
                     app.needs_clear = true;
                     if let Ok(funcs) = result {
