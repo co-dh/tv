@@ -97,13 +97,22 @@ Each filter creates a new view on the stack. Press `q` to return to the unfilter
 
 ### Aggregating Data
 
-Press `b` to aggregate the data by the current column. You'll be prompted to choose an aggregation function:
+Press `b` to aggregate data with GROUP BY. First set key columns with `!`, then select columns to aggregate:
 
-- **count**: Number of rows in each group
-- **sum**: Sum of values
-- **mean**: Average value
-- **min** / **max**: Minimum or maximum value
-- **std**: Standard deviation
+1. **Set key columns**: Navigate to a column and press `!` to mark it as a key (GROUP BY column). Key columns appear first with a `|` separator.
+2. **Select columns to aggregate** (optional): Use `Space` to select multiple columns. If none selected, uses current column.
+3. **Press `b`**: Opens a picker showing `group {keys} (agg {? cols}) [Tab=multi]:`
+4. **Choose functions**: Use `Tab` to multi-select from count, sum, mean, min, max, std
+
+Example workflow:
+```
+!              # Mark current column (e.g., "city") as key
+→ → Space      # Move right, select "value" column
+→ Space        # Move right, select "score" column
+b              # Open aggregate picker
+Tab Tab Enter  # Select "sum" and "count", confirm
+```
+Result: New view with `city`, `value_sum`, `value_cnt`, `score_sum`, `score_cnt`
 
 ### Analytical Views
 
@@ -170,9 +179,9 @@ All system views support the same navigation and filtering as regular data files
 | `D` | Delete selected columns |
 | `[` / `]` | Sort ascending / descending |
 | `c` | Create computed column |
-| `b` | Aggregate by current column |
+| `b` | Aggregate selected columns by key columns |
 | `^` | Rename current column |
-| `!` | Set key columns for pivot |
+| `!` | Toggle key columns (for aggregate/pivot) |
 
 ### Views
 | Key | Action |
