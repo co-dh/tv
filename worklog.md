@@ -1,5 +1,53 @@
 # Worklog
 
+## 2025-12-23: Binary Size Analysis & Strip
+
+### Binary Size Breakdown
+| Component | % of .text | Size |
+|-----------|------------|------|
+| std (backtrace/symbolize) | 44% | 385KB |
+| tabv (our code) | 21% | 180KB |
+| ratatui_core | 7% | 57KB |
+| gimli (backtrace) | 4% | 38KB |
+| crossterm | 4% | 35KB |
+| prqlc_parser | 1% | 8KB |
+| prqlc | 0.3% | 3KB |
+
+**Surprising:** prqlc is only 11KB total - backtrace support dominates.
+
+### Size with strip = true
+| Build | Size |
+|-------|------|
+| Debug symbols | 5.8MB |
+| Stripped | **1.8MB** |
+
+Enabled `strip = true` in release profile for 69% size reduction.
+
+---
+
+## 2025-12-23: ADBC+DuckDB as Default Backend
+
+### Changes
+- ADBC+DuckDB is now default for data files (.parquet, .csv, .json)
+- `--backend polars` forces polars plugin
+- `--backend sqlite` forces sqlite plugin for system commands
+- Implemented ADBC save via DuckDB `COPY TO` (parquet/csv export)
+- Removed tv-duckdb crate (superseded by tv-adbc)
+
+### Plugin Sizes
+| Plugin | Size | Notes |
+|--------|------|-------|
+| tv-polars | 111MB | Self-contained |
+| tv-adbc | 18MB | + 46MB libduckdb.so |
+| tv-sqlite | 19MB | For system commands |
+
+### Files
+- `src/command/io/mod.rs` - Route files to ADBC by default
+- `src/app.rs` - `backend` field for override
+- `crates/tv-adbc/src/lib.rs` - COPY TO save support
+
+---
+
 ## 2025-12-23: ADBC Plugin for External Databases
 
 ### Feature

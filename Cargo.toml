@@ -10,8 +10,8 @@ license = "MIT"
 repository = "https://github.com/co-dh/tv"
 
 [profile.release]
+strip = true
 # lto = true        # 95MB vs 119MB, +1m20s build - disabled for faster builds
-# strip = true
 # codegen-units = 1
 
 [dependencies]
