@@ -29,7 +29,20 @@ fn main() -> Result<()> {
 
     // Parse flags first (before early returns)
     let raw_save = args.iter().any(|a| a == "--raw");
-    let file_arg = args.iter().skip(1).find(|a| !a.starts_with('-')).cloned();
+    let backend_idx = args.iter().position(|a| a == "--backend");
+    let backend = backend_idx.and_then(|i| args.get(i + 1).cloned());
+    let keys_idx = args.iter().position(|a| a == "--keys");
+    // Find file arg: skip args that are flag values (after --backend, --keys)
+    let skip_indices: Vec<usize> = [backend_idx.map(|i| i + 1), keys_idx.map(|i| i + 1)]
+        .into_iter().flatten().collect();
+    let file_arg = args.iter().enumerate().skip(1)
+        .find(|(i, a)| !a.starts_with('-') && !skip_indices.contains(i))
+        .map(|(_, a)| a.clone());
+    // Prefix path with adbc:{backend}:// if backend specified
+    let file_arg = match (&backend, &file_arg) {
+        (Some(b), Some(f)) => Some(format!("adbc:{}://{}", b, f)),
+        _ => file_arg,
+    };
 
     // Check for --keys argument (key replay mode for testing)
     if let Some(idx) = args.iter().position(|a| a == "--keys") {
@@ -37,7 +50,7 @@ fn main() -> Result<()> {
             eprintln!("Usage: tabv --keys 'F<ret>' file.parquet");
             std::process::exit(1);
         }
-        let file = args.get(idx + 2).map(|s| s.as_str());
+        let file = file_arg.as_deref();
         let (keys, test_input) = extract_prompts(&parse_keys(&args[idx + 1]));
         let key_events: Vec<KeyEvent> = keys.iter().map(|s| str_to_key(s)).collect();
         let mut app = make_app(file, raw_save);

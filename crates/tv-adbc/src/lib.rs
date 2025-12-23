@@ -6,6 +6,9 @@
 //!   adbc:sqlite:///path/to/file.db?table=users
 //!   adbc:postgresql://localhost/mydb?table=orders
 //!   adbc:duckdb:///data.duckdb?table=sales
+//!   adbc:duckdb:///path/to/file.parquet  # direct file via DuckDB
+//!   adbc:duckdb:///path/to/file.csv
+//!   adbc:duckdb:///path/to/file.json
 
 use std::ffi::{c_char, c_void};
 use std::collections::HashMap;
@@ -138,12 +141,22 @@ where F: FnOnce(&QueryResult) -> T, T: Default {
 
 /// Parse ADBC path: adbc:driver://conn_string?table=name
 /// Returns (driver_name, conn_string, table_name)
+/// For parquet files via DuckDB: table_name is "read_parquet('path')"
 fn parse_path(path: &str) -> Option<(String, String, String)> {
     // Strip adbc: prefix
     let path = path.strip_prefix("adbc:").unwrap_or(path);
 
     // Extract driver name (before ://)
     let (driver, rest) = path.split_once("://")?;
+
+    // DuckDB direct file: adbc:duckdb:///path/to/file.{parquet,csv,json}
+    // PRQL quotes path → DuckDB reads quoted path as file
+    let exts = [".parquet", ".csv", ".json"];
+    if driver == "duckdb" && exts.iter().any(|e| rest.ends_with(e)) {
+        let driver_lib = "adbc_driver_duckdb".to_string();
+        let conn_str = "duckdb://:memory:".to_string();
+        return Some((driver_lib, conn_str, rest.to_string()));
+    }
 
     // Extract table from ?table= param
     let (conn, table) = if let Some(idx) = rest.find("?table=") {
@@ -182,8 +195,9 @@ fn query_adbc(driver_name: &str, conn_str: &str, sql: &str) -> Result<QueryResul
 
     // Create database - for DuckDB use path option, others use URI
     let opts: Vec<(OptionDatabase, OptionValue)> = if driver_name == "adbc_driver_duckdb" {
-        // DuckDB: extract db path from conn_str (duckdb://path/to/file.db)
+        // DuckDB: extract db path from conn_str (duckdb://path or duckdb://:memory:)
         let db_path = conn_str.strip_prefix("duckdb://").unwrap_or(conn_str);
+        let db_path = if db_path == ":memory:" { "" } else { db_path }; // empty = in-memory
         vec![(OptionDatabase::Other("path".into()), OptionValue::String(db_path.into()))]
     } else {
         vec![(OptionDatabase::Uri, OptionValue::String(conn_str.into()))]
