@@ -11,11 +11,8 @@ pub fn to_cmd(app: &AppContext, cmd: &str) -> Option<String> {
         // Freq: group by key columns + selected columns + cursor column
         "freq" => {
             let v = app.view()?;
-            let sep = v.col_separator.unwrap_or(0);
-            let dcols = v.display_cols();
-            // Key cols (in display order)
-            let mut group: Vec<String> = dcols[..sep].iter()
-                .filter_map(|&i| v.data.col_name(i)).collect();
+            // Start with key cols
+            let mut group = v.key_cols.clone();
             // Add selected cols (convert display index to data index)
             for &i in &v.selected_cols {
                 let di = v.data_col(i);
@@ -73,7 +70,7 @@ pub fn to_cmd(app: &AppContext, cmd: &str) -> Option<String> {
         "enter" | "filter_parent" | "delete_sel" => None,
 
         // Special
-        "force_quit" | "print_status" => None,
+        "force_quit" => None,
 
         // Page navigation
         "page_down" => Some(format!("goto +{}", app.page())),
@@ -91,19 +88,14 @@ fn cur_col(app: &AppContext) -> Option<String> {
 /// Toggle selected columns (or current column) as keys, return xkey command
 fn toggle_key(app: &AppContext) -> Option<String> {
     let v = app.view()?;
-    let sep = v.col_separator.unwrap_or(0);
-    let cols = v.data.col_names();
-
     // Get columns to toggle: selected cols or current col (convert display to data index)
     let to_toggle: Vec<String> = if v.selected_cols.is_empty() {
         vec![v.col_name(v.data_col(v.state.cc))?]
     } else {
         v.selected_cols.iter().filter_map(|&i| v.col_name(v.data_col(i))).collect()
     };
-
-    // Pure: toggle columns in key list
-    let keys = pure::toggle_keys(&cols[..sep], &to_toggle);
-    // Pure: build xkey command
+    // Toggle columns in key list
+    let keys = pure::toggle_keys(&v.key_cols, &to_toggle);
     Some(pure::xkey_cmd(&keys))
 }
 

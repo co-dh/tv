@@ -115,7 +115,7 @@ impl Renderer {
         let bottom_reserve = if show_tabs { 4 } else { 3 };
         let end_row = (state.r0 + (area.height as usize).saturating_sub(bottom_reserve)).min(total_rows);
 
-        let col_sep = view.col_separator;
+        let col_sep = if view.key_cols.is_empty() { None } else { Some(view.col_separator()) };
 
         // Render headers
         Self::render_headers_xs(frame, table, state, &dcols, &xs, screen_width, row_num_width, selected_cols, col_sep, theme, area);
@@ -414,9 +414,9 @@ impl Renderer {
     fn render_tabs(frame: &mut Frame, names: &[String], area: Rect, theme: &Theme) {
         let row = area.height - 2;
         let tab_area = Rect::new(0, row, area.width, 1);
-        // Shorten: truncate to 25 chars (full command shown, optionally shorten path)
+        // Truncate long names to 100 chars
         let short: Vec<String> = names.iter().map(|s| {
-            if s.len() > 25 { format!("{}…", &s[..24]) } else { s.clone() }
+            if s.len() > 100 { format!("{}…", &s[..99]) } else { s.clone() }
         }).collect();
         // Fill background
         let buf = frame.buffer_mut();
@@ -424,7 +424,7 @@ impl Renderer {
         for x in 0..area.width { buf[(x, row)].set_style(Style::default().bg(bg)).set_char(' '); }
         // Render tabs
         let selected = names.len().saturating_sub(1);
-        let tabs = Tabs::new(short.iter().map(|s| s.as_str()))
+        let tabs = Tabs::new(short.iter().map(String::as_str))
             .select(selected)
             .style(Style::default().fg(to_rcolor(theme.status_fg)).bg(bg))
             .highlight_style(Style::default().fg(to_rcolor(theme.header_fg)).bg(bg).add_modifier(Modifier::BOLD))
@@ -470,7 +470,7 @@ impl Renderer {
         // Show total rows via plugin
         let total_str = commify(&view.total_rows().to_string());
 
-        let keys = view.col_separator.unwrap_or(0);
+        let keys = view.col_separator();
         let sel_info = if keys > 0 {
             format!(" [keys={} sel={}]", keys, view.selected_cols.len())
         } else {

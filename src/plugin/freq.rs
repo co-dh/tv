@@ -64,7 +64,7 @@ impl Command for Frequency {
         // Get view info before mutation
         let (parent_id, parent_rows, parent_name, path, key_cols, parent_prql) = {
             let v = app.req()?;
-            (v.id, v.rows(), v.name.clone(), v.path.clone(), v.key_cols(), v.prql.clone())
+            (v.id, v.rows(), v.name.clone(), v.path.clone(), v.key_cols.clone(), v.prql.clone())
         };
 
         // Build PRQL using freq function from funcs.prql
@@ -79,7 +79,7 @@ impl Command for Frequency {
             .prql(&prql)
             .parent(parent_id, parent_rows, parent_name, Some(freq_col));
         if let Some(p) = path { nv = nv.path(p); }
-        if !key_cols.is_empty() { nv.col_separator = Some(key_cols.len()); }
+        nv.key_cols = key_cols;
         app.stack.push(nv);
         Ok(())
     }

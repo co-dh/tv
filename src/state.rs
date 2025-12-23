@@ -84,9 +84,8 @@ pub struct ViewState {
     pub parent: Option<ParentInfo>,
     pub selected_cols: HashSet<usize>,
     pub selected_rows: HashSet<usize>,
-    pub col_separator: Option<usize>,
-    pub col_order: Option<Vec<usize>>,   // display column order (xkey)
-    pub history: Vec<String>,
+    pub key_cols: Vec<String>,           // xkey columns (display first)
+    pub deleted_cols: Vec<String>,       // deleted columns (hidden)
     pub partial: bool,                   // gz truncated flag
 }
 
@@ -104,8 +103,7 @@ impl Clone for ViewState {
             prql: self.prql.clone(), path: self.path.clone(), plugin: self.plugin, data,
             state: self.state.clone(), parent: self.parent.clone(),
             selected_cols: self.selected_cols.clone(), selected_rows: self.selected_rows.clone(),
-            col_separator: self.col_separator, col_order: self.col_order.clone(),
-            history: self.history.clone(), partial: self.partial,
+            key_cols: self.key_cols.clone(), deleted_cols: self.deleted_cols.clone(), partial: self.partial,
         }
     }
 }
@@ -119,7 +117,7 @@ impl ViewState {
             id, name: name.into(), prql: "from df".into(),
             path: None, plugin: None, data: Self::empty(), state: TableState::default(),
             parent: None, selected_cols: HashSet::new(), selected_rows: HashSet::new(),
-            col_separator: None, col_order: None, history: Vec::new(), partial: false,
+            key_cols: Vec::new(), deleted_cols: Vec::new(), partial: false,
         }
     }
 
@@ -141,9 +139,6 @@ impl ViewState {
         self.plugin = self.path.as_ref().and_then(|p| dynload::get_for(p)); self
     }
 
-    /// Add to history
-    pub fn add_hist(&mut self, cmd: impl Into<String>) { self.history.push(cmd.into()); }
-
     /// Row count from data
     #[inline] #[must_use]
     pub fn rows(&self) -> usize { self.data.rows() }
@@ -160,26 +155,44 @@ impl ViewState {
     #[must_use]
     pub fn col_name(&self, idx: usize) -> Option<String> { self.data.col_name(idx) }
 
-    /// Key columns (before separator)
-    #[must_use]
-    pub fn key_cols(&self) -> Vec<String> {
-        self.col_separator.map(|sep| self.col_names().into_iter().take(sep).collect()).unwrap_or_default()
-    }
+    /// Number of key columns (for separator position)
+    #[inline] #[must_use]
+    pub fn col_separator(&self) -> usize { self.key_cols.len() }
 
     /// Row selection mode (meta/freq) - detected by name prefix
     #[inline] #[must_use]
     pub fn is_row_sel(&self) -> bool { self.name == "meta" || self.name.starts_with("freq ") }
 
-    /// Get column indices in display order (respects col_order if set)
+    /// Display name with del/xkey suffix (for tabs)
+    #[must_use]
+    pub fn display_name(&self) -> String {
+        let mut s = self.name.clone();
+        if !self.deleted_cols.is_empty() { s = format!("{} | del {}", s, self.deleted_cols.join(" ")); }
+        if !self.key_cols.is_empty() { s = format!("{} | xkey {}", s, self.key_cols.join(" ")); }
+        s
+    }
+
+    /// Get column indices in display order: key_cols first, then rest minus deleted
     #[must_use]
     pub fn display_cols(&self) -> Vec<usize> {
-        self.col_order.clone().unwrap_or_else(|| (0..self.data.cols()).collect())
+        let cols = self.data.col_names();
+        // Key columns first (by name → index)
+        let mut order: Vec<usize> = self.key_cols.iter()
+            .filter_map(|k| cols.iter().position(|c| c == k))
+            .collect();
+        // Then remaining columns (not key, not deleted)
+        for (i, name) in cols.iter().enumerate() {
+            if !self.key_cols.contains(name) && !self.deleted_cols.contains(name) {
+                order.push(i);
+            }
+        }
+        order
     }
 
     /// Map display column index to data column index
     #[inline] #[must_use]
     pub fn data_col(&self, display_idx: usize) -> usize {
-        self.col_order.as_ref().and_then(|o| o.get(display_idx).copied()).unwrap_or(display_idx)
+        self.display_cols().get(display_idx).copied().unwrap_or(display_idx)
     }
 
     /// Get cell
@@ -305,7 +318,7 @@ impl StateStack {
     #[inline] #[must_use] pub fn has_view(&self) -> bool { !self.stack.is_empty() }
     pub fn find_mut(&mut self, id: usize) -> Option<&mut ViewState> { self.stack.iter_mut().find(|v| v.id == id) }
     pub fn swap(&mut self) { let n = self.stack.len(); if n >= 2 { self.stack.swap(n - 1, n - 2); } }
-    #[must_use] pub fn names(&self) -> Vec<String> { self.stack.iter().map(|v| v.name.clone()).collect() }
+    #[must_use] pub fn names(&self) -> Vec<String> { self.stack.iter().map(|v| v.display_name()).collect() }
 }
 
 impl std::ops::Index<usize> for StateStack {
@@ -339,5 +352,33 @@ mod tests {
             .parent(1, 100, "parent", Some("col".into()));
         assert!(v.prql.contains("group"));
         assert!(v.is_row_sel());
+    }
+
+    #[test]
+    fn test_display_name_basic() {
+        let v = ViewState::build(0, "view").data(empty());
+        assert_eq!(v.display_name(), "view");
+    }
+
+    #[test]
+    fn test_display_name_xkey() {
+        let mut v = ViewState::build(0, "view").data(empty());
+        v.key_cols = vec!["a".into(), "b".into()];
+        assert_eq!(v.display_name(), "view | xkey a b");
+    }
+
+    #[test]
+    fn test_display_name_del() {
+        let mut v = ViewState::build(0, "view").data(empty());
+        v.deleted_cols = vec!["x".into()];
+        assert_eq!(v.display_name(), "view | del x");
+    }
+
+    #[test]
+    fn test_display_name_both() {
+        let mut v = ViewState::build(0, "view").data(empty());
+        v.deleted_cols = vec!["x".into()];
+        v.key_cols = vec!["a".into()];
+        assert_eq!(v.display_name(), "view | del x | xkey a");
     }
 }

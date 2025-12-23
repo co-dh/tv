@@ -20,7 +20,7 @@ pub fn parse(line: &str, app: &mut AppContext) -> Option<Box<dyn Command>> {
         "load" | "from" => return Some(Box::new(From { file_path: arg.to_string() })),
         "save" => return Some(Box::new(Save { file_path: arg.to_string() })),
         "corr" | "correlation" => return Some(Box::new(Correlation)),
-        "del_col" | "delcol" => return Some(Box::new(DelCol { col_names: arg.split(',').map(|s| s.trim().to_string()).collect() })),
+        "del_col" | "delcol" => return Some(Box::new(DelCol { cols: arg.split(',').map(|s| s.trim().to_string()).collect() })),
         "filter" => return Some(Box::new(Filter { expr: arg.to_string() })),
         "select" | "sel" => return Some(Box::new(Select {
             col_names: arg.split(',').map(|s| s.trim().to_string()).collect()
@@ -34,8 +34,8 @@ pub fn parse(line: &str, app: &mut AppContext) -> Option<Box<dyn Command>> {
         "to_time" => return Some(Box::new(ToTime { col_name: arg.to_string() })),
         "derive" => return Some(Box::new(Derive { col_name: arg.to_string() })),
         "xkey" => {
-            let cols: Vec<String> = arg.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
-            return Some(Box::new(Xkey { col_names: cols }));
+            let keys: Vec<String> = arg.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+            return Some(Box::new(Xkey { keys }));
         }
         "rename" => {
             let (old, new) = arg.split_once(' ')?;

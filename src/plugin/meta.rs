@@ -120,7 +120,7 @@ impl Command for MetaEnter {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         CommandExecutor::exec(app, Box::new(Pop))?;
         if !self.col_names.is_empty() {
-            CommandExecutor::exec(app, Box::new(Xkey { col_names: self.col_names.clone() }))?;
+            CommandExecutor::exec(app, Box::new(Xkey { keys: self.col_names.clone() }))?;
         }
         Ok(())
     }
@@ -135,7 +135,7 @@ impl Command for MetaDelete {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         CommandExecutor::exec(app, Box::new(Pop))?;
         if !self.col_names.is_empty() {
-            CommandExecutor::exec(app, Box::new(crate::command::transform::DelCol { col_names: self.col_names.clone() }))?;
+            CommandExecutor::exec(app, Box::new(crate::command::transform::DelCol { cols: self.col_names.clone() }))?;
         }
         Ok(())
     }

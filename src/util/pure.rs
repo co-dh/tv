@@ -52,26 +52,6 @@ pub fn in_clause(col: &str, values: &[String], is_str: bool) -> String {
     values.iter().map(|v| format!("`{}` == {}{}{}", col, q, v, q)).collect::<Vec<_>>().join(" || ")
 }
 
-/// Reorder columns: keys first, then rest
-#[must_use]
-pub fn reorder_cols(all: &[String], keys: &[String]) -> Vec<String> {
-    let rest: Vec<String> = all.iter()
-        .filter(|c| !keys.contains(c))
-        .cloned()
-        .collect();
-    let mut order = keys.to_vec();
-    order.extend(rest);
-    order
-}
-
-/// Count how many columns in 'deleted' appear before 'sep' in 'all'
-#[must_use]
-pub fn count_before_sep(all: &[String], deleted: &[String], sep: usize) -> usize {
-    deleted.iter()
-        .filter(|c| all.iter().position(|n| n == *c).map(|i| i < sep).unwrap_or(false))
-        .count()
-}
-
 /// Toggle columns in/out of key list
 #[must_use]
 pub fn toggle_keys(current: &[String], to_toggle: &[String]) -> Vec<String> {
@@ -140,20 +120,6 @@ mod tests {
     fn test_in_clause_num() {
         let vals = vec!["1".into(), "2".into()];
         assert_eq!(in_clause("col", &vals, false), "`col` == 1 || `col` == 2");
-    }
-
-    #[test]
-    fn test_reorder_cols() {
-        let all = vec!["a".into(), "b".into(), "c".into()];
-        let keys = vec!["c".into(), "a".into()];
-        assert_eq!(reorder_cols(&all, &keys), vec!["c", "a", "b"]);
-    }
-
-    #[test]
-    fn test_count_before_sep() {
-        let all = vec!["a".into(), "b".into(), "c".into(), "d".into()];
-        let del = vec!["a".into(), "c".into()];
-        assert_eq!(count_before_sep(&all, &del, 2), 1);  // only 'a' is before sep
     }
 
     #[test]
