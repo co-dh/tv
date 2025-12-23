@@ -10,21 +10,28 @@
 //!   adbc:duckdb:///path/to/file.csv
 //!   adbc:duckdb:///path/to/file.json
 
-
 use std::ffi::{c_char, c_void};
-use std::sync::OnceLock;
+use std::sync::Mutex;
+use std::collections::HashMap;
 use tv_plugin_api::*;
-use tv_plugin_api::prql::QueryCache;
 use adbc_core::{Driver, Database, Connection, Statement};
 use adbc_core::options::{AdbcVersion, OptionDatabase, OptionValue};
 use adbc_driver_manager::ManagedDriver;
 use arrow_array::*;
 use arrow_schema::*;
 
-// Query cache: (path, prql) -> QueryResult
-static CACHE: OnceLock<QueryCache<QueryResult>> = OnceLock::new();
-fn cache() -> &'static QueryCache<QueryResult> {
-    CACHE.get_or_init(|| QueryCache::new(100))
+// Simple query cache: (path, prql) -> QueryResult
+static CACHE: Mutex<Option<HashMap<String, QueryResult>>> = Mutex::new(None);
+
+fn cache_get(key: &str) -> Option<*const QueryResult> {
+    CACHE.lock().ok()?.as_ref()?.get(key).map(|r| r as *const QueryResult)
+}
+
+fn cache_put(key: &str, r: QueryResult) -> *const QueryResult {
+    let mut guard = CACHE.lock().unwrap();
+    let map = guard.get_or_insert_with(HashMap::new);
+    map.insert(key.to_string(), r);
+    map.get(key).unwrap() as *const QueryResult
 }
 
 /// Query result with schema and data
@@ -118,10 +125,7 @@ fn cell_from_batch(batch: &RecordBatch, row: usize, col: usize) -> CCell {
             let a = arr.as_any().downcast_ref::<LargeStringArray>().unwrap();
             CCell { typ: CellType::Str, i: 0, f: 0.0, s: to_c_str(a.value(row)) }
         }
-        _ => {
-            // Fallback: format as string
-            CCell { typ: CellType::Str, i: 0, f: 0.0, s: to_c_str("?") }
-        }
+        _ => CCell { typ: CellType::Str, i: 0, f: 0.0, s: to_c_str("?") }
     }
 }
 
@@ -134,45 +138,28 @@ where F: FnOnce(&QueryResult) -> T, T: Default {
 }
 
 /// Parse ADBC path: adbc:driver://conn_string?table=name
-/// Returns (driver_name, conn_string, table_name)
-/// For parquet files via DuckDB: table_name is "read_parquet('path')"
 fn parse_path(path: &str) -> Option<(String, String, String)> {
-    // Strip adbc: prefix
     let path = path.strip_prefix("adbc:").unwrap_or(path);
-
-    // Extract driver name (before ://)
     let (driver, rest) = path.split_once("://")?;
 
     // DuckDB direct file: adbc:duckdb:///path/to/file.{parquet,csv,json}
-    // PRQL quotes path → DuckDB reads quoted path as file
     let exts = [".parquet", ".csv", ".json"];
     if driver == "duckdb" && exts.iter().any(|e| rest.ends_with(e)) {
-        let driver_lib = "adbc_driver_duckdb".to_string();
-        let conn_str = "duckdb://:memory:".to_string();
-        return Some((driver_lib, conn_str, rest.to_string()));
+        return Some(("adbc_driver_duckdb".into(), "duckdb://:memory:".into(), rest.into()));
     }
 
     // Extract table from ?table= param
     let (conn, table) = if let Some(idx) = rest.find("?table=") {
-        let conn = &rest[..idx];
-        let table = rest[idx + 7..].split('&').next().unwrap_or("");
-        (conn, table)
+        (&rest[..idx], rest[idx + 7..].split('&').next().unwrap_or(""))
     } else {
         (rest, "")
     };
 
-    // Build driver library name
-    let driver_lib = format!("adbc_driver_{}", driver);
-
-    // Reconstruct connection string for the driver
-    let conn_str = format!("{}://{}", driver, conn);
-
-    Some((driver_lib, conn_str, table.to_string()))
+    Some((format!("adbc_driver_{}", driver), format!("{}://{}", driver, conn), table.into()))
 }
 
 /// Execute query via ADBC driver
 fn query_adbc(driver_name: &str, conn_str: &str, sql: &str) -> Result<QueryResult, String> {
-    // Resolve driver library path and entrypoint
     let (lib_path, entrypoint): (&str, Option<&[u8]>) = if driver_name == "adbc_driver_duckdb" {
         let paths = ["/usr/lib/libduckdb.so", "/usr/local/lib/libduckdb.so", "libduckdb.so"];
         let lib = paths.iter().find(|p| std::path::Path::new(p).exists())
@@ -187,11 +174,9 @@ fn query_adbc(driver_name: &str, conn_str: &str, sql: &str) -> Result<QueryResul
         (driver_name, None)
     };
 
-    // Load driver dynamically
     let mut driver = ManagedDriver::load_dynamic_from_filename(lib_path, entrypoint, AdbcVersion::V110)
         .map_err(|e| format!("Failed to load driver {}: {}", lib_path, e))?;
 
-    // Create database - driver-specific options
     let opts: Vec<(OptionDatabase, OptionValue)> = if driver_name == "adbc_driver_duckdb" {
         let db_path = conn_str.strip_prefix("duckdb://").unwrap_or(conn_str);
         let db_path = if db_path == ":memory:" { "" } else { db_path };
@@ -202,24 +187,17 @@ fn query_adbc(driver_name: &str, conn_str: &str, sql: &str) -> Result<QueryResul
     } else {
         vec![(OptionDatabase::Uri, OptionValue::String(conn_str.into()))]
     };
+
     let database = driver.new_database_with_opts(opts)
         .map_err(|e| format!("Failed to create database: {}", e))?;
-
-    // Connect
     let mut connection = database.new_connection()
         .map_err(|e| format!("Failed to connect: {}", e))?;
-
-    // Create statement and execute
     let mut statement = connection.new_statement()
         .map_err(|e| format!("Failed to create statement: {}", e))?;
 
-    statement.set_sql_query(sql)
-        .map_err(|e| format!("Failed to set query: {}", e))?;
+    statement.set_sql_query(sql).map_err(|e| format!("Failed to set query: {}", e))?;
+    let output = statement.execute().map_err(|e| format!("Failed to execute: {}", e))?;
 
-    let output = statement.execute()
-        .map_err(|e| format!("Failed to execute: {}", e))?;
-
-    // Collect results
     let schema = output.schema();
     let batches: Vec<RecordBatch> = output
         .map(|r| r.map_err(|e| format!("Batch error: {}", e)))
@@ -229,8 +207,6 @@ fn query_adbc(driver_name: &str, conn_str: &str, sql: &str) -> Result<QueryResul
     Ok(QueryResult { schema, batches, rows })
 }
 
-// === Plugin exports ===
-
 /// Replace "df" with actual table name in SQL
 fn replace_table(sql: &str, table: &str) -> String {
     sql.replace("\"df\"", &format!("\"{}\"", table))
@@ -239,50 +215,48 @@ fn replace_table(sql: &str, table: &str) -> String {
        .replace("FROM df", &format!("FROM \"{}\"", table))
 }
 
-/// Query external database via ADBC (cached)
+// === Plugin exports ===
+
+/// Query via ADBC (cached by path+prql)
 #[no_mangle]
 pub extern "C" fn tv_query(prql_ptr: *const c_char, path_ptr: *const c_char) -> *mut c_void {
     if prql_ptr.is_null() || path_ptr.is_null() { return std::ptr::null_mut(); }
     let prql = unsafe { from_c_str(prql_ptr) };
     let path = unsafe { from_c_str(path_ptr) };
 
-    // Parse path to get driver info
     let (driver, conn_str, table) = match parse_path(&path) {
         Some(p) => p,
         None => return std::ptr::null_mut(),
     };
     if table.is_empty() { return std::ptr::null_mut(); }
 
-    cache().get_or_exec(&path, &prql, |sql| {
-        dbg("ADBC", &format!("EXEC [{}] {}", driver.strip_prefix("adbc_driver_").unwrap_or(&driver),
-            prql.lines().next().unwrap_or(&prql)));
-        let sql = replace_table(sql, &table);
-        match query_adbc(&driver, &conn_str, &sql) {
-            Ok(r) => {
-                dbg("ADBC", &format!("ok: {} rows", r.rows));
-                Some(r)
-            }
-            Err(e) => {
-                dbg("ADBC", &format!("err: {}", e));
-                None
-            }
-        }
-    }).unwrap_or(std::ptr::null()) as *mut c_void
-}
+    let key = format!("{}:{}", path, prql);
+    let backend = driver.strip_prefix("adbc_driver_").unwrap_or(&driver);
 
-/// No-op: cache owns the QueryResult
-#[no_mangle]
-pub extern "C" fn tv_result_free(_h: *mut c_void) {}
+    // Check cache (no logging on hit to reduce noise)
+    if let Some(ptr) = cache_get(&key) {
+        return ptr as *mut c_void;
+    }
 
-#[no_mangle]
-pub extern "C" fn tv_result_rows(h: *mut c_void) -> usize {
-    get_result(h, |r| r.rows)
+    // Compile and execute
+    let Some(sql) = prql::compile(&prql) else { return std::ptr::null_mut(); };
+    let sql = replace_table(&sql, &table);
+    dbg("ADBC", &format!("[{}] {} | {}", backend, table, prql.lines().next().unwrap_or(&prql)));
+
+    match query_adbc(&driver, &conn_str, &sql) {
+        Ok(r) => cache_put(&key, r) as *mut c_void,
+        Err(e) => { dbg("ADBC", &format!("err: {}", e)); std::ptr::null_mut() }
+    }
 }
 
 #[no_mangle]
-pub extern "C" fn tv_result_cols(h: *mut c_void) -> usize {
-    get_result(h, |r| r.cols())
-}
+pub extern "C" fn tv_result_free(_h: *mut c_void) {}  // Cache owns data
+
+#[no_mangle]
+pub extern "C" fn tv_result_rows(h: *mut c_void) -> usize { get_result(h, |r| r.rows) }
+
+#[no_mangle]
+pub extern "C" fn tv_result_cols(h: *mut c_void) -> usize { get_result(h, |r| r.cols()) }
 
 #[no_mangle]
 pub extern "C" fn tv_col_name(h: *mut c_void, idx: usize) -> *mut c_char {
@@ -291,58 +265,40 @@ pub extern "C" fn tv_col_name(h: *mut c_void, idx: usize) -> *mut c_char {
 }
 
 #[no_mangle]
-pub extern "C" fn tv_col_type(h: *mut c_void, idx: usize) -> u8 {
-    get_result(h, |r| r.col_type(idx))
-}
+pub extern "C" fn tv_col_type(h: *mut c_void, idx: usize) -> u8 { get_result(h, |r| r.col_type(idx)) }
 
 #[no_mangle]
-pub extern "C" fn tv_cell(h: *mut c_void, row: usize, col: usize) -> CCell {
-    get_result(h, |r| r.cell(row, col))
-}
+pub extern "C" fn tv_cell(h: *mut c_void, row: usize, col: usize) -> CCell { get_result(h, |r| r.cell(row, col)) }
 
 #[no_mangle]
-pub extern "C" fn tv_str_free(p: *mut c_char) {
-    unsafe { free_c_str(p); }
-}
+pub extern "C" fn tv_str_free(p: *mut c_char) { unsafe { free_c_str(p); } }
 
-/// Save query result to file (DuckDB COPY TO)
+/// Save via DuckDB COPY TO
 #[no_mangle]
 pub extern "C" fn tv_save(prql_ptr: *const c_char, path_in_ptr: *const c_char, path_out_ptr: *const c_char) -> u8 {
     let prql = unsafe { from_c_str(prql_ptr) };
     let path_in = unsafe { from_c_str(path_in_ptr) };
     let path_out = unsafe { from_c_str(path_out_ptr) };
 
-    // Only DuckDB supports COPY TO
     let (driver, conn_str, table) = match parse_path(&path_in) {
         Some(p) if p.0 == "adbc_driver_duckdb" => p,
         _ => return 1,
     };
 
-    // Compile PRQL to SQL
     let sql = match prql::compile(&prql) {
-        Some(s) => s.replace("\"df\"", &format!("\"{}\"", table))
-                    .replace(" df ", &format!(" \"{}\" ", table))
-                    .replace(" df\n", &format!(" \"{}\"\n", table))
-                    .replace("FROM df", &format!("FROM \"{}\"", table)),
+        Some(s) => replace_table(&s, &table),
         None => return 1,
     };
 
-    // Build COPY TO query
-    let fmt = if path_out.ends_with(".parquet") || path_out.ends_with(".pq") {
-        "PARQUET"
-    } else {
-        "CSV"
-    };
+    let fmt = if path_out.ends_with(".parquet") || path_out.ends_with(".pq") { "PARQUET" } else { "CSV" };
     let copy_sql = format!("COPY ({}) TO '{}' (FORMAT {})", sql.trim_end_matches(';'), path_out, fmt);
 
-    // Execute via DuckDB
     match query_adbc(&driver, &conn_str, &copy_sql) {
         Ok(_) => 0,
         Err(_) => 1,
     }
 }
 
-/// Plugin init - returns vtable
 #[no_mangle]
 pub extern "C" fn tv_plugin_init() -> PluginVtable {
     PluginVtable {

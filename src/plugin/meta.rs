@@ -81,7 +81,7 @@ impl Command for Metadata {
 /// Compute column metadata via PRQL - returns BoxTable
 fn compute_meta(plugin: &'static dynload::Plugin, path: &str) -> Result<crate::data::table::BoxTable> {
     // Get column names via PRQL (plugin compiles internally)
-    let cols = plugin.query("from df | take 1", path)
+    let cols = plugin.query(&crate::state::take_chunk("from df", 0), path)
         .ok_or_else(|| anyhow!("empty schema"))?
         .col_names();
 

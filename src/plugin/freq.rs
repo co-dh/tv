@@ -91,10 +91,12 @@ impl Command for Frequency {
 pub struct FreqEnter { pub col: String, pub values: Vec<String> }
 
 impl Command for FreqEnter {
+    /// Pop freq view, filter parent by selected values, focus on filtered column
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         let _ = CommandExecutor::exec(app, Box::new(Pop));
         if !self.values.is_empty() {
             let _ = CommandExecutor::exec(app, Box::new(FilterIn { col: self.col.clone(), values: self.values.clone() }));
+            // Focus cursor on the filtered column in parent view
             if let Some(v) = app.view_mut() {
                 if let Some(i) = v.data.col_names().iter().position(|c| c == &self.col) { v.state.cc = i; }
             }

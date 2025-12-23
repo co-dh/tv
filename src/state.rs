@@ -5,6 +5,16 @@ use std::collections::HashSet;
 /// Reserved rows in viewport (header + footer_header + status + tabs)
 pub const RESERVED_ROWS: usize = 4;
 
+/// Chunk size for data fetching (aligns queries for cache hits)
+pub const CHUNK: usize = 1000;
+
+/// Build PRQL take query for chunk at offset (1-based range for PRQL)
+pub fn take_chunk(prql: &str, offset: usize) -> String {
+    let start = (offset / CHUNK) * CHUNK;
+    let end = start + CHUNK;
+    format!("{} | take {}..{}", prql, start + 1, end + 1)
+}
+
 /// Parent view info (for derived views like meta/freq)
 #[derive(Clone, Debug, Default)]
 pub struct ParentInfo {
@@ -263,7 +273,7 @@ impl ViewState {
         self.plugin.and_then(|pl| {
             let p = self.path.as_ref()?;
             // Get schema from current view's PRQL
-            let schema = pl.query(&format!("{} | take 1", self.prql), p)?;
+            let schema = pl.query(&take_chunk(&self.prql, self.state.r0), p)?;
             let col_name = schema.col_name(col_idx)?;
             let col_type = schema.col_type(col_idx);
             let is_num = matches!(col_type, ColType::Int | ColType::Float);

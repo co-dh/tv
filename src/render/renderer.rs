@@ -8,6 +8,16 @@ use ratatui::prelude::*;
 use ratatui::style::{Color as RColor, Modifier, Style};
 use ratatui::widgets::Tabs;
 use std::collections::HashSet;
+use std::fs;
+
+/// Get current process RSS memory in MB (Linux only)
+fn mem_mb() -> usize {
+    fs::read_to_string("/proc/self/status").ok()
+        .and_then(|s| s.lines().find(|l| l.starts_with("VmRSS:"))
+            .and_then(|l| l.split_whitespace().nth(1))
+            .and_then(|n| n.parse::<usize>().ok()))
+        .map(|kb| kb / 1024).unwrap_or(0)
+}
 
 pub struct Renderer;
 
@@ -51,17 +61,14 @@ impl Renderer {
     pub fn render_table(frame: &mut Frame, view: &mut ViewState, area: Rect, selected_cols: &HashSet<usize>, selected_rows: &HashSet<usize>, decimals: usize, theme: &Theme, show_tabs: bool) {
         // Fetch data via plugin using PRQL (compiled to SQL)
         // Round to chunk boundaries to maximize cache hits when scrolling
-        const CHUNK: usize = 1000;
-        let (rows_needed, r0) = (area.height as usize + 100, view.state.r0);
-        let chunk_start = (r0 / CHUNK) * CHUNK;  // round down to chunk
-        let chunk_end = chunk_start + CHUNK.max(rows_needed);  // at least 1 chunk
+        use crate::state::{CHUNK, take_chunk};
+        let r0 = view.state.r0;
+        let chunk_start = (r0 / CHUNK) * CHUNK;
         let path = view.path.clone();
         let prql = view.prql.clone();
         let lazy_offset = path.as_ref().and_then(|p| {
             let plugin = dynload::get_for(p)?;
-            // PRQL: take start..end (1-based, positive range required)
-            let q = format!("{} | take {}..{}", prql, chunk_start + 1, chunk_end + 1);
-            let t = plugin.query(&q, p)?;
+            let t = plugin.query(&take_chunk(&prql, r0), p)?;
             view.data = dynload::to_box_table(&t);
             Some(chunk_start)
         }).unwrap_or(0);
@@ -497,8 +504,9 @@ impl Renderer {
         } else { String::new() };
 
         let partial = if is_loading || view.partial { " Partial" } else { "" };
-        let right = if col_stats_str.is_empty() { format!("{}/{}{}", view.state.cr, total_str, partial) }
-        else { format!("{} {}/{}{}", col_stats_str, view.state.cr, total_str, partial) };
+        let mem = format!("{}MB ", mem_mb());
+        let right = if col_stats_str.is_empty() { format!("{}{}/{}{}", mem, view.state.cr, total_str, partial) }
+        else { format!("{} {}{}/{}{}", col_stats_str, mem, view.state.cr, total_str, partial) };
 
         let padding = (area.width as usize).saturating_sub(left.len() + right.len()).max(1);
         let status = format!("{}{:width$}{}", left, "", right, width = padding);

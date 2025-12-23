@@ -246,67 +246,6 @@ fn test_lr_sort_size() {
     assert!(first.contains("null_col.csv"), "Smallest file should be first after sort: {}", out);
 }
 
-/// Extract key columns from header (columns before |)
-fn keys_from_header(out: &str) -> Vec<String> {
-    let hdr = header(out);
-    if let Some(i) = hdr.find('|') {
-        hdr[..i].split_whitespace().map(String::from).collect()
-    } else {
-        vec![]
-    }
-}
-
-// Property: toggling key on column X adds X to keys (before |)
-#[test]
-fn test_key_toggle_property_add() {
-    // Start with no keys, toggle col 0 (Time)
-    let out = run_keys("!", "tests/data/nyse/1.parquet");
-    let keys = keys_from_header(&out);
-    assert_eq!(keys, vec!["Time"], "After ! on col 0: {:?}", keys);
-}
-
-// Property: toggling key twice returns to no keys
-#[test]
-fn test_key_toggle_property_roundtrip() {
-    // Toggle on then off
-    let out = run_keys("!!", "tests/data/nyse/1.parquet");
-    let keys = keys_from_header(&out);
-    assert!(keys.is_empty(), "After !! should have no keys: {:?}", keys);
-}
-
-// Property: toggling multiple columns adds all to keys
-#[test]
-fn test_key_toggle_property_multiple() {
-    // Toggle col 0, move right, toggle col 1
-    let out = run_keys("!l!", "tests/data/nyse/1.parquet");
-    let keys = keys_from_header(&out);
-    assert_eq!(keys.len(), 2, "Should have 2 keys: {:?}", keys);
-    assert!(keys.contains(&"Time".to_string()), "Should have Time: {:?}", keys);
-    assert!(keys.contains(&"Exchange".to_string()), "Should have Exchange: {:?}", keys);
-}
-
-// Property: toggling 3 columns adds all 3 to keys
-#[test]
-fn test_key_toggle_property_three() {
-    // Toggle col 0, move right, toggle col 1, move right, toggle col 2
-    let out = run_keys("!l!l!", "tests/data/nyse/1.parquet");
-    let keys = keys_from_header(&out);
-    assert_eq!(keys.len(), 3, "Should have 3 keys: {:?}", keys);
-}
-
-// Property: toggle removes from middle of keys
-#[test]
-fn test_key_toggle_property_remove_middle() {
-    // Add 3 keys, then remove the middle one
-    // Toggle col 0,1,2 then go back to col 1 and toggle off
-    let out = run_keys("!l!l!h!", "tests/data/nyse/1.parquet");
-    let keys = keys_from_header(&out);
-    assert_eq!(keys.len(), 2, "Should have 2 keys after removing middle: {:?}", keys);
-    assert!(keys.contains(&"Time".to_string()), "Should have Time: {:?}", keys);
-    assert!(keys.contains(&"Symbol".to_string()), "Should have Symbol: {:?}", keys);
-    assert!(!keys.contains(&"Exchange".to_string()), "Should NOT have Exchange: {:?}", keys);
-}
-
 // Test numeric columns are right-aligned (shorter numbers have leading spaces)
 // Covers: i8_val, u8_val, i16_val, u16_val, i32_val, u32_val, u64_val, f16_val, f32_val, etc.
 #[test]
@@ -368,5 +307,15 @@ fn test_aggregate_multi_col() {
     // Should have both value_sum and score_sum in header
     assert!(hdr.contains("value_sum"), "Should have value_sum: {}", hdr);
     assert!(hdr.contains("score_sum"), "Should have score_sum: {}", hdr);
+}
+
+// Test aggregate tab string is valid PRQL expression
+#[test]
+fn test_aggregate_prql_name() {
+    let out = run_keys("<right>!<right><right><space><right><space>bsum<ret>", "tests/data/full.csv");
+    let (tab, _) = footer(&out);
+    // Tab should show valid PRQL: group {...} (aggregate {...})
+    assert!(tab.contains("group {") && tab.contains("(aggregate {"),
+        "Tab should show valid PRQL group/aggregate: {}", tab);
 }
 

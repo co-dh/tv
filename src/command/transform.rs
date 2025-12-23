@@ -135,9 +135,9 @@ impl Command for Agg {
         }).collect();
         let keys_str = self.keys.iter().map(|k| format!("`{}`", k)).collect::<Vec<_>>().join(", ");
         let prql = format!("{} | group {{{}}} (aggregate {{{}}})", parent_prql, keys_str, agg_exprs.join(", "));
-        // Create new view with aggregation - show keys in name
-        let keys_short = self.keys.join(",");
-        let name = format!("agg by {} {}", keys_short, self.funcs.iter().map(|(f, c)| format!("{}:{}", f, c)).collect::<Vec<_>>().join(" "));
+        // Create new view with aggregation - PRQL-like name
+        let aggs_short: Vec<String> = self.funcs.iter().map(|(f, c)| format!("{} {}", f, c)).collect();
+        let name = format!("group {{{}}} (aggregate {{{}}})", keys_str, aggs_short.join(", "));
         let mut nv = crate::state::ViewState::build(id, name).prql(&prql);
         if let Some(p) = &v.path { nv = nv.path(p); }
         app.stack.push(nv);
