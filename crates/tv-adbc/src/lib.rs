@@ -165,12 +165,29 @@ fn parse_path(path: &str) -> Option<(String, String, String)> {
 
 /// Execute query via ADBC driver
 fn query_adbc(driver_name: &str, conn_str: &str, sql: &str) -> Result<QueryResult, String> {
-    // Load driver dynamically
-    let mut driver = ManagedDriver::load_dynamic_from_name(driver_name, None, AdbcVersion::V110)
-        .map_err(|e| format!("Failed to load driver {}: {}", driver_name, e))?;
+    // DuckDB special handling: uses libduckdb.so with custom entrypoint
+    let (lib_path, entrypoint): (&str, Option<&[u8]>) = if driver_name == "adbc_driver_duckdb" {
+        // Try common paths for libduckdb.so
+        let paths = ["/usr/lib/libduckdb.so", "/usr/local/lib/libduckdb.so", "libduckdb.so"];
+        let lib = paths.iter().find(|p| std::path::Path::new(p).exists())
+            .ok_or("libduckdb.so not found")?;
+        (*lib, Some(b"duckdb_adbc_init"))
+    } else {
+        (driver_name, None)
+    };
 
-    // Create database with connection string
-    let opts = [(OptionDatabase::Uri, OptionValue::String(conn_str.into()))];
+    // Load driver dynamically
+    let mut driver = ManagedDriver::load_dynamic_from_filename(lib_path, entrypoint, AdbcVersion::V110)
+        .map_err(|e| format!("Failed to load driver {}: {}", lib_path, e))?;
+
+    // Create database - for DuckDB use path option, others use URI
+    let opts: Vec<(OptionDatabase, OptionValue)> = if driver_name == "adbc_driver_duckdb" {
+        // DuckDB: extract db path from conn_str (duckdb://path/to/file.db)
+        let db_path = conn_str.strip_prefix("duckdb://").unwrap_or(conn_str);
+        vec![(OptionDatabase::Other("path".into()), OptionValue::String(db_path.into()))]
+    } else {
+        vec![(OptionDatabase::Uri, OptionValue::String(conn_str.into()))]
+    };
     let database = driver.new_database_with_opts(opts)
         .map_err(|e| format!("Failed to create database: {}", e))?;
 
