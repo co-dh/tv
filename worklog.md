@@ -1,5 +1,39 @@
 # Worklog
 
+## 2025-12-23: ADBC Plugin for External Databases
+
+### Feature
+Added tv-adbc plugin for external database connectivity via ADBC (Arrow Database Connectivity). Supports PostgreSQL, DuckDB, SQLite, and other ADBC-compatible databases.
+
+### Plugin Sizes
+| Plugin | Size |
+|--------|------|
+| tv-adbc | 18MB |
+| tv-duckdb | 17MB |
+| tv-sqlite | 19MB |
+| tv-polars | 111MB |
+
+### Usage
+```bash
+tabv "adbc:duckdb:///data.parquet"           # DuckDB reads parquet directly
+tabv "adbc:duckdb:///data.csv"               # DuckDB reads CSV directly
+tabv --backend duckdb data.parquet           # CLI shorthand
+tabv "adbc:postgresql://localhost/db?table=t" # PostgreSQL
+```
+
+### Implementation
+- Uses `adbc_driver_manager` crate for dynamic driver loading
+- DuckDB: Uses libduckdb.so with `duckdb_adbc_init` entrypoint
+- PRQL quotes file paths → DuckDB reads quoted paths as files
+- Arrow zero-copy data transfer
+
+### Files
+- `crates/tv-adbc/` - ADBC plugin crate
+- `src/main.rs` - `--backend` CLI flag
+- `src/data/dynload.rs` - ADBC plugin routing
+
+---
+
 ## 2025-12-21: DuckDB CLI Plugin for Parquet
 
 ### Feature
