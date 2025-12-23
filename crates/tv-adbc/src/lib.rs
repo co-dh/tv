@@ -29,6 +29,7 @@ struct QueryResult {
     schema: SchemaRef,
     batches: Vec<RecordBatch>,
     rows: usize,
+    is_sqlite: bool, // SQLite ADBC has allocator mismatch, must leak
 }
 
 impl QueryResult {
@@ -178,13 +179,17 @@ fn parse_path(path: &str) -> Option<(String, String, String)> {
 
 /// Execute query via ADBC driver
 fn query_adbc(driver_name: &str, conn_str: &str, sql: &str) -> Result<QueryResult, String> {
-    // DuckDB special handling: uses libduckdb.so with custom entrypoint
+    // Resolve driver library path and entrypoint
     let (lib_path, entrypoint): (&str, Option<&[u8]>) = if driver_name == "adbc_driver_duckdb" {
-        // Try common paths for libduckdb.so
         let paths = ["/usr/lib/libduckdb.so", "/usr/local/lib/libduckdb.so", "libduckdb.so"];
         let lib = paths.iter().find(|p| std::path::Path::new(p).exists())
             .ok_or("libduckdb.so not found")?;
         (*lib, Some(b"duckdb_adbc_init"))
+    } else if driver_name == "adbc_driver_sqlite" {
+        let paths = ["/usr/local/lib/libadbc_driver_sqlite.so", "/usr/lib/libadbc_driver_sqlite.so"];
+        let lib = paths.iter().find(|p| std::path::Path::new(p).exists())
+            .ok_or("libadbc_driver_sqlite.so not found")?;
+        (*lib, Some(b"AdbcDriverInit"))
     } else {
         (driver_name, None)
     };
@@ -193,12 +198,14 @@ fn query_adbc(driver_name: &str, conn_str: &str, sql: &str) -> Result<QueryResul
     let mut driver = ManagedDriver::load_dynamic_from_filename(lib_path, entrypoint, AdbcVersion::V110)
         .map_err(|e| format!("Failed to load driver {}: {}", lib_path, e))?;
 
-    // Create database - for DuckDB use path option, others use URI
+    // Create database - driver-specific options
     let opts: Vec<(OptionDatabase, OptionValue)> = if driver_name == "adbc_driver_duckdb" {
-        // DuckDB: extract db path from conn_str (duckdb://path or duckdb://:memory:)
         let db_path = conn_str.strip_prefix("duckdb://").unwrap_or(conn_str);
-        let db_path = if db_path == ":memory:" { "" } else { db_path }; // empty = in-memory
+        let db_path = if db_path == ":memory:" { "" } else { db_path };
         vec![(OptionDatabase::Other("path".into()), OptionValue::String(db_path.into()))]
+    } else if driver_name == "adbc_driver_sqlite" {
+        let db_path = conn_str.strip_prefix("sqlite://").unwrap_or(conn_str);
+        vec![(OptionDatabase::Uri, OptionValue::String(db_path.into()))]
     } else {
         vec![(OptionDatabase::Uri, OptionValue::String(conn_str.into()))]
     };
@@ -226,7 +233,8 @@ fn query_adbc(driver_name: &str, conn_str: &str, sql: &str) -> Result<QueryResul
         .collect::<Result<Vec<_>, _>>()?;
     let rows = batches.iter().map(|b| b.num_rows()).sum();
 
-    Ok(QueryResult { schema, batches, rows })
+    let is_sqlite = driver_name == "adbc_driver_sqlite";
+    Ok(QueryResult { schema, batches, rows, is_sqlite })
 }
 
 // === Plugin exports ===
@@ -279,7 +287,14 @@ pub extern "C" fn tv_query(prql_ptr: *const c_char, path_ptr: *const c_char) -> 
 pub extern "C" fn tv_result_free(h: *mut c_void) {
     let id = h as usize;
     let mut guard = RESULTS.lock().unwrap();
-    if let Some(map) = guard.as_mut() { map.remove(&id); }
+    if let Some(map) = guard.as_mut() {
+        // Check if we should leak (SQLite has allocator mismatch)
+        let should_leak = map.get(&id).map(|r| r.is_sqlite).unwrap_or(false);
+        if !should_leak {
+            map.remove(&id);
+        }
+        // SQLite results are leaked to avoid segfault on drop
+    }
 }
 
 #[no_mangle]
