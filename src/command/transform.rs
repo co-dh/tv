@@ -12,30 +12,24 @@ fn table_schema(t: &dyn Table) -> Vec<(String, ColType)> {
     (0..t.cols()).map(|c| (t.col_name(c).unwrap_or_default(), t.col_type(c))).collect()
 }
 
-/// Delete columns (via PRQL select excluding deleted cols)
-pub struct DelCol { pub col_names: Vec<String> }
+/// Delete columns (hide from display, remove from key_cols if present)
+pub struct DelCol { pub cols: Vec<String> }
 
 impl Command for DelCol {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
-        let n = self.col_names.len();
+        let n = self.cols.len();
         let v = app.req_mut()?;
-        // Get remaining columns (exclude deleted ones)
-        let remaining: Vec<String> = v.data.col_names().into_iter()
-            .filter(|c| !self.col_names.contains(c))
-            .collect();
-        // Pure: count how many deleted cols are before separator
-        let sep_adjust = v.col_separator.map(|sep| {
-            pure::count_before_sep(&v.data.col_names(), &self.col_names, sep)
-        }).unwrap_or(0);
-        // Append select to PRQL chain
-        let sel = remaining.iter().map(|c| format!("`{}`", c)).collect::<Vec<_>>().join(", ");
-        v.prql = format!("{} | select {{{}}}", v.prql, sel);
-        if let Some(sep) = v.col_separator { v.col_separator = Some(sep.saturating_sub(sep_adjust)); }
-        if v.state.cc >= remaining.len() && !remaining.is_empty() { v.state.cc = remaining.len() - 1; }
+        // Add to deleted_cols
+        v.deleted_cols.extend(self.cols.clone());
+        // Remove from key_cols if present
+        v.key_cols.retain(|k| !self.cols.contains(k));
+        // Adjust cursor if needed
+        let visible = v.display_cols().len();
+        if v.state.cc >= visible && visible > 0 { v.state.cc = visible - 1; }
         app.msg(format!("{} columns deleted", n));
         Ok(())
     }
-    fn to_str(&self) -> String { format!("del_col {}", self.col_names.join(",")) }
+    fn to_str(&self) -> String { format!("del_col {}", self.cols.join(",")) }
 }
 
 /// Filter rows using SQL WHERE syntax - lazy, appends to PRQL
@@ -116,32 +110,39 @@ impl Command for RenameCol {
     fn to_str(&self) -> String { format!("rename {} {}", self.old_name, self.new_name) }
 }
 
-/// Aggregate by column - lazy, appends to PRQL
-pub struct Agg { pub col: String, pub func: String }
+/// Aggregate by key columns - lazy, appends to PRQL
+/// funcs: list of (func_name, col_name) pairs
+pub struct Agg { pub keys: Vec<String>, pub funcs: Vec<(String, String)> }
 
 impl Command for Agg {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
+        if self.keys.is_empty() { return Err(anyhow!("No key columns")); }
+        if self.funcs.is_empty() { return Err(anyhow!("No aggregations")); }
         let id = app.next_id();
         let v = app.req()?;
         let parent_prql = v.prql.clone();
-        // Build PRQL aggregation
-        let agg_expr = match self.func.as_str() {
-            "count" => format!("count = count `{}`", self.col),
-            "sum" => format!("sum = sum `{}`", self.col),
-            "mean" => format!("mean = average `{}`", self.col),
-            "min" => format!("min = min `{}`", self.col),
-            "max" => format!("max = max `{}`", self.col),
-            _ => return Err(anyhow!("Unknown aggregation: {}", self.func)),
-        };
-        let prql = format!("{} | group {{`{}`}} (aggregate {{{}}})", parent_prql, self.col, agg_expr);
+        // Build PRQL aggregation expressions
+        let agg_exprs: Vec<String> = self.funcs.iter().map(|(func, col)| {
+            match func.as_str() {
+                "count" => format!("{}_cnt = count `{}`", col, col),
+                "sum" => format!("{}_sum = sum `{}`", col, col),
+                "mean" => format!("{}_avg = average `{}`", col, col),
+                "min" => format!("{}_min = min `{}`", col, col),
+                "max" => format!("{}_max = max `{}`", col, col),
+                "std" => format!("{}_std = stddev `{}`", col, col),
+                _ => format!("{} = {} `{}`", col, func, col),
+            }
+        }).collect();
+        let keys_str = self.keys.iter().map(|k| format!("`{}`", k)).collect::<Vec<_>>().join(", ");
+        let prql = format!("{} | group {{{}}} (aggregate {{{}}})", parent_prql, keys_str, agg_exprs.join(", "));
         // Create new view with aggregation
-        let mut nv = crate::state::ViewState::build(id, format!("{}:{}", self.func, self.col))
-            .prql(&prql);
+        let name = format!("agg {}", self.funcs.iter().map(|(f, c)| format!("{}:{}", f, c)).collect::<Vec<_>>().join(" "));
+        let mut nv = crate::state::ViewState::build(id, name).prql(&prql);
         if let Some(p) = &v.path { nv = nv.path(p); }
         app.stack.push(nv);
         Ok(())
     }
-    fn to_str(&self) -> String { format!("agg {} {}", self.col, self.func) }
+    fn to_str(&self) -> String { format!("agg {:?}", self.funcs) }
     fn record(&self) -> bool { false }
 }
 
@@ -171,25 +172,20 @@ impl Command for FilterIn {
     fn record(&self) -> bool { false }
 }
 
-/// Move columns to front as key columns (display only, no PRQL change)
-pub struct Xkey { pub col_names: Vec<String> }
+/// Set key columns (display first, no PRQL change)
+pub struct Xkey { pub keys: Vec<String> }
 
 impl Command for Xkey {
     fn exec(&mut self, app: &mut AppContext) -> Result<()> {
         let v = app.req_mut()?;
-        let cols = v.data.col_names();
-        // Build display order: key cols first, then rest
-        let order: Vec<usize> = pure::reorder_cols(&cols, &self.col_names)
-            .iter().filter_map(|name| cols.iter().position(|c| c == name)).collect();
-        v.col_order = if self.col_names.is_empty() { None } else { Some(order) };
-        v.col_separator = if self.col_names.is_empty() { None } else { Some(self.col_names.len()) };
+        v.key_cols = self.keys.clone();
         v.selected_cols.clear();
-        v.selected_cols.extend(0..self.col_names.len());
-        v.state.cc = 0;
+        v.selected_cols.extend(0..self.keys.len());
+        v.state.cc = self.keys.len().saturating_sub(1);  // cursor on last key
         v.state.col_widths.clear();
         Ok(())
     }
-    fn to_str(&self) -> String { format!("xkey {}", self.col_names.join(",")) }
+    fn to_str(&self) -> String { format!("xkey {}", self.keys.join(",")) }
 }
 
 /// Take first n rows (PRQL take)
