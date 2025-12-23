@@ -175,7 +175,10 @@ impl ViewState {
         use crate::util::pure::qcols;
         let mut s = self.name.clone();
         if !self.deleted_cols.is_empty() { s = format!("{}|del{{{}}}", s, self.deleted_cols.join(",")); }
-        if !self.key_cols.is_empty() { s = format!("{}|xkey{{{}}}", s, qcols(&self.key_cols)); }
+        // Skip xkey for freq (column already in name)
+        if !self.key_cols.is_empty() && !self.name.starts_with("freq ") {
+            s = format!("{}|xkey{{{}}}", s, qcols(&self.key_cols));
+        }
         s
     }
 
@@ -398,5 +401,13 @@ mod tests {
         let mut v = ViewState::build(0, "view").data(empty());
         v.key_cols = vec!["date".into(), "time".into()];
         assert_eq!(v.display_name(), "view|xkey{`date`,`time`}");
+    }
+
+    #[test]
+    fn test_display_name_freq_no_xkey() {
+        // Freq views should not show xkey suffix (column already in name)
+        let mut v = ViewState::build(0, "freq a").data(empty());
+        v.key_cols = vec!["a".into()];
+        assert_eq!(v.display_name(), "freq a");
     }
 }
