@@ -289,6 +289,13 @@ pub fn register_table(id: usize, data: &dyn Table) -> Option<String> {
     Some(format!("mem:{}", id))
 }
 
+/// Unregister memory table (frees SQL)
+pub fn unregister_table(id: usize) {
+    if let Ok(mut guard) = MEM_TABLES.lock() {
+        if let Some(map) = guard.as_mut() { map.remove(&id); }
+    }
+}
+
 /// Convert Table to DuckDB SQL (CREATE+INSERT)
 fn table_to_sql(t: &dyn Table) -> String {
     let cols = t.col_names();

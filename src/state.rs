@@ -298,6 +298,13 @@ impl std::fmt::Display for ViewState {
     }
 }
 
+/// Free memory table when view dropped
+impl Drop for ViewState {
+    fn drop(&mut self) {
+        backend::unregister_table(self.id);
+    }
+}
+
 /// View stack
 #[derive(Default)]
 pub struct StateStack {
