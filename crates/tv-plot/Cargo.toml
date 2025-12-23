@@ -8,6 +8,7 @@ name = "tv-plot"
 path = "src/main.rs"
 
 [dependencies]
-plotters = { version = "0.3", default-features = false, features = ["bitmap_backend", "line_series"] }
+plotters = { version = "0.3", default-features = false, features = ["bitmap_backend", "line_series", "ab_glyph"] }
+fontdue = "0.9"
 image = "0.24"
 base64 = "0.22"

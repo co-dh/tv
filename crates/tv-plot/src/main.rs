@@ -1,61 +1,53 @@
-//! tv-plot - terminal plotting via kitty graphics protocol
+//! tv-plot CLI
 //!
 //! Usage:
-//!   tv-plot hist              # histogram of single column
-//!   tv-plot line              # line chart (1 col = y, 2 cols = x,y)
-//!   tv-plot candle            # candlestick (5 cols: time,open,high,low,close)
+//!   tv-plot [type] [options] < data.csv
 //!
-//! Input: CSV from stdin (first row = header)
+//! Types: scatter, line, hist, bar
+//!
 //! Options:
-//!   -b, --bins N     histogram bins (default: 50)
-//!   -w, --width N    image width (default: 800)
-//!   -h, --height N   image height (default: 400)
+//!   --dark           dark theme
+//!   --title TEXT     plot title
+//!   -b, --bins N     histogram bins
 
 use std::io::{self, BufRead};
+use tv_plot::*;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
-    // Parse command
-    let cmd = args.get(1).map(|s| s.as_str()).unwrap_or("auto");
+    // Parse args
+    let mut cmd = "auto";
+    let mut bins = 20;
+    let mut dark = false;
+    let mut ttl: Option<String> = None;
 
-    // Parse options
-    let mut bins = 20usize;  // fewer bins = wider bars
-    let mut width = 800u32;   // full resolution for kitty protocol
-    let mut height = 400u32;
-
-    let mut i = 2;
+    let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
-            "-b" | "--bins" => { bins = args.get(i+1).and_then(|s| s.parse().ok()).unwrap_or(50); i += 2; }
-            "-w" | "--width" => { width = args.get(i+1).and_then(|s| s.parse().ok()).unwrap_or(800); i += 2; }
-            "-h" | "--height" => { height = args.get(i+1).and_then(|s| s.parse().ok()).unwrap_or(400); i += 2; }
-            _ => { i += 1; }
+            "scatter" | "line" | "hist" | "bar" | "auto" => { cmd = args[i].as_str(); i += 1; }
+            "-b" | "--bins" => { bins = args.get(i+1).and_then(|s| s.parse().ok()).unwrap_or(20); i += 2; }
+            "--dark" => { dark = true; i += 1; }
+            "--title" => { ttl = args.get(i+1).cloned(); i += 2; }
+            _ => i += 1,
         }
     }
 
-    // Read CSV from stdin
+    // Read CSV
     let stdin = io::stdin();
     let mut lines = stdin.lock().lines();
 
-    // Skip header
-    let header = match lines.next() {
+    let hdr = match lines.next() {
         Some(Ok(h)) => h,
         _ => { eprintln!("Error: no input"); return; }
     };
-    let ncols = header.split(',').count();
+    let names: Vec<&str> = hdr.split(',').collect();
+    let n = names.len();
 
-    // Read data
-    let mut cols: Vec<Vec<f64>> = vec![Vec::new(); ncols];
-    for line in lines {
-        if let Ok(l) = line {
-            for (i, val) in l.split(',').enumerate() {
-                if i < ncols {
-                    if let Ok(v) = val.trim().parse::<f64>() {
-                        cols[i].push(v);
-                    }
-                }
-            }
+    let mut cols: Vec<Vec<f64>> = vec![Vec::new(); n];
+    for line in lines.flatten() {
+        for (i, v) in line.split(',').enumerate() {
+            if i < n { if let Ok(x) = v.trim().parse() { cols[i].push(x); } }
         }
     }
 
@@ -64,47 +56,43 @@ fn main() {
         return;
     }
 
-    // Auto-detect plot type if not specified
+    // Auto-detect
     let cmd = if cmd == "auto" {
-        match ncols {
-            1 => "hist",
-            2 => "line",
-            5 => "candle",
-            _ => "line",
-        }
+        match n { 1 => "hist", _ => "scatter" }
     } else { cmd };
 
-    // Generate plot
-    let img = match cmd {
-        "hist" | "histogram" => {
-            tv_plot::histogram(&cols[0], bins, width, height)
+    // Build data frame
+    let mut df = DataFrame::new();
+    for (i, name) in names.iter().enumerate() {
+        if i < cols.len() {
+            df = df.col(name, std::mem::take(&mut cols[i]));
         }
-        "line" => {
-            if ncols >= 2 {
-                tv_plot::line(&cols[0], &cols[1], width, height)
-            } else {
-                // Use row index as x
-                let xs: Vec<f64> = (0..cols[0].len()).map(|i| i as f64).collect();
-                tv_plot::line(&xs, &cols[0], width, height)
-            }
-        }
-        "candle" | "candlestick" => {
-            if ncols >= 5 {
-                tv_plot::candle(&cols[0], &cols[1], &cols[2], &cols[3], &cols[4], width, height)
-            } else {
-                eprintln!("Error: candle requires 5 columns (time,open,high,low,close)");
-                return;
-            }
-        }
-        _ => {
-            eprintln!("Usage: tv-plot [hist|line|candle] [-b bins] [-w width] [-h height]");
-            return;
-        }
+    }
+
+    // Build plot
+    let mut p = ggplot(df);
+
+    // Add aes + geom
+    p = match cmd {
+        "hist" => p + x(names[0]) + geom_histogram(bins),
+        "scatter" => p + aes(names[0], names.get(1).unwrap_or(&names[0])) + geom_point(),
+        "line" => p + aes(names[0], names.get(1).unwrap_or(&names[0])) + geom_line(),
+        "bar" => p + aes(names[0], names.get(1).unwrap_or(&names[0])) + geom_bar(),
+        _ => p,
     };
 
-    // Display
-    match img {
-        Some(img) => tv_plot::show(&img),
-        None => eprintln!("Error: failed to generate plot"),
-    }
+    // Theme
+    if dark { p = p + theme_dark(); }
+
+    // Title
+    if let Some(t) = ttl { p = p + title(&t); }
+
+    // Debug
+    eprintln!("DEBUG: cols={} rows={} geoms={}",
+        p.data.cols.len(),
+        p.data.rows(),
+        p.geoms.len());
+    eprintln!("DEBUG: aes x={:?} y={:?}", p.aes.x, p.aes.y);
+
+    p.show();
 }

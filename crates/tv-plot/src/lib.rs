@@ -1,162 +1,247 @@
-//! Plot library - renders charts to terminal via kitty graphics protocol
+//! tv-plot - ggplot-style plotting for terminal
+//!
+//! ```ignore
+//! use tv_plot::*;
+//!
+//! ggplot(data)
+//!     + aes(x("price"), y("volume"))
+//!     + geom_point()
+//!     + geom_line()
+//!     + labs(title("Stock"), x("Price"), y("Vol"))
+//!     + theme_dark()
+//! ```
 
-use plotters::prelude::*;
-use image::{ImageBuffer, Rgb};
+mod render;
 
-/// Render histogram from f64 values
-pub fn histogram(vals: &[f64], bins: usize, w: u32, h: u32) -> Option<ImageBuffer<Rgb<u8>, Vec<u8>>> {
-    if vals.is_empty() { return None; }
+pub use render::kitty_show;
 
-    // Compute histogram bins
-    let (min, max) = vals.iter().fold((f64::MAX, f64::MIN), |(lo, hi), &v| (lo.min(v), hi.max(v)));
-    let range = (max - min).max(1e-10);
-    let bw = range / bins as f64;
-    let mut counts = vec![0u32; bins];
-    for &v in vals {
-        let i = ((v - min) / bw).floor() as usize;
-        counts[i.min(bins - 1)] += 1;
-    }
-    let max_cnt = *counts.iter().max().unwrap_or(&1) as f64;
-
-    let mut buf = vec![0u8; (w * h * 3) as usize];
-    {
-        let root = BitMapBackend::with_buffer(&mut buf, (w, h)).into_drawing_area();
-        root.fill(&WHITE).ok()?;
-
-        let mut chart = ChartBuilder::on(&root)
-            .margin(10)
-            .x_label_area_size(30)
-            .y_label_area_size(40)
-            .build_cartesian_2d(min..max, 0f64..max_cnt)
-            .ok()?;
-
-        chart.configure_mesh().disable_mesh().disable_axes().draw().ok()?;
-
-        // Draw histogram bars as rectangles
-        for (i, &c) in counts.iter().enumerate() {
-            let x0 = min + i as f64 * bw;
-            let x1 = x0 + bw * 0.9;  // small gap between bars
-            chart.draw_series(std::iter::once(
-                Rectangle::new([(x0, 0.0), (x1, c as f64)], BLUE.filled())
-            )).ok()?;
-        }
-
-        root.present().ok()?;
-    }
-
-    ImageBuffer::from_raw(w, h, buf)
+/// Data frame - columns of f64
+pub struct DataFrame {
+    pub cols: Vec<(String, Vec<f64>)>,
 }
 
-/// Render line chart (time series)
-pub fn line(xs: &[f64], ys: &[f64], w: u32, h: u32) -> Option<ImageBuffer<Rgb<u8>, Vec<u8>>> {
-    if xs.is_empty() || ys.is_empty() || xs.len() != ys.len() { return None; }
+impl DataFrame {
+    pub fn new() -> Self { Self { cols: Vec::new() } }
 
-    let (xmin, xmax) = xs.iter().fold((f64::MAX, f64::MIN), |(lo, hi), &v| (lo.min(v), hi.max(v)));
-    let (ymin, ymax) = ys.iter().fold((f64::MAX, f64::MIN), |(lo, hi), &v| (lo.min(v), hi.max(v)));
-    let xpad = (xmax - xmin).max(1.0) * 0.02;
-    let ypad = (ymax - ymin).max(1.0) * 0.05;
-
-    let mut buf = vec![0u8; (w * h * 3) as usize];
-    {
-        let root = BitMapBackend::with_buffer(&mut buf, (w, h)).into_drawing_area();
-        root.fill(&WHITE).ok()?;
-
-        let mut chart = ChartBuilder::on(&root)
-            .margin(10)
-            .x_label_area_size(30)
-            .y_label_area_size(50)
-            .build_cartesian_2d((xmin - xpad)..(xmax + xpad), (ymin - ypad)..(ymax + ypad))
-            .ok()?;
-
-        chart.configure_mesh().disable_mesh().disable_axes().draw().ok()?;
-
-        chart.draw_series(LineSeries::new(
-            xs.iter().zip(ys.iter()).map(|(&x, &y)| (x, y)),
-            &BLUE,
-        )).ok()?;
-
-        root.present().ok()?;
+    pub fn col(mut self, name: &str, data: Vec<f64>) -> Self {
+        self.cols.push((name.into(), data));
+        self
     }
 
-    ImageBuffer::from_raw(w, h, buf)
+    pub fn get(&self, name: &str) -> Option<&[f64]> {
+        self.cols.iter().find(|(n, _)| n == name).map(|(_, v)| v.as_slice())
+    }
+
+    pub fn rows(&self) -> usize {
+        self.cols.first().map(|(_, v)| v.len()).unwrap_or(0)
+    }
 }
 
-/// Render candlestick chart (OHLC)
-pub fn candle(time: &[f64], open: &[f64], high: &[f64], low: &[f64], close: &[f64], w: u32, h: u32) -> Option<ImageBuffer<Rgb<u8>, Vec<u8>>> {
-    let n = time.len();
-    if n == 0 || open.len() != n || high.len() != n || low.len() != n || close.len() != n { return None; }
+impl Default for DataFrame { fn default() -> Self { Self::new() } }
 
-    let (tmin, tmax) = time.iter().fold((f64::MAX, f64::MIN), |(lo, hi), &v| (lo.min(v), hi.max(v)));
-    let ymin = low.iter().fold(f64::MAX, |m, &v| m.min(v));
-    let ymax = high.iter().fold(f64::MIN, |m, &v| m.max(v));
-    let tpad = (tmax - tmin).max(1.0) * 0.02;
-    let ypad = (ymax - ymin).max(1.0) * 0.05;
-
-    let mut buf = vec![0u8; (w * h * 3) as usize];
-    {
-        let root = BitMapBackend::with_buffer(&mut buf, (w, h)).into_drawing_area();
-        root.fill(&WHITE).ok()?;
-
-        let mut chart = ChartBuilder::on(&root)
-            .margin(10)
-            .x_label_area_size(30)
-            .y_label_area_size(50)
-            .build_cartesian_2d((tmin - tpad)..(tmax + tpad), (ymin - ypad)..(ymax + ypad))
-            .ok()?;
-
-        chart.configure_mesh().disable_mesh().disable_axes().draw().ok()?;
-
-        // Candle width based on data spacing
-        let cw = if n > 1 { (time[1] - time[0]) * 0.8 } else { 1.0 };
-
-        for i in 0..n {
-            let (t, o, h, l, c) = (time[i], open[i], high[i], low[i], close[i]);
-            let color = if c >= o { &GREEN } else { &RED };
-
-            // Wick (high-low line)
-            chart.draw_series(std::iter::once(
-                PathElement::new(vec![(t, l), (t, h)], color)
-            )).ok()?;
-
-            // Body (open-close box)
-            let (y1, y2) = if c >= o { (o, c) } else { (c, o) };
-            chart.draw_series(std::iter::once(
-                Rectangle::new([(t - cw/2.0, y1), (t + cw/2.0, y2)], color.filled())
-            )).ok()?;
-        }
-
-        root.present().ok()?;
-    }
-
-    ImageBuffer::from_raw(w, h, buf)
+/// Aesthetic mapping
+#[derive(Clone, Default)]
+pub struct Aes {
+    pub x: Option<String>,
+    pub y: Option<String>,
+    pub color: Option<String>,
+    pub fill: Option<String>,
+    pub size: Option<String>,
 }
 
-/// Display image in terminal via kitty graphics protocol
-pub fn show(img: &ImageBuffer<Rgb<u8>, Vec<u8>>) {
-    use std::io::Write;
-    use base64::Engine;
+/// Create x aesthetic
+pub fn x(col: &str) -> Aes { Aes { x: Some(col.into()), ..Default::default() } }
 
-    // Encode PNG
-    let mut png = Vec::new();
-    let encoder = image::codecs::png::PngEncoder::new(&mut png);
-    encoder.encode(img.as_raw(), img.width(), img.height(), image::ColorType::Rgb8).ok();
+/// Create y aesthetic
+pub fn y(col: &str) -> Aes { Aes { y: Some(col.into()), ..Default::default() } }
 
-    // Base64 encode
-    let b64 = base64::engine::general_purpose::STANDARD.encode(&png);
+/// Combine aesthetics
+impl std::ops::Add for Aes {
+    type Output = Aes;
+    fn add(mut self, rhs: Aes) -> Aes {
+        if rhs.x.is_some() { self.x = rhs.x; }
+        if rhs.y.is_some() { self.y = rhs.y; }
+        if rhs.color.is_some() { self.color = rhs.color; }
+        if rhs.fill.is_some() { self.fill = rhs.fill; }
+        if rhs.size.is_some() { self.size = rhs.size; }
+        self
+    }
+}
 
-    // Send via kitty graphics protocol (chunked if needed)
-    let mut stdout = std::io::stdout().lock();
-    let chunks: Vec<&str> = b64.as_bytes().chunks(4096).map(|c| std::str::from_utf8(c).unwrap()).collect();
-    for (i, chunk) in chunks.iter().enumerate() {
-        let m = if i == chunks.len() - 1 { 0 } else { 1 };  // m=1 means more chunks
-        if i == 0 {
-            write!(stdout, "\x1b_Ga=T,f=100,m={};{}\x1b\\", m, chunk).ok();
-        } else {
-            write!(stdout, "\x1b_Gm={};{}\x1b\\", m, chunk).ok();
+/// Shorthand for x + y
+pub fn aes(x_col: &str, y_col: &str) -> Aes {
+    Aes { x: Some(x_col.into()), y: Some(y_col.into()), ..Default::default() }
+}
+
+/// Geometry types
+#[derive(Clone)]
+pub enum Geom {
+    Point { size: u32, color: Option<Color> },
+    Line { width: u32, color: Option<Color> },
+    Bar { color: Option<Color> },
+    Histogram { bins: usize, color: Option<Color> },
+    Boxplot { color: Option<Color> },
+    Area { color: Option<Color>, alpha: f32 },
+}
+
+pub fn geom_point() -> Geom { Geom::Point { size: 3, color: None } }
+pub fn geom_line() -> Geom { Geom::Line { width: 2, color: None } }
+pub fn geom_bar() -> Geom { Geom::Bar { color: None } }
+pub fn geom_histogram(bins: usize) -> Geom { Geom::Histogram { bins, color: None } }
+pub fn geom_boxplot() -> Geom { Geom::Boxplot { color: None } }
+pub fn geom_area() -> Geom { Geom::Area { color: None, alpha: 0.3 } }
+
+/// RGB color
+#[derive(Clone, Copy)]
+pub struct Color(pub u8, pub u8, pub u8);
+
+impl Color {
+    pub const BLUE: Color = Color(65, 105, 225);
+    pub const RED: Color = Color(220, 20, 60);
+    pub const GREEN: Color = Color(34, 139, 34);
+    pub const ORANGE: Color = Color(255, 140, 0);
+    pub const PURPLE: Color = Color(148, 0, 211);
+}
+
+/// Labels
+#[derive(Clone, Default)]
+pub struct Labs {
+    pub title: Option<String>,
+    pub x: Option<String>,
+    pub y: Option<String>,
+    pub subtitle: Option<String>,
+}
+
+pub fn labs() -> Labs { Labs::default() }
+pub fn title(s: &str) -> Labs { Labs { title: Some(s.into()), ..Default::default() } }
+pub fn xlab(s: &str) -> Labs { Labs { x: Some(s.into()), ..Default::default() } }
+pub fn ylab(s: &str) -> Labs { Labs { y: Some(s.into()), ..Default::default() } }
+
+impl std::ops::Add for Labs {
+    type Output = Labs;
+    fn add(mut self, rhs: Labs) -> Labs {
+        if rhs.title.is_some() { self.title = rhs.title; }
+        if rhs.x.is_some() { self.x = rhs.x; }
+        if rhs.y.is_some() { self.y = rhs.y; }
+        if rhs.subtitle.is_some() { self.subtitle = rhs.subtitle; }
+        self
+    }
+}
+
+/// Theme
+#[derive(Clone)]
+pub struct Theme {
+    pub bg: Color,
+    pub fg: Color,
+    pub grid: Color,
+    pub palette: Vec<Color>,
+}
+
+impl Default for Theme {
+    fn default() -> Self { theme_light() }
+}
+
+pub fn theme_light() -> Theme {
+    Theme {
+        bg: Color(255, 255, 255),
+        fg: Color(30, 30, 30),
+        grid: Color(220, 220, 220),
+        palette: vec![Color::BLUE, Color::RED, Color::GREEN, Color::ORANGE, Color::PURPLE],
+    }
+}
+
+pub fn theme_dark() -> Theme {
+    Theme {
+        bg: Color(30, 30, 30),
+        fg: Color(220, 220, 220),
+        grid: Color(60, 60, 60),
+        palette: vec![Color(100, 149, 237), Color(255, 99, 71), Color(50, 205, 50), Color(255, 215, 0), Color(186, 85, 211)],
+    }
+}
+
+pub fn theme_minimal() -> Theme {
+    Theme {
+        bg: Color(255, 255, 255),
+        fg: Color(80, 80, 80),
+        grid: Color(240, 240, 240),
+        palette: vec![Color(50, 50, 50), Color(100, 100, 100), Color(150, 150, 150)],
+    }
+}
+
+/// Plot layer - what can be added with +
+pub enum Layer {
+    Aes(Aes),
+    Geom(Geom),
+    Labs(Labs),
+    Theme(Theme),
+}
+
+impl From<Aes> for Layer { fn from(a: Aes) -> Self { Layer::Aes(a) } }
+impl From<Geom> for Layer { fn from(g: Geom) -> Self { Layer::Geom(g) } }
+impl From<Labs> for Layer { fn from(l: Labs) -> Self { Layer::Labs(l) } }
+impl From<Theme> for Layer { fn from(t: Theme) -> Self { Layer::Theme(t) } }
+
+/// The plot
+pub struct Plot {
+    pub data: DataFrame,
+    pub aes: Aes,
+    pub geoms: Vec<Geom>,
+    pub labs: Labs,
+    pub theme: Theme,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Create plot from data
+pub fn ggplot(data: DataFrame) -> Plot {
+    Plot {
+        data,
+        aes: Aes::default(),
+        geoms: Vec::new(),
+        labs: Labs::default(),
+        theme: Theme::default(),
+        width: 800,
+        height: 400,
+    }
+}
+
+impl Plot {
+    /// Set size
+    pub fn size(mut self, w: u32, h: u32) -> Self {
+        self.width = w;
+        self.height = h;
+        self
+    }
+
+    /// Render and show via kitty protocol
+    pub fn show(&self) {
+        match render::render(self) {
+            Some(img) => {
+                eprintln!("DEBUG: rendered {}x{}", img.width(), img.height());
+                kitty_show(&img);
+            }
+            None => eprintln!("DEBUG: render returned None"),
         }
     }
-    writeln!(stdout).ok();
-    stdout.flush().ok();
+
+    /// Render to PNG bytes
+    pub fn png(&self) -> Option<Vec<u8>> {
+        render::render(self).map(|img| render::to_png(&img))
+    }
+}
+
+/// Add layer with + operator
+impl<L: Into<Layer>> std::ops::Add<L> for Plot {
+    type Output = Plot;
+    fn add(mut self, layer: L) -> Plot {
+        match layer.into() {
+            Layer::Aes(a) => self.aes = self.aes + a,
+            Layer::Geom(g) => self.geoms.push(g),
+            Layer::Labs(l) => self.labs = self.labs + l,
+            Layer::Theme(t) => self.theme = t,
+        }
+        self
+    }
 }
 
 #[cfg(test)]
@@ -164,17 +249,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_histogram() {
-        let vals: Vec<f64> = (0..100).map(|i| (i as f64 * 0.1).sin()).collect();
-        let img = histogram(&vals, 20, 400, 300);
-        assert!(img.is_some());
-    }
+    fn test_api() {
+        let data = DataFrame::new()
+            .col("x", vec![1.0, 2.0, 3.0])
+            .col("y", vec![1.0, 4.0, 9.0]);
 
-    #[test]
-    fn test_line() {
-        let xs: Vec<f64> = (0..100).map(|i| i as f64).collect();
-        let ys: Vec<f64> = xs.iter().map(|x| x.sin()).collect();
-        let img = line(&xs, &ys, 400, 300);
-        assert!(img.is_some());
+        let _plot = ggplot(data)
+            + aes("x", "y")
+            + geom_point()
+            + geom_line()
+            + title("Test")
+            + theme_dark();
     }
 }

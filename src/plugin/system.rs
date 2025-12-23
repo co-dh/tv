@@ -85,6 +85,8 @@ fn adbc_source(cmd: &str) -> Option<String> {
     if !std::path::Path::new("/usr/local/lib/libadbc_driver_sqlite.so").exists() {
         return None;
     }
+    // Only simple shell commands here - complex ones (journalctl, pacman, cargo)
+    // need shared API code between sqlite and adbc plugins
     let (header, shell) = match cmd {
         "ps" => ("user\tpid\tcpu\tmem\tcmd",
             r#"ps aux --no-headers | awk '{printf "%s\t%s\t%s\t%s\t%s\n",$1,$2,$3,$4,$11}'"#),
@@ -97,7 +99,7 @@ fn adbc_source(cmd: &str) -> Option<String> {
             r#"df -h | awk 'NR>1{printf "%s\t%s\t%s\t%s\t%s\t%s\n",$1,$2,$3,$4,$5,$6}'"#),
         "mounts" => ("dev\tmount\ttype\topts",
             r#"mount | awk '{printf "%s\t%s\t%s\t%s\n",$1,$3,$5,$6}'"#),
-        _ => return None,
+        _ => return None, // journalctl, pacman, cargo, lsof use sqlite plugin API
     };
     // Run shell command to get data
     let data = ShellCmd::new("sh").arg("-c").arg(shell).output().ok()?;
