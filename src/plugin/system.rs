@@ -17,15 +17,16 @@ const SYS_CMDS: &[(&str, bool)] = &[
     ("lsof", true), ("journalctl", true),
 ];
 
-/// Get user-specific ADBC SQLite database path
+/// Get user/process-specific ADBC SQLite database path
 fn adbc_sys_db() -> String {
+    let pid = std::process::id();
     // Use XDG_RUNTIME_DIR (user-specific, e.g. /run/user/1000)
     if let Ok(dir) = std::env::var("XDG_RUNTIME_DIR") {
-        format!("{}/tv_sys.db", dir)
+        format!("{}/tv_sys_{}.db", dir, pid)
     } else {
-        // Fallback: /tmp with username
+        // Fallback: /tmp with username and pid
         let user = std::env::var("USER").unwrap_or_else(|_| "tv".into());
-        format!("/tmp/tv_sys_{}.db", user)
+        format!("/tmp/tv_sys_{}_{}.db", user, pid)
     }
 }
 

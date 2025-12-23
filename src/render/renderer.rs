@@ -476,14 +476,20 @@ impl Renderer {
         } else {
             format!(" [sel={}]", view.selected_cols.len())
         };
+        // Backend indicator from path
+        let backend = match view.path.as_deref() {
+            Some(p) if p.starts_with("adbc:") => "[adbc] ",
+            Some(p) if p.starts_with("source:") || p.starts_with("memory:") => "[sqlite] ",
+            _ => "",
+        };
         let left = if !message.is_empty() { format!("{}{}", message, sel_info) }
         else if view.is_row_sel() {
             // Show parent name and row count for Meta/Freq views
             let pn = view.parent.as_ref().map(|p| p.name.as_str()).unwrap_or("");
             let pr = view.parent.as_ref().map(|p| format!(" ({})", commify(&p.rows.to_string()))).unwrap_or_default();
-            format!("{} <- {}{}{}", view.name, pn, pr, sel_info)
+            format!("{}{} <- {}{}{}", backend, view.name, pn, pr, sel_info)
         }
-        else { format!("{}{}", view.path.as_deref().unwrap_or("(no file)"), sel_info) };
+        else { format!("{}{}{}", backend, view.path.as_deref().unwrap_or("(no file)"), sel_info) };
 
         // Get column stats for current column (via plugin)
         let col_stats_str = if view.cols() > 0 {
