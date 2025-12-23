@@ -87,7 +87,7 @@ impl Command for FreqEnter {
         if !self.col_vals.is_empty() {
             // Build compound filter: col1 = val1 AND col2 = val2 ...
             let conditions: Vec<String> = self.col_vals.iter()
-                .map(|(c, v)| format!("{} == '{}'", qcol(c), v.replace('\'', "''")))
+                .map(|(c, v)| format!("{}=='{}'", qcol(c), v.replace('\'', "''")))
                 .collect();
             let filter = conditions.join(" && ");
             let _ = CommandExecutor::exec(app, Box::new(crate::command::transform::Filter { expr: filter }));

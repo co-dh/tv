@@ -9,6 +9,15 @@ use crate::command::view::{Dup, Pop, Swap};
 use crate::plugin::corr::Correlation;
 use crate::plugin::meta::Metadata;
 use crate::plugin::folder::Ls;
+use crate::state::ViewState;
+use anyhow::Result;
+
+/// System commands: (name, has_arg)
+const SYS_CMDS: &[(&str, bool)] = &[
+    ("ps", false), ("mounts", false), ("tcp", false), ("udp", false),
+    ("env", false), ("df", false), ("systemctl", false),
+    ("pacman", false), ("lsof", true), ("journalctl", true),
+];
 
 /// Parse command string into Command object
 pub fn parse(line: &str, app: &mut AppContext) -> Option<Box<dyn Command>> {
@@ -77,6 +86,12 @@ pub fn parse(line: &str, app: &mut AppContext) -> Option<Box<dyn Command>> {
         _ => {}
     }
 
+    // System commands (ps, pacman, systemctl, etc.) → source:xxx paths
+    if let Some((c, has_arg)) = SYS_CMDS.iter().find(|(c, _)| *c == cmd) {
+        let arg = if *has_arg && !arg.is_empty() { Some(arg.to_string()) } else { None };
+        return Some(Box::new(SourceCmd { cmd: c.to_string(), arg }));
+    }
+
     // Try plugin commands (parse method)
     if let Some(c) = app.plugins.parse(&cmd, arg) { return Some(c); }
 
@@ -88,4 +103,22 @@ pub fn parse(line: &str, app: &mut AppContext) -> Option<Box<dyn Command>> {
         if result.is_some() { return result; }
     }
     None
+}
+
+/// System command - creates view with source:xxx path
+struct SourceCmd { cmd: String, arg: Option<String> }
+
+impl Command for SourceCmd {
+    fn exec(&mut self, app: &mut AppContext) -> Result<()> {
+        let id = app.next_id();
+        let (name, src) = match &self.arg {
+            Some(a) => (format!("{}:{}", self.cmd, a), format!("source:{}:{}", self.cmd, a)),
+            None => (self.cmd.clone(), format!("source:{}", self.cmd)),
+        };
+        app.stack.push(ViewState::build(id, name).path(src));
+        Ok(())
+    }
+    fn to_str(&self) -> String {
+        match &self.arg { Some(a) => format!("{} {}", self.cmd, a), None => self.cmd.clone() }
+    }
 }

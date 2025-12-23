@@ -4,7 +4,6 @@
 pub mod meta;
 pub mod freq;
 pub mod folder;
-pub mod system;
 pub mod corr;
 pub mod pivot;
 
@@ -51,8 +50,8 @@ impl Registry {
         }
         let mut plugins: Vec<Box<dyn Plugin>> = vec![
             Box::new(meta::MetaPlugin), Box::new(freq::FreqPlugin),
-            Box::new(folder::FolderPlugin), Box::new(system::SystemPlugin),
-            Box::new(corr::CorrPlugin), Box::new(pivot::PivotPlugin),
+            Box::new(folder::FolderPlugin), Box::new(corr::CorrPlugin),
+            Box::new(pivot::PivotPlugin),
         ];
         plugins.retain(|p| *enabled.get(p.name()).unwrap_or(&true));
         Self { plugins }
@@ -62,8 +61,8 @@ impl Registry {
     pub fn all() -> Self {
         Self { plugins: vec![
             Box::new(meta::MetaPlugin), Box::new(freq::FreqPlugin),
-            Box::new(folder::FolderPlugin), Box::new(system::SystemPlugin),
-            Box::new(corr::CorrPlugin), Box::new(pivot::PivotPlugin),
+            Box::new(folder::FolderPlugin), Box::new(corr::CorrPlugin),
+            Box::new(pivot::PivotPlugin),
         ]}
     }
 
