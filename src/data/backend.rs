@@ -5,7 +5,18 @@ use super::source;
 use super::table::{Cell, ColType, Table};
 use std::sync::Mutex;
 use std::collections::HashMap;
+use std::time::SystemTime;
 use lru::LruCache;
+
+/// Log to ~/.tv/debug.log (on cache miss)
+fn dbg(msg: &str) {
+    use std::io::Write;
+    let Some(home) = std::env::var_os("HOME") else { return };
+    let log = std::path::Path::new(&home).join(".tv/debug.log");
+    let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(log) else { return };
+    let secs = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_secs() % 86400).unwrap_or(0);
+    let _ = writeln!(f, "{:02}:{:02}:{:02} {}", secs / 3600, (secs / 60) % 60, secs % 60, msg);
+}
 use adbc_core::{Driver, Database, Connection, Statement};
 use adbc_core::options::{AdbcVersion, OptionDatabase, OptionValue};
 use adbc_driver_manager::ManagedDriver;
@@ -219,6 +230,9 @@ pub fn query(prql: &str, path: &str) -> Option<Box<dyn Table + Send + Sync>> {
     if let Some(r) = cache_get(&key) {
         return Some(Box::new(ResultTable(r)));
     }
+
+    // Log cache miss
+    dbg(&format!("EXEC path={} prql={}", path, &prql[..prql.len().min(60)]));
 
     let result = match parse_path(path)? {
         PathType::Mem { id } => {
