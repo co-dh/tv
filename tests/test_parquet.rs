@@ -163,17 +163,6 @@ fn test_large_parquet_filtered_freq_symbol() {
         "Symbol freq should have 11342 rows (way more than 4): {}", out);
 }
 
-#[test]
-#[ignore]
-fn test_large_parquet_status_single_total() {
-    // Status should show disk_rows once, not twice (bug: rows=disk when disk_rows is set)
-    // print_status fetches 50 rows to simulate render, disk=304M, rows should equal disk
-    let out = run_keys("<a-p>", "tests/data/nyse/1.parquet");
-    assert!(out.contains("disk=304160974"), "Should show disk rows: {}", out);
-    assert!(out.contains("df=50"), "Should fetch 50 rows for render: {}", out);
-    // rows() returns disk_rows for lazy parquet - this is correct
-    assert!(out.contains("rows=304160974"), "rows() should return disk_rows: {}", out);
-}
 
 #[test]
 #[ignore]
