@@ -343,3 +343,13 @@ fn test_numeric_right_align() {
     }
 }
 
+// Test aggregate without key columns shows error
+#[test]
+fn test_aggregate_requires_key() {
+    // Press b (aggregate) without any key columns - should show error
+    let out = run_keys("b", "tests/data/basic.csv");
+    let (_, status) = footer(&out);
+    assert!(status.contains("key") || status.contains("xkey"),
+            "Should show key error: {}", status);
+}
+

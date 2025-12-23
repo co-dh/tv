@@ -92,7 +92,6 @@ pub fn handle_cmd(app: &mut AppContext, cmd: &str) -> Result<bool> {
             run(app, Box::new(Pop));
         }
         "force_quit" => return Ok(false),
-        "print_status" => { print_status(app); return Ok(false); }
         "select_cols" => {
             if !app.has_view() { app.no_table(); }
             else if !app.test_input.is_empty() {
@@ -153,7 +152,10 @@ pub fn handle_cmd(app: &mut AppContext, cmd: &str) -> Result<bool> {
         }
         "convert" => { app.msg("Use derive for type conversion (PRQL syntax)"); }
         "aggregate" => {
-            if let Some(col) = app.view().and_then(|v| v.col_name(v.state.cc)) {
+            let has_keys = app.view().map(|v| !v.key_cols.is_empty()).unwrap_or(false);
+            if !has_keys {
+                app.msg("Set key columns first with ! (xkey)");
+            } else if let Some(col) = app.view().and_then(|v| v.col_name(v.state.cc)) {
                 let result = picker::fzf(vec!["count".into(), "sum".into(), "mean".into(), "min".into(), "max".into(), "std".into()], "Aggregate: ");
                 app.needs_clear = true;
                 if let Ok(Some(func)) = result { run(app, Box::new(Agg { col, func })); }
@@ -171,7 +173,7 @@ pub fn handle_cmd(app: &mut AppContext, cmd: &str) -> Result<bool> {
                     }
                 }).unwrap_or_default();
                 if !col_names.is_empty() {
-                    run(app, Box::new(DelCol { col_names }));
+                    run(app, Box::new(DelCol { cols: col_names }));
                     if let Some(v) = app.view_mut() { v.selected_cols.clear(); }
                 }
             }
@@ -187,7 +189,7 @@ pub fn handle_cmd(app: &mut AppContext, cmd: &str) -> Result<bool> {
                 }
             }).unwrap_or_default();
             if !col_names.is_empty() {
-                run(app, Box::new(Xkey { col_names }));
+                run(app, Box::new(Xkey { keys: col_names }));
                 if let Some(v) = app.view_mut() { v.selected_cols.clear(); }
             }
         }
@@ -197,24 +199,4 @@ pub fn handle_cmd(app: &mut AppContext, cmd: &str) -> Result<bool> {
         _ => {}
     }
     Ok(true)
-}
-
-/// Print status line info (for key testing)
-fn print_status(app: &mut AppContext) {
-    use std::fs;
-    fn mem_mb() -> usize {
-        fs::read_to_string("/proc/self/status").ok()
-            .and_then(|s| s.lines().find(|l| l.starts_with("VmRSS:"))
-                .and_then(|l| l.split_whitespace().nth(1)?.parse::<usize>().ok()))
-            .map(|kb| kb / 1024).unwrap_or(0)
-    }
-    if let Some(view) = app.view_mut() {
-        let col_name = view.col_name(view.state.cc).unwrap_or_default();
-        let df_rows = view.data.rows();
-        let keys = view.col_separator.unwrap_or(0);
-        let sel = view.selected_cols.len();
-        let sel_cols: Vec<usize> = view.selected_cols.iter().copied().collect();
-        println!("STATUS: view={} rows={} df={} col={} col_name={} keys={} sel={} sel_cols={:?} mem={}MB",
-            view.name, view.rows(), df_rows, view.state.cc, col_name, keys, sel, sel_cols, mem_mb());
-    }
 }
