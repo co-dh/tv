@@ -184,7 +184,10 @@ impl ViewState {
     pub fn display_name(&self) -> String {
         use crate::util::pure::qcols;
         let mut s = self.name.clone();
-        if !self.deleted_cols.is_empty() { s = format!("{}|del{{{}}}", s, self.deleted_cols.join(",")); }
+        // Skip del{} for filter views (too noisy)
+        if !self.deleted_cols.is_empty() && !self.name.starts_with("filter ") {
+            s = format!("{}|del{{{}}}", s, self.deleted_cols.join(","));
+        }
         // Skip xkey for freq (column already in name)
         if !self.key_cols.is_empty() && !self.name.starts_with("freq ") {
             s = format!("{}|xkey{{{}}}", s, qcols(&self.key_cols));
