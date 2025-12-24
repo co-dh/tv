@@ -159,7 +159,7 @@ fn str_to_key(s: &str) -> KeyEvent {
         "<tab>" => (KeyCode::Tab, KeyModifiers::NONE),
         "<s-tab>" => (KeyCode::BackTab, KeyModifiers::NONE),
         "<del>" => (KeyCode::Delete, KeyModifiers::NONE),
-        "<backspace>" => (KeyCode::Backspace, KeyModifiers::NONE),
+        "<bs>" => (KeyCode::Backspace, KeyModifiers::NONE),
         "<space>" => (KeyCode::Char(' '), KeyModifiers::NONE),
         "<backslash>" => (KeyCode::Char('\\'), KeyModifiers::NONE),
         "<lt>" => (KeyCode::Char('<'), KeyModifiers::NONE),

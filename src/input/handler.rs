@@ -35,7 +35,7 @@ pub fn key_str(key: &KeyEvent) -> String {
         KeyCode::Tab => "<tab>".into(),
         KeyCode::BackTab => "<s-tab>".into(),
         KeyCode::Delete => "<del>".into(),
-        KeyCode::Backspace => "<backspace>".into(),
+        KeyCode::Backspace => "<bs>".into(),
         _ => "?".into(),
     }
 }
@@ -222,7 +222,7 @@ pub fn handle_cmd(app: &mut AppContext, cmd: &str) -> Result<bool> {
         }
         "command" => do_command_picker(app)?,
         "goto_col" | "goto_col_name" => do_goto_col(app)?,
-        "enter" | "filter_parent" | "delete_sel" => { dispatch(app, cmd); }
+        "enter" | "filter_parent" | "delete_sel" | "parent" => { dispatch(app, cmd); }
         _ => {}
     }
     Ok(true)
