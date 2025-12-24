@@ -23,6 +23,20 @@ fn test_freq_enter_filters_parent_shows_filter_command() {
 }
 
 #[test]
+fn test_delete_twice_different_columns() {
+    // Bug: DD deletes same column twice instead of two different columns
+    // sample.parquet: id, age, year, ...
+    // First D deletes id, second D should delete age (now at cursor), not id again
+    let output = run_keys("DD", "tests/data/sample.parquet");
+    let hdr = output.lines().next().unwrap_or("");
+    // Check column names as words (split by whitespace)
+    let cols: Vec<&str> = hdr.split_whitespace().collect();
+    assert!(!cols.contains(&"id"), "id should be deleted: {}", hdr);
+    assert!(!cols.contains(&"age"), "age should be deleted: {}", hdr);
+    assert!(cols.contains(&"year"), "year should remain: {}", hdr);
+}
+
+#[test]
 fn test_sort_asc_orders_first_row_smallest() {
     // [ sorts ascending, first data row should have a=1
     let output = run_keys("[", "tests/data/unsorted.csv");

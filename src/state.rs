@@ -157,9 +157,19 @@ impl ViewState {
     #[must_use]
     pub fn col_names(&self) -> Vec<String> { self.data.col_names() }
 
-    /// Column name by index
+    /// Column name by data index
     #[must_use]
     pub fn col_name(&self, idx: usize) -> Option<String> { self.data.col_name(idx) }
+
+    /// Column name at display index (accounts for deleted columns)
+    #[must_use]
+    pub fn display_col_name(&self, display_idx: usize) -> Option<String> {
+        self.col_name(self.data_col(display_idx))
+    }
+
+    /// Current column name (at cursor)
+    #[must_use]
+    pub fn cur_col_name(&self) -> Option<String> { self.display_col_name(self.state.cc) }
 
     /// Number of key columns (for separator position)
     #[inline] #[must_use]

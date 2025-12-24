@@ -192,11 +192,11 @@ pub fn handle_cmd(app: &mut AppContext, cmd: &str) -> Result<bool> {
             if !dispatch(app, "delete") {
                 let col_names: Vec<String> = app.view().map(|v| {
                     if v.selected_cols.is_empty() {
-                        v.col_name(v.state.cc).into_iter().collect()
+                        v.cur_col_name().into_iter().collect()
                     } else {
                         let mut sel: Vec<usize> = v.selected_cols.iter().copied().collect();
                         sel.sort_by(|a, b| b.cmp(a));
-                        sel.iter().filter_map(|&i| v.col_name(i)).collect()
+                        sel.iter().filter_map(|&i| v.display_col_name(i)).collect()
                     }
                 }).unwrap_or_default();
                 if !col_names.is_empty() {
@@ -208,11 +208,11 @@ pub fn handle_cmd(app: &mut AppContext, cmd: &str) -> Result<bool> {
         "xkey" => {
             let col_names: Vec<String> = app.view().map(|v| {
                 if v.selected_cols.is_empty() {
-                    v.col_name(v.state.cc).into_iter().collect()
+                    v.cur_col_name().into_iter().collect()
                 } else {
                     let mut sel: Vec<usize> = v.selected_cols.iter().copied().collect();
                     sel.sort();
-                    sel.into_iter().filter_map(|i| v.col_name(i)).collect()
+                    sel.into_iter().filter_map(|i| v.display_col_name(i)).collect()
                 }
             }).unwrap_or_default();
             if !col_names.is_empty() {
