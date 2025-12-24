@@ -179,15 +179,17 @@ impl ViewState {
     #[inline] #[must_use]
     pub fn is_row_sel(&self) -> bool { self.name == "meta" || self.name.starts_with("freq ") }
 
-    /// Display name with xkey suffix (for tabs)
+    /// Display name with del/xkey suffix (for tabs)
     #[must_use]
     pub fn display_name(&self) -> String {
         use crate::util::pure::qcols;
-        let s = self.name.clone();
+        let mut s = self.name.clone();
+        if !self.deleted_cols.is_empty() { s = format!("{}|del{{{}}}", s, self.deleted_cols.join(",")); }
         // Skip xkey for freq (column already in name)
         if !self.key_cols.is_empty() && !self.name.starts_with("freq ") {
-            format!("{}|xkey{{{}}}", s, qcols(&self.key_cols))
-        } else { s }
+            s = format!("{}|xkey{{{}}}", s, qcols(&self.key_cols));
+        }
+        s
     }
 
     /// Get column indices in display order: key_cols first, then rest minus deleted
@@ -391,19 +393,17 @@ mod tests {
 
     #[test]
     fn test_display_name_del() {
-        // del{} no longer shown in tab (too noisy)
         let mut v = ViewState::build(0, "view").data(empty());
         v.deleted_cols = vec!["x".into()];
-        assert_eq!(v.display_name(), "view");
+        assert_eq!(v.display_name(), "view|del{x}");
     }
 
     #[test]
-    fn test_display_name_xkey_with_del() {
-        // del{} not shown, only xkey{}
+    fn test_display_name_both() {
         let mut v = ViewState::build(0, "view").data(empty());
         v.deleted_cols = vec!["x".into()];
         v.key_cols = vec!["a".into()];
-        assert_eq!(v.display_name(), "view|xkey{a}");
+        assert_eq!(v.display_name(), "view|del{x}|xkey{a}");
     }
 
     #[test]
