@@ -190,14 +190,11 @@ impl Renderer {
             if next_x <= 0 { continue; }
             if x >= screen_width { break; }
 
-            let is_current = disp_idx == state.cc;
             let is_selected = selected_cols.contains(&disp_idx);
             let col_width = state.col_widths.get(data_idx).copied().unwrap_or(10) as usize;
 
-            let style = if is_current {
-                Style::default().bg(to_rcolor(theme.cursor_bg)).fg(to_rcolor(theme.cursor_fg)).add_modifier(Modifier::BOLD)
-            } else if is_selected {
-                Style::default().bg(to_rcolor(theme.header_bg)).fg(to_rcolor(theme.select_fg)).add_modifier(Modifier::BOLD)
+            let style = if is_selected {
+                Style::default().bg(RColor::Rgb(60, 60, 80))
             } else { header_style };
 
             let start_x = x.max(0) as u16 + x_pos;
@@ -218,10 +215,9 @@ impl Renderer {
     }
 
     /// Render a single data row (dcols = display order of data column indices)
-    fn render_row_xs(frame: &mut Frame, table: &dyn Table, df_idx: usize, row_idx: usize, state: &TableState, dcols: &[usize], xs: &[i32], screen_width: i32, row_num_width: u16, is_correlation: bool, selected_cols: &HashSet<usize>, selected_rows: &HashSet<usize>, _col_sep: Option<usize>, decimals: usize, theme: &Theme, area: Rect, screen_row: u16) {
+    fn render_row_xs(frame: &mut Frame, table: &dyn Table, df_idx: usize, row_idx: usize, state: &TableState, dcols: &[usize], xs: &[i32], screen_width: i32, row_num_width: u16, is_correlation: bool, selected_cols: &HashSet<usize>, _selected_rows: &HashSet<usize>, _col_sep: Option<usize>, decimals: usize, _theme: &Theme, area: Rect, screen_row: u16) {
         let buf = frame.buffer_mut();
         let is_cur_row = row_idx == state.cr;
-        let is_sel_row = selected_rows.contains(&row_idx);
 
         // Clear row first
         for x in 0..area.width { buf[(x, screen_row)].reset(); }
@@ -230,13 +226,10 @@ impl Renderer {
 
         // Row number
         if row_num_width > 0 {
-            let style = if is_cur_row { Style::default().fg(to_rcolor(theme.row_cur_fg)) }
-                       else if is_sel_row { Style::default().fg(to_rcolor(theme.row_num_fg)) }
-                       else { Style::default() };
             let s = format!("{:>width$} ", row_idx, width = row_num_width as usize);
             for (i, ch) in s.chars().enumerate() {
                 if x_pos + i as u16 >= area.width { break; }
-                buf[(x_pos + i as u16, screen_row)].set_char(ch).set_style(style);
+                buf[(x_pos + i as u16, screen_row)].set_char(ch);
             }
             x_pos += row_num_width + 1;
         }
@@ -247,8 +240,7 @@ impl Renderer {
             if next_x <= 0 { continue; }
             if x >= screen_width { break; }
 
-            let is_cur_col = disp_idx == state.cc;
-            let is_cur_cell = is_cur_row && is_cur_col;
+            let is_cur_cell = is_cur_row && disp_idx == state.cc;
             let is_sel = selected_cols.contains(&disp_idx);
 
             let col_width = state.col_widths.get(data_idx).copied().unwrap_or(10) as usize;
@@ -258,21 +250,11 @@ impl Renderer {
             let corr_color = if is_correlation && disp_idx > 0 { Self::correlation_color(&value) } else { None };
 
             let style = if is_cur_cell {
-                Style::default().bg(to_rcolor(theme.cursor_bg)).fg(to_rcolor(theme.cursor_fg))
-            } else if is_cur_col {
-                let fg = corr_color.map(to_rcolor)
-                    .or_else(|| if is_sel { Some(to_rcolor(theme.select_fg)) } else { None })
-                    .or_else(|| if is_sel_row { Some(to_rcolor(theme.row_num_fg)) } else { None })
-                    .unwrap_or(RColor::Reset);
-                Style::default().bg(RColor::DarkGray).fg(fg)
-            } else if is_sel_row {
-                Style::default().fg(to_rcolor(theme.row_num_fg))
+                Style::default().add_modifier(Modifier::REVERSED)
             } else if is_sel {
-                Style::default().fg(to_rcolor(theme.select_fg))
+                Style::default().bg(RColor::Rgb(60, 60, 80))
             } else if let Some(c) = corr_color {
                 Style::default().fg(to_rcolor(c))
-            } else if is_cur_row {
-                Style::default().fg(to_rcolor(theme.row_cur_fg))
             } else { Style::default() };
 
             let start_x = x.max(0) as u16 + x_pos;
