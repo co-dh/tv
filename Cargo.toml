@@ -15,7 +15,6 @@ strip = true
 # codegen-units = 1
 
 [dependencies]
-prqlc = "0.13"
 ratatui = "0.30.0-beta.0"
 anyhow = "1.0"
 thiserror = "2.0"

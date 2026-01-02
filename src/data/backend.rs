@@ -174,11 +174,20 @@ let cntdist = func c tbl <relation> -> (from tbl | aggregate {n = count this, di
 let meta = func c tbl <relation> -> (from tbl | aggregate {cnt = s"COUNT({c})", dist = count_distinct c, total = count this, min = min c, max = max c})
 "#;
 
-/// Compile PRQL to SQL (prepends function definitions)
+/// Compile PRQL to SQL via CLI (prepends function definitions)
 pub fn compile_prql(prql: &str) -> Option<String> {
+    use std::process::{Command, Stdio};
+    use std::io::Write;
     let full = format!("{}\n{}", PRQL_FUNCS, prql);
-    let opts = prqlc::Options::default().no_signature();
-    prqlc::compile(&full, &opts).ok()
+    let mut child = Command::new("prqlc")
+        .args(["compile", "--hide-signature-comment", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn().ok()?;
+    child.stdin.take()?.write_all(full.as_bytes()).ok()?;
+    let out = child.wait_with_output().ok()?;
+    out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
 /// Find libduckdb.so path (env DUCKDB_LIB overrides)
